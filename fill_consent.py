@@ -26,6 +26,11 @@ def format_dln(dln):
     return (dln or "").strip()
 
 
+def is_valid_dln(dln):
+    """True for an Ontario licence #: 1 letter + 14 digits (dashes/spaces ignored)."""
+    return bool(re.fullmatch(r"[A-Z]\d{14}", re.sub(r"[^A-Za-z0-9]", "", dln or "").upper()))
+
+
 def read_dash(pdf_path):
     """Return (name, dln) from the header of a DASH driver report."""
     with pdfplumber.open(pdf_path) as pdf:
@@ -34,7 +39,7 @@ def read_dash(pdf_path):
     dln = re.search(r"DLN:\s*([A-Z0-9-]+)", text)
     if not name:
         return None
-    return name.group(1).strip(), format_dln(dln.group(1) if dln else "")
+    return name.group(1).strip().upper(), format_dln(dln.group(1) if dln else "")
 
 
 def fill(client_folder, dln=None, template=None):
@@ -42,7 +47,7 @@ def fill(client_folder, dln=None, template=None):
     template = Path(template or DEFAULT_TEMPLATE)
     if not template.exists():
         raise FileNotFoundError(f"Consent template not found: {template}")
-    client_name = folder.name
+    client_name = folder.name.upper()
 
     dash_files = sorted(folder.glob("DASH Report*.pdf"), key=lambda p: p.stat().st_mtime)
     drivers = [d for d in (read_dash(p) for p in dash_files) if d][:3]

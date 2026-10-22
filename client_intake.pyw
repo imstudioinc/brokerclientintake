@@ -13,7 +13,7 @@ from tkinter import filedialog
 import customtkinter as ctk
 
 import config
-from fill_consent import fill, format_dln
+from fill_consent import fill, format_dln, is_valid_dln
 
 # ---------- Design tokens (light, dark) ----------
 BG = ("#F3F5F8", "#0F1419")
@@ -31,6 +31,7 @@ DANGER = ("#B91C1C", "#F87171")
 WARN_BG = ("#F1F3F6", "#252D37")
 
 FONT = "Segoe UI"
+DLN_HELP = "Ontario licence #. Copied to your clipboard for DASH."
 SP = 8  # spacing unit
 
 # Documents tracked per client: (label, glob patterns)
@@ -45,10 +46,7 @@ DOCUMENTS = [
 def clean_name(name):
     name = re.sub(r'[\\/:*?"<>|]', "", name)
     name = re.sub(r"\s+", " ", name).strip().rstrip(".")
-    # Fix capitals unless at least one word is already typed "Properly" (keeps "ACME Roofing Inc")
-    if name and not any(re.fullmatch(r"[A-Z][a-z].*", w) for w in name.split()):
-        name = re.sub(r"[A-Za-z]+", lambda m: m.group(0).capitalize(), name)
-    return name
+    return name.upper()
 
 
 def find_docs(folder):
@@ -243,19 +241,21 @@ class App(ctk.CTk):
         ctk.CTkLabel(c, text="Client name *", font=font(13, "bold"), text_color=TEXT) \
             .grid(row=2, column=0, sticky="w", padx=p, pady=(2.5 * SP, SP / 2))
         self.name_entry = ctk.CTkEntry(c, height=40, font=font(14),
-                                       border_color=BORDER, placeholder_text="e.g. John Smith")
+                                       border_color=BORDER, placeholder_text="e.g. JOHN SMITH")
         self.name_entry.grid(row=3, column=0, sticky="ew", padx=p)
         self.name_error = ctk.CTkLabel(c, text="", font=font(12), text_color=DANGER, height=18)
         self.name_error.grid(row=4, column=0, sticky="w", padx=p)
-        self.name_entry.bind("<KeyRelease>", lambda e: self._clear_error() if e.keysym != "Return" else None)
+        self.name_entry.bind("<KeyRelease>", lambda e: self._on_type(e, self.name_entry))
 
-        ctk.CTkLabel(c, text="Driver's licence #", font=font(13, "bold"), text_color=TEXT) \
+        ctk.CTkLabel(c, text="Driver's licence # *", font=font(13, "bold"), text_color=TEXT) \
             .grid(row=5, column=0, sticky="w", padx=p, pady=(SP, SP / 2))
         dln_entry = self.dln_entry = ctk.CTkEntry(c, height=40, font=font(14),
                                  border_color=BORDER, placeholder_text="A1234-12345-12345")
         dln_entry.grid(row=6, column=0, sticky="ew", padx=p)
-        ctk.CTkLabel(c, text="Optional. Copied to your clipboard for DASH.", font=font(12),
-                     text_color=MUTED).grid(row=7, column=0, sticky="w", padx=p, pady=(SP / 2, 0))
+        self.dln_help = ctk.CTkLabel(c, text=DLN_HELP, font=font(12), text_color=MUTED,
+                                     justify="left", anchor="w")
+        self.dln_help.grid(row=7, column=0, sticky="w", padx=p, pady=(SP / 2, 0))
+        dln_entry.bind("<KeyRelease>", lambda e: self._on_type(e, dln_entry))
 
         self.create_btn = ctk.CTkButton(c, text="Create client", height=44, font=font(14, "bold"),
                                         fg_color=PRIMARY, hover_color=PRIMARY_HOVER, corner_radius=8,
@@ -272,9 +272,27 @@ class App(ctk.CTk):
         for w in (self.name_entry, dln_entry):
             w.bind("<Return>", lambda e: self.create())
 
-    def _clear_error(self):
-        self.name_error.configure(text="")
-        self.name_entry.configure(border_color=BORDER)
+    def _on_type(self, event, entry):
+        """Uppercase as you type and clear that field's error."""
+        if event.keysym == "Return":
+            return
+        text = entry.get()
+        if text != text.upper():
+            pos = entry._entry.index("insert")
+            entry.delete(0, "end")
+            entry.insert(0, text.upper())
+            entry._entry.icursor(pos)
+        if entry is self.name_entry:
+            self.name_error.configure(text="")
+            self.name_entry.configure(border_color=BORDER)
+        else:
+            self.dln_help.configure(text=DLN_HELP, text_color=MUTED)
+            self.dln_entry.configure(border_color=BORDER)
+
+    def _field_error(self, entry, label, text):
+        label.configure(text=text, text_color=DANGER)
+        entry.configure(border_color=DANGER)
+        entry.focus_set()
 
     def _show_banner(self, text, ok=True):
         self.banner.configure(fg_color=SUCCESS_BG if ok else WARN_BG)
@@ -284,10 +302,16 @@ class App(ctk.CTk):
     def create(self):
         name = clean_name(self.name_entry.get())
         root = self.clients_root
+        dln = self.dln_entry.get().strip()
         if not name:
-            self.name_error.configure(text="Enter the client's name.")
-            self.name_entry.configure(border_color=DANGER)
-            self.name_entry.focus_set()
+            self._field_error(self.name_entry, self.name_error, "Enter the client's name.")
+            return
+        if not dln:
+            self._field_error(self.dln_entry, self.dln_help, "Enter the driver's licence #.")
+            return
+        if not is_valid_dln(dln):
+            self._field_error(self.dln_entry, self.dln_help,
+                              "Licence # must be 1 letter + 14 digits,\ne.g. A1234-12345-12345.")
             return
         if not root or not root.exists():
             self._show_banner("Clients folder not found. Set it in Settings.", ok=False)
@@ -304,7 +328,6 @@ class App(ctk.CTk):
 
         self.create_btn.configure(state="disabled", text="Creating…")
         self.update_idletasks()
-        dln = self.dln_entry.get().strip()
         folder.mkdir()
         lines = [f"Created {name}"]
         ok = True
@@ -314,10 +337,9 @@ class App(ctk.CTk):
         except Exception as e:
             lines.append(f"Consent form not filled: {e}")
             ok = False
-        if dln:
-            self.clipboard_clear()
-            self.clipboard_append(format_dln(dln))
-            lines.append("Licence # copied for DASH")
+        self.clipboard_clear()
+        self.clipboard_append(format_dln(dln))
+        lines.append("Licence # copied for DASH")
         self.create_btn.configure(state="normal", text="Create client")
 
         self._show_banner(("✓ " if ok else "") + "\n".join(lines), ok=ok)

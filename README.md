@@ -4,6 +4,7 @@ Windows desktop app for setting up a new insurance client.
 
 - Creates the client's folder inside your **Clients** folder
 - Fills the **Client Consent** form (name, date, driver and licence #)
+- Names are saved in CAPITALS; an Ontario licence # is required
 - Copies the licence # to the clipboard, ready to paste into DASH
 - Shows which documents each client already has: Consent, DASH, Quote, MVR
 - Refills the consent form from saved DASH reports (up to 3 drivers)
