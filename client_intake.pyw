@@ -74,6 +74,34 @@ def shorten_path(path, n=70):
     return path if len(path) <= n else path[:20] + "…" + path[-(n - 21):]
 
 
+def parse_types(text):
+    return [t.strip() for t in (text or "").split(",") if t.strip()]
+
+
+def scan_clients(root, types):
+    """[(folder, type)] for Clients/<Type>/<client>, plus older client folders kept
+    directly in Clients (type "Other")."""
+    wanted = {t.lower(): t for t in types}
+    found = []
+    for child in root.iterdir():
+        if not child.is_dir():
+            continue
+        t = wanted.get(child.name.lower())
+        if t:
+            found += [(c, t) for c in child.iterdir() if c.is_dir()]
+        else:
+            found.append((child, "Other"))
+    return found
+
+
+def type_folder(root, client_type):
+    """The existing Clients/<Type> folder (any capitalisation), or the one to create."""
+    for child in root.iterdir():
+        if child.is_dir() and child.name.lower() == client_type.lower():
+            return child
+    return root / client_type
+
+
 def font(size=14, weight="normal"):
     return ctk.CTkFont(family=FONT, size=size, weight=weight)
 
@@ -83,7 +111,7 @@ class SettingsDialog(ctk.CTkToplevel):
         super().__init__(app)
         self.app = app
         self.title("Settings")
-        self.geometry("560x600")
+        self.geometry("560x680")
         self.resizable(False, False)
         self.configure(fg_color=BG)
         self.transient(app)
@@ -120,8 +148,11 @@ class SettingsDialog(ctk.CTkToplevel):
         app.secondary_button(body, "Email signature…", lambda: SignatureDialog(self, app), width=150) \
             .grid(row=11, column=0, sticky="e", padx=2 * SP)
 
+        self.types_var = tk.StringVar(value=app.cfg.get("client_types", ""))
+        self._text_row(body, 12, "Client types", self.types_var, "folders inside Clients, separated by commas")
+
         btns = ctk.CTkFrame(body, fg_color="transparent")
-        btns.grid(row=12, column=0, sticky="e", padx=2 * SP, pady=2 * SP)
+        btns.grid(row=14, column=0, sticky="e", padx=2 * SP, pady=2 * SP)
         ctk.CTkButton(btns, text="Cancel", width=96, height=36, font=font(13), fg_color="transparent",
                       border_width=1, border_color=BORDER, text_color=TEXT, hover_color=SURFACE_ALT,
                       command=self.destroy).pack(side="left", padx=(0, SP))
@@ -165,9 +196,11 @@ class SettingsDialog(ctk.CTkToplevel):
                       appearance=self.mode_var.get(),
                       mvr_to=self.to_var.get().strip(),
                       mvr_cc=self.cc_var.get().strip(),
-                      email_app=self.mail_var.get())
+                      email_app=self.mail_var.get(),
+                      client_types=", ".join(parse_types(self.types_var.get())) or config.DEFAULTS["client_types"])
         ctk.set_appearance_mode(self.app.cfg["appearance"])
         self.app.on_settings_changed()
+        self.app.reload_types()
         self.destroy()
 
 
@@ -427,7 +460,10 @@ class EmailDialog(ctk.CTkToplevel):
 
         ctk.CTkLabel(left, text="Template", font=font(13, "bold"), text_color=TEXT) \
             .grid(row=0, column=0, sticky="w", padx=p, pady=(p, SP / 2))
-        self.choice = tk.StringVar(value=next(iter(self.by_label)))
+        ctype = app.client_type_of.get(folder, "").lower()
+        start = next((l for l, t in self.by_label.items() if t.file == f"quote-{ctype}.html"),
+                     next(iter(self.by_label)))
+        self.choice = tk.StringVar(value=start)
         ctk.CTkOptionMenu(left, values=list(self.by_label), variable=self.choice, height=36, font=font(13),
                           dropdown_font=font(13), fg_color=SURFACE_ALT, button_color=PRIMARY,
                           button_hover_color=PRIMARY_HOVER, text_color=TEXT, dynamic_resizing=False,
@@ -693,11 +729,12 @@ class App(ctk.CTk):
         if icon.exists():
             self.after(250, lambda: self.iconbitmap(str(icon)))  # after CTk sets its own icon
         self.title("Client Intake")
-        self.geometry("1100x680")
-        self.minsize(980, 600)
+        self.geometry("1120x780")
+        self.minsize(980, 720)
         self.configure(fg_color=BG)
         self.selected = None
         self.note = None
+        self.client_type_of = {}
         self.row_buttons = {}
 
         self._build_topbar()
@@ -720,6 +757,10 @@ class App(ctk.CTk):
         self.after(100, self._first_run)
 
     # ---------- helpers ----------
+    @property
+    def client_types(self):
+        return parse_types(self.cfg.get("client_types")) or ["Auto", "Home", "Tenant", "Commercial"]
+
     @property
     def clients_root(self):
         return Path(self.cfg["clients_root"]) if self.cfg["clients_root"] else None
@@ -753,6 +794,13 @@ class App(ctk.CTk):
         if p:
             config.update(self.cfg, clients_root=str(Path(p)))
         self.on_settings_changed()
+
+    def reload_types(self):
+        types = self.client_types
+        self.type_buttons.configure(values=types)
+        if self.type_var.get() not in types:
+            self.type_var.set(types[0])
+        self.refresh_list()
 
     def on_settings_changed(self):
         root = self.clients_root
@@ -831,11 +879,21 @@ class App(ctk.CTk):
 
         ctk.CTkLabel(c, text="New client", font=font(16, "bold"), text_color=TEXT) \
             .grid(row=0, column=0, sticky="w", padx=p, pady=(p, 0))
-        ctk.CTkLabel(c, text="Creates the folder and fills the consent form.", font=font(12),
-                     text_color=MUTED).grid(row=1, column=0, sticky="w", padx=p)
+        top = ctk.CTkFrame(c, fg_color="transparent")
+        top.grid(row=1, column=0, sticky="ew", padx=p)
+        ctk.CTkLabel(top, text="Creates the folder and fills the consent form.", font=font(12),
+                     text_color=MUTED).pack(anchor="w")
+        ctk.CTkLabel(top, text="Type *", font=font(13, "bold"), text_color=TEXT) \
+            .pack(anchor="w", pady=(2 * SP, SP / 2))
+        last = self.cfg.get("last_type")
+        self.type_var = tk.StringVar(value=last if last in self.client_types else self.client_types[0])
+        self.type_buttons = ctk.CTkSegmentedButton(top, values=self.client_types, variable=self.type_var,
+                                                   font=font(13), height=34, selected_color=PRIMARY,
+                                                   selected_hover_color=PRIMARY_HOVER)
+        self.type_buttons.pack(anchor="w", fill="x")
 
         ctk.CTkLabel(c, text="Client name *", font=font(13, "bold"), text_color=TEXT) \
-            .grid(row=2, column=0, sticky="w", padx=p, pady=(2.5 * SP, SP / 2))
+            .grid(row=2, column=0, sticky="w", padx=p, pady=(1.5 * SP, SP / 2))
         self.name_entry = ctk.CTkEntry(c, height=40, font=font(14),
                                        border_color=BORDER, placeholder_text="e.g. JOHN SMITH")
         self.name_entry.grid(row=3, column=0, sticky="ew", padx=p)
@@ -927,22 +985,30 @@ class App(ctk.CTk):
             self._show_banner("Clients folder not found. Set it in Settings.", ok=False)
             return
 
-        folder = root / name
+        client_type = self.type_var.get()
+        folder = type_folder(root, client_type) / name
         if folder.exists():
-            self.name_error.configure(text=f"'{name}' already exists. Selected it in the list.")
+            self.name_error.configure(text=f"'{name}' already exists in {client_type}. Selected it in the list.")
             self.name_entry.configure(border_color=DANGER)
             self.clear_entry(self.search_entry)
+            self.filter_var.set("All")
             self.refresh_list()
             self.select(folder)
             return
+        elsewhere = sorted({t for f, t in scan_clients(root, self.client_types)
+                            if f.name.upper() == name and t != client_type})
 
         self.create_btn.configure(state="disabled", text="Creating…")
         self.update_idletasks()
-        folder.mkdir()
-        mvr_email.save_client(folder, name=name, dln=format_dln(dln),
+        folder.mkdir(parents=True)
+        if self.cfg.get("last_type") != client_type:
+            config.update(self.cfg, last_type=client_type)
+        mvr_email.save_client(folder, name=name, type=client_type, dln=format_dln(dln),
                               phone=mvr_email.format_phone(self.phone_entry.get()) or None,
                               email=self.email_entry.get().strip().lower() or None)
-        lines = [f"Created {name}"]
+        lines = [f"Created {name} in {client_type}"]
+        if elsewhere:
+            lines.append(f"(also has a folder in {', '.join(elsewhere)})")
         ok = True
         try:
             fill(folder, dln, self.cfg["consent_template"])
@@ -961,6 +1027,8 @@ class App(ctk.CTk):
         self.clear_entry(self.phone_entry)
         self.clear_entry(self.email_entry)
         self.clear_entry(self.search_entry)
+        if self.filter_var.get() not in ("All", client_type):
+            self.filter_var.set("All")
         self.refresh_list()
         self.select(folder)
         self.name_entry.focus_set()
@@ -970,7 +1038,7 @@ class App(ctk.CTk):
     def _build_client_list(self, parent):
         c = self.card(parent, row=0, column=1, padx=(0, 2 * SP))
         c.grid_columnconfigure(0, weight=1)
-        c.grid_rowconfigure(2, weight=1)
+        c.grid_rowconfigure(3, weight=1)
         p = 2 * SP
 
         head = ctk.CTkFrame(c, fg_color="transparent")
@@ -984,8 +1052,15 @@ class App(ctk.CTk):
         self.search_entry.grid(row=1, column=0, sticky="ew", padx=p, pady=SP * 1.5)
         self.search_entry.bind("<KeyRelease>", lambda e: self.refresh_list())
 
+        self.filter_var = tk.StringVar(value="All")
+        self.filter_buttons = ctk.CTkSegmentedButton(c, values=["All"] + self.client_types,
+                                                     variable=self.filter_var, font=font(11), height=30,
+                                                     selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER,
+                                                     command=lambda _: self.refresh_list())
+        self.filter_buttons.grid(row=2, column=0, sticky="ew", padx=p, pady=(0, SP))
+
         self.list_frame = ctk.CTkScrollableFrame(c, fg_color="transparent")
-        self.list_frame.grid(row=2, column=0, sticky="nsew", padx=SP, pady=(0, SP))
+        self.list_frame.grid(row=3, column=0, sticky="nsew", padx=SP, pady=(0, SP))
         self.list_frame.grid_columnconfigure(0, weight=1)
 
     def refresh_list(self, keep_scroll=False):
@@ -1000,14 +1075,22 @@ class App(ctk.CTk):
             return
 
         q = self.search_entry.get().lower().strip()
-        folders = sorted((p for p in root.iterdir() if p.is_dir()),
-                         key=lambda p: p.stat().st_mtime, reverse=True)
-        shown = [p for p in folders if q in p.name.lower()]
-        self.count_label.configure(text=f"{len(shown)} of {len(folders)}" if q else f"{len(folders)}")
+        types = self.client_types
+        clients = sorted(scan_clients(root, types), key=lambda ft: ft[0].stat().st_mtime, reverse=True)
+        self.client_type_of = dict(clients)
+        values = ["All"] + types + (["Other"] if any(t == "Other" for _, t in clients) else [])
+        if list(self.filter_buttons.cget("values")) != values:
+            self.filter_buttons.configure(values=values)
+        if self.filter_var.get() not in values:
+            self.filter_var.set("All")
+        kind = self.filter_var.get()
+        shown = [(f, t) for f, t in clients if q in f.name.lower() and kind in ("All", t)]
+        filtered = bool(q) or kind != "All"
+        self.count_label.configure(text=f"{len(shown)} of {len(clients)}" if filtered else f"{len(clients)}")
         if not shown:
-            self._empty_list("No clients match your search." if q else "No clients yet.")
+            self._empty_list("No clients match your search." if filtered else "No clients yet.")
 
-        for i, folder in enumerate(shown[:300]):
+        for i, (folder, ftype) in enumerate(shown[:300]):
             docs = find_docs(folder)
             have = sum(1 for v in docs.values() if v)
             when = datetime.datetime.fromtimestamp(folder.stat().st_mtime).strftime("%b %d, %Y")
@@ -1015,7 +1098,7 @@ class App(ctk.CTk):
             row.grid(row=i, column=0, sticky="ew", pady=1)
             ctk.CTkLabel(row, text=shorten(folder.name, 34), font=font(14, "bold"), text_color=TEXT,
                          anchor="w", height=20).pack(fill="x", padx=1.5 * SP, pady=(SP, 0))
-            ctk.CTkLabel(row, text=f"{when}  ·  {have} of {len(DOCUMENTS)} documents", font=font(12),
+            ctk.CTkLabel(row, text=f"{ftype}  ·  {when}  ·  {have} of {len(DOCUMENTS)} docs", font=font(12),
                          text_color=MUTED, anchor="w", height=18).pack(fill="x", padx=1.5 * SP, pady=(0, SP))
             for w in (row, *row.winfo_children()):
                 w.bind("<Button-1>", lambda e, f=folder: self.select(f))
@@ -1058,7 +1141,8 @@ class App(ctk.CTk):
                          text_color=MUTED).grid(row=1, column=0)
             return
 
-        ctk.CTkLabel(d, text=shorten(folder.name, 40), font=font(18, "bold"), text_color=TEXT, anchor="w") \
+        ctk.CTkLabel(d, text=shorten(folder.name, 40) + f"   ·   {self.client_type_of.get(folder, '')}".rstrip(" ·"),
+                     font=font(18, "bold"), text_color=TEXT, anchor="w") \
             .grid(row=0, column=0, sticky="ew", padx=p, pady=(p, 0))
         ctk.CTkLabel(d, text="Documents", font=font(12, "bold"), text_color=MUTED) \
             .grid(row=1, column=0, sticky="w", padx=p, pady=(2 * SP, SP))
@@ -1091,22 +1175,21 @@ class App(ctk.CTk):
 
         ctk.CTkLabel(d, text="Actions", font=font(12, "bold"), text_color=MUTED) \
             .grid(row=3, column=0, sticky="w", padx=p, pady=(3 * SP, SP))
+        # two equal columns so the buttons always fit the panel
         acts = ctk.CTkFrame(d, fg_color="transparent")
         acts.grid(row=4, column=0, sticky="ew", padx=p)
-        ctk.CTkButton(acts, text="Request MVR", height=36, width=120, font=font(13, "bold"),
-                      fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
-                      command=lambda: MvrDialog(self, folder)).pack(side="left", padx=(0, SP))
-        self.secondary_button(acts, "Email client…", lambda: EmailDialog(self, folder), width=120) \
-            .pack(side="left", padx=(0, SP))
-        self.secondary_button(acts, "Open folder", lambda: os.startfile(folder), width=110) \
-            .pack(side="left", padx=(0, SP))
-        acts2 = ctk.CTkFrame(d, fg_color="transparent")
-        acts2.grid(row=5, column=0, sticky="ew", padx=p, pady=(SP, 0))
-        self.secondary_button(acts2, "Import DASH from Downloads", lambda: ImportDashDialog(self, folder)) \
-            .pack(side="left", padx=(0, SP))
-        refill = self.secondary_button(acts2, "Refill consent from DASH", lambda: self.refill(folder),
-                                       state="normal" if docs["DASH report"] else "disabled")
-        refill.pack(side="left")
+        acts.grid_columnconfigure((0, 1), weight=1, uniform="acts")
+        buttons = [
+            ctk.CTkButton(acts, text="Request MVR", height=36, font=font(13, "bold"),
+                          fg_color=PRIMARY, hover_color=PRIMARY_HOVER, command=lambda: MvrDialog(self, folder)),
+            self.secondary_button(acts, "Email client…", lambda: EmailDialog(self, folder)),
+            self.secondary_button(acts, "Import DASH", lambda: ImportDashDialog(self, folder)),
+            self.secondary_button(acts, "Refill consent", lambda: self.refill(folder),
+                                  state="normal" if docs["DASH report"] else "disabled"),
+            self.secondary_button(acts, "Open folder", lambda: os.startfile(folder)),
+        ]
+        for i, b in enumerate(buttons):
+            b.grid(row=i // 2, column=i % 2, sticky="ew", padx=(0, SP) if i % 2 == 0 else 0, pady=(0, SP))
         self.detail_msg = ctk.CTkLabel(d, text="", font=font(13), text_color=SUCCESS,
                                        justify="left", anchor="w", wraplength=380)
         self.detail_msg.grid(row=6, column=0, sticky="w", padx=p, pady=(1.5 * SP, 0))

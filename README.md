@@ -2,7 +2,11 @@
 
 Windows desktop app for setting up a new insurance client.
 
-- Creates the client's folder inside your **Clients** folder
+- Creates the client's folder inside your **Clients** folder, under its type:
+  `Clients\Auto`, `Clients\Home`, `Clients\Tenant` or `Clients\Commercial` (type folders are
+  created when first needed; names can be changed in **Settings > Client types**)
+- Client list shows every type with **All / Auto / Home / Tenant / Commercial** filters;
+  older folders kept directly in Clients show as **Other**
 - Fills the **Client Consent** form (name, date, driver and licence #)
 - Names are saved in CAPITALS; an Ontario licence # is required
 - Copies the licence # to the clipboard, ready to paste into DASH

@@ -12,6 +12,8 @@ DEFAULTS = {
     "mvr_to": "",             # branch manager, e.g. name@brokerage.ca
     "mvr_cc": "",             # separate several with ;
     "email_app": "New Outlook",  # New Outlook | Classic Outlook
+    "client_types": "Auto, Home, Tenant, Commercial",  # sub-folders of the Clients folder
+    "last_type": "Auto",
 }
 
 
