@@ -1,5 +1,5 @@
 @echo off
-rem Builds dist\ClientIntake (a folder with ClientIntake.exe) and ClientIntake-windows.zip.
+rem Builds release\ClientIntake (a folder with ClientIntake.exe) and ClientIntake-windows.zip.
 rem Only needed on a computer WITH Python, to make the version for computers without it.
 setlocal
 cd /d "%~dp0"
@@ -17,9 +17,9 @@ python -m PyInstaller --noconfirm --clean --windowed --name ClientIntake --distp
 if errorlevel 1 goto :fail
 
 if exist ClientIntake-windows.zip del ClientIntake-windows.zip
-powershell -NoProfile -Command "Compress-Archive -Path 'dist\ClientIntake' -DestinationPath 'ClientIntake-windows.zip'"
+powershell -NoProfile -Command "Compress-Archive -Path 'release\ClientIntake' -DestinationPath 'ClientIntake-windows.zip'"
 echo.
-echo  Built: dist\ClientIntake\ClientIntake.exe
+echo  Built: release\ClientIntake\ClientIntake.exe
 echo  Zip:   ClientIntake-windows.zip
 exit /b 0
 
