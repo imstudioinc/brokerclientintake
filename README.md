@@ -41,18 +41,17 @@ Windows desktop app for setting up a new insurance client.
   Clients folder sees the same records. Each save re-reads the file and changes only that one
   record, and every record shows who added / edited it.
 
-## Ask (underwriting chat)
+## Rules (search the underwriting notes)
 
-- **Ask** (top bar): ask about eligibility, underwriting rules, endorsements and payments.
-  Answers come from the notes folder (`.md` files; default
-  `Documents\Docs\Insurance\Underwriting Knowledge`, change it with **Notes folder…**) and name
-  the note they used.
-- **Include client record** adds the client selected on the Clients tab: its policies, vehicles,
-  property, notes and reminders, the DASH report's counts, and the list of PDFs in the folder.
-- Needs an Anthropic API key (**API key…**, saved in this computer's settings only, or the
-  `ANTHROPIC_API_KEY` environment variable) and internet access to `api.anthropic.com`.
-  Uses Claude Opus 5.5; the notes are cached, so follow-up questions cost less.
-- Guidance only: confirm anything borderline with the underwriter before binding.
+- **Rules** (top bar): type a question or a few words (`intact G2 at-fault`, `pembridge oil tank`,
+  `echelon monthly payment`) and the matching rules show as you type, best section first, with
+  the words highlighted. Click a result's title to open that note.
+- Searches the notes folder (`.md` files; default `Documents\Docs\Insurance\Underwriting Knowledge`,
+  change it with **Notes folder…**; **Reload notes** after editing them). On another computer,
+  copy that folder there or to the shared drive and point **Notes folder…** at it.
+- Free and offline: no AI, no account, no internet. A carrier name in the question puts that
+  carrier's notes first; common words have synonyms (ticket → conviction, bike → motorcycle).
+- Notes are a summary: check the carrier manual before quoting exact rates or binding.
 
 ## Install on a computer without Python (work / remote desktop)
 
@@ -126,8 +125,7 @@ template, the MVR request recipients (To / CC), or light/dark mode. Settings are
 
 This repo holds code and the blank consent template only. Client files stay in
 your Clients folder and are never committed (see `.gitignore`).
-The **Ask** tab sends your question, the notes and (only when ticked) the selected client's
-record to Anthropic to answer it; nothing is sent until you ask.
+The **Rules** tab searches the notes on this computer; nothing is sent anywhere.
 
 ## Publishing an update
 

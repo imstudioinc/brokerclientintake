@@ -15,8 +15,7 @@ DEFAULTS = {
     "client_types": "Auto, Home, Tenant, Commercial",  # sub-folders of the Clients folder
     "last_type": "Auto",
     "mvr_autosave": True,     # file MVR PDFs from Downloads into client folders
-    "knowledge_dir": "",      # Ask tab notes; empty = Documents\Docs\Insurance\Underwriting Knowledge
-    "anthropic_api_key": "",  # Ask tab; empty = use the ANTHROPIC_API_KEY environment variable
+    "knowledge_dir": "",      # Rules tab notes; empty = Documents\Docs\Insurance\Underwriting Knowledge
 }
 
 
