@@ -46,7 +46,7 @@ SP = 8  # spacing unit
 
 # Documents tracked per client: (label, glob patterns)
 DOCUMENTS = [
-    ("Client consent", ["Client Consent*.pdf"]),
+    ("Client consent", ["*Client Consent*.pdf"]),
     ("DASH report", ["DASH Report*.pdf"]),
     ("Quote (ARS)", ["*Quote*.pdf", "*quote*.pdf"]),
     ("MVR", ["*MVR*.pdf", "*mvr*.pdf"]),
@@ -114,7 +114,7 @@ class SettingsDialog(ctk.CTkToplevel):
         super().__init__(app)
         self.app = app
         self.title("Settings")
-        self.geometry("580x730")
+        self.geometry("600x790")
         self.resizable(False, False)
         self.configure(fg_color=BG)
         self.transient(app)
@@ -159,8 +159,18 @@ class SettingsDialog(ctk.CTkToplevel):
                       variable=self.autosave_var, font=font(13), text_color=TEXT, progress_color=PRIMARY) \
             .grid(row=14, column=0, sticky="w", padx=2 * SP, pady=(2 * SP, 0))
 
+        sample = ctk.CTkFrame(body, fg_color="transparent")
+        sample.grid(row=15, column=0, sticky="ew", padx=2 * SP, pady=(2 * SP, 0))
+        if app.cfg.get("sample_prev_root") is not None:
+            text, cmd = "Back to my Clients folder", lambda: (self.destroy(), app.leave_sample())
+        else:
+            text, cmd = "Try with sample clients", lambda: (self.destroy(), app.use_sample())
+        app.secondary_button(sample, text, cmd, width=200).pack(side="left")
+        ctk.CTkLabel(sample, text="Uses a separate sample folder; your clients are not touched.",
+                     font=font(12), text_color=MUTED).pack(side="left", padx=SP)
+
         btns = ctk.CTkFrame(body, fg_color="transparent")
-        btns.grid(row=15, column=0, sticky="e", padx=2 * SP, pady=2 * SP)
+        btns.grid(row=16, column=0, sticky="e", padx=2 * SP, pady=2 * SP)
         ctk.CTkButton(btns, text="Cancel", width=96, height=36, font=font(13), fg_color="transparent",
                       border_width=1, border_color=BORDER, text_color=TEXT, hover_color=SURFACE_ALT,
                       command=self.destroy).pack(side="left", padx=(0, SP))
@@ -286,7 +296,7 @@ class MvrDialog(ctk.CTkToplevel):
         docs = find_docs(folder)
         # Prefill from: saved client details -> consent form -> DASH report -> folder name
         sources = [(info.get("name", ""), info.get("dln", ""))]
-        sources += [read_consent(f) for f in docs["Client consent"][:1]]
+        sources += [read_consent(f) for f in reversed(docs["Client consent"])]
         sources += [read_dash(f) for f in docs["DASH report"][:1]]
         sources = [s for s in sources if s]
         name = next((n for n, _ in sources if n), folder.name).upper()
@@ -829,8 +839,28 @@ class App(ctk.CTk):
 
     def on_settings_changed(self):
         root = self.clients_root
-        self.root_label.configure(text=shorten_path(root) if root else "No Clients folder set")
+        if self.cfg.get("sample_prev_root") is not None:
+            self.root_label.configure(text="Sample clients - not your real files", text_color=DANGER)
+            self.sample_btn.pack(side="right", padx=(0, SP))
+        else:
+            self.root_label.configure(text=shorten_path(root) if root else "No Clients folder set", text_color=MUTED)
+            self.sample_btn.pack_forget()
+        self.selected = None
         self.refresh_list()
+        self.tracker_changed()
+
+    # ---------- sample data ----------
+    def use_sample(self):
+        import sample_data
+        root = sample_data.create()
+        config.update(self.cfg, sample_prev_root=self.cfg.get("clients_root", ""), clients_root=str(root))
+        self.on_settings_changed()
+        self.open_tracker()
+
+    def leave_sample(self):
+        prev = self.cfg.get("sample_prev_root") or ""
+        config.update(self.cfg, clients_root=prev, sample_prev_root=None)
+        self.on_settings_changed()
 
     # ---------- top bar ----------
     def _build_topbar(self):
@@ -853,6 +883,10 @@ class App(ctk.CTk):
             .pack(side="right")
         ctk.CTkButton(bar, text="Tracker", width=96, height=36, font=font(13, "bold"), fg_color=PRIMARY,
                       hover_color=PRIMARY_HOVER, command=self.open_tracker).pack(side="right", padx=(0, SP))
+        self.sample_btn = self.secondary_button(bar, "Back to my Clients folder", self.leave_sample, width=190)
+        if self.cfg.get("sample_prev_root") is not None:
+            self.root_label.configure(text="Sample clients - not your real files", text_color=DANGER)
+            self.sample_btn.pack(side="right", padx=(0, SP))
         self.tracker_win = None
 
         # Shown only when a newer version is published

@@ -1,5 +1,6 @@
 """Client record window (per client) and Tracker window (all clients)."""
 import datetime
+import os
 import sys
 import threading
 import tkinter as tk
@@ -9,6 +10,12 @@ from tkinter import messagebox, ttk
 import customtkinter as ctk
 
 import records
+
+# Meaning colours for statuses and due dates (light, dark)
+GOOD = ("#15803D", "#4ADE80")
+WARN = ("#B45309", "#FBBF24")
+LIVE = ("Bound", "Active", "Renewed")
+ENDED = ("Cancelled", "Lapsed", "Lost")
 
 
 def _ui(app):
@@ -24,27 +31,36 @@ def style_tables(ui):
     s = ttk.Style()
     s.theme_use("clam")
     s.configure("Rec.Treeview", background=_c(ui.SURFACE), fieldbackground=_c(ui.SURFACE),
-                foreground=_c(ui.TEXT), rowheight=28, borderwidth=0, font=(ui.FONT, 10))
-    s.configure("Rec.Treeview.Heading", background=_c(ui.SURFACE_ALT), foreground=_c(ui.MUTED),
-                font=(ui.FONT, 9, "bold"), borderwidth=0, relief="flat")
+                foreground=_c(ui.TEXT), rowheight=34, borderwidth=0, font=(ui.FONT, 11))
+    s.configure("Rec.Treeview.Heading", background=_c(ui.SURFACE), foreground=_c(ui.MUTED),
+                font=(ui.FONT, 10, "bold"), borderwidth=0, relief="flat", padding=(8, 8))
+    s.map("Rec.Treeview.Heading", background=[("active", _c(ui.SURFACE_ALT))])
     s.map("Rec.Treeview", background=[("selected", _c(ui.SELECTED))],
           foreground=[("selected", _c(ui.TEXT))])
+    s.layout("Rec.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])  # no outer border
 
 
-def make_table(parent, ui, columns, widths=None, height=10):
+def make_table(parent, ui, columns, widths=None, height=10, right=(), tree_col=False):
+    """columns: [(key, label)]. right: keys aligned right (money). tree_col: show group rows."""
     frame = ctk.CTkFrame(parent, fg_color="transparent")
-    tree = ttk.Treeview(frame, columns=[c for c, _ in columns], show="headings", style="Rec.Treeview",
-                        height=height, selectmode="browse")
+    tree = ttk.Treeview(frame, columns=[c for c, _ in columns], show="tree headings" if tree_col else "headings",
+                        style="Rec.Treeview", height=height, selectmode="browse")
+    if tree_col:
+        tree.column("#0", width=22, minwidth=22, stretch=False)
     for key, label in columns:
-        tree.heading(key, text=label, command=lambda k=key: _sort(tree, k))
-        tree.column(key, width=(widths or {}).get(key, 120), anchor="w", stretch=True)
+        anchor = "e" if key in right else "w"
+        tree.heading(key, text=label, anchor=anchor, command=lambda k=key: _sort(tree, k))
+        tree.column(key, width=(widths or {}).get(key, 120), anchor=anchor, stretch=True)
     bar = ctk.CTkScrollbar(frame, command=tree.yview)
     tree.configure(yscrollcommand=bar.set)
     tree.pack(side="left", fill="both", expand=True)
     bar.pack(side="right", fill="y")
+    tree.tag_configure("odd", background=_c(ui.SURFACE_ALT))
     tree.tag_configure("overdue", foreground=_c(ui.DANGER))
-    tree.tag_configure("soon", foreground="#B45309")
+    tree.tag_configure("soon", foreground=_c(WARN))
+    tree.tag_configure("good", foreground=_c(GOOD))
     tree.tag_configure("muted", foreground=_c(ui.MUTED))
+    tree.tag_configure("group", font=(ui.FONT, 11, "bold"), background=_c(ui.BG), foreground=_c(ui.TEXT))
     return frame, tree
 
 
@@ -61,7 +77,35 @@ def _sort(tree, key):
     rows.sort(key=k, reverse=desc)
     for n, (_, i) in enumerate(rows):
         tree.move(i, "", n)
+        _zebra(tree, i, n)
     tree._sort_desc = {key: not desc}
+
+
+def _zebra(tree, iid, n):
+    tags = [t for t in tree.item(iid, "tags") if t != "odd"]
+    tree.item(iid, tags=tags + (["odd"] if n % 2 else []))
+
+
+def nice_date(value):
+    d = records.parse_date(value) if isinstance(value, str) else value
+    return d.strftime("%b %d, %Y").replace(" 0", " ") if d else (value or "")
+
+
+def when_text(d, today=None):
+    """'3 days overdue', 'Today', 'Tomorrow', 'In 5 days', or the date for later items."""
+    today = today or datetime.date.today()
+    days = (d - today).days
+    if days < -1:
+        return f"{-days} days overdue"
+    if days == -1:
+        return "Yesterday"
+    if days == 0:
+        return "Today"
+    if days == 1:
+        return "Tomorrow"
+    if days <= 14:
+        return f"In {days} days"
+    return nice_date(d)
 
 
 def show_value(kind, key, value):
@@ -70,10 +114,34 @@ def show_value(kind, key, value):
         return f"${records.money(value):,.2f}"
     if field and field[2] == "bool":
         return "Yes" if value else ""
-    if key == "by":
-        return value or ""
-    text = str(value or "")
-    return text if len(text) < 80 else text[:77] + "…"
+    if field and field[2] == "date":
+        return nice_date(value)
+    text = " ".join(str(value or "").split())
+    return text if len(text) < 90 else text[:87] + "…"
+
+
+def status_tag(status):
+    """Only statuses that need attention are coloured: quotes amber, ended policies grey."""
+    return "soon" if status == "Quoted" else "muted" if status in ENDED else ""
+
+
+class Counter(ctk.CTkFrame):
+    """A number with a label underneath; clicking it applies a filter."""
+
+    def __init__(self, parent, ui, label, color, command):
+        super().__init__(parent, fg_color=ui.SURFACE, corner_radius=10, border_width=2, border_color=ui.SURFACE,
+                         cursor="hand2")
+        self.ui = ui
+        self.number = ctk.CTkLabel(self, text="–", font=ui.font(28, "bold"), text_color=color, cursor="hand2")
+        self.number.pack(anchor="w", padx=16, pady=(10, 0))
+        self.label = ctk.CTkLabel(self, text=label, font=ui.font(13), text_color=ui.MUTED, cursor="hand2")
+        self.label.pack(anchor="w", padx=16, pady=(0, 10))
+        for w in (self, self.number, self.label):
+            w.bind("<Button-1>", lambda e: command())
+
+    def set(self, n, active=False):
+        self.number.configure(text=str(n))
+        self.configure(border_color=self.ui.PRIMARY if active else self.ui.SURFACE)
 
 
 # ====================================================================== editor
@@ -200,6 +268,12 @@ class RecordEditor(ctk.CTkToplevel):
             self.on_saved()
 
 
+SHORT = {"by": "Added by", "insurer": "Insurer", "policy_number": "Policy #", "effective": "Effective",
+         "expiry": "Expiry", "premium": "Premium", "plan": "Plan", "principal_driver": "Driver",
+         "lienholder": "Lender", "year_built": "Built", "mortgagee": "Mortgagee", "operations": "Operations",
+         "text": "Note", "due": "Due", "method": "How"}
+
+
 # ============================================================== client record
 class ClientRecordDialog(ctk.CTkToplevel):
     """Everything about one client: policies, vehicles, property, business, notes, reminders."""
@@ -210,41 +284,57 @@ class ClientRecordDialog(ctk.CTkToplevel):
         ui = self.ui = _ui(app)
         style_tables(ui)
         self.title(f"Client record - {self.folder.name}")
-        self.geometry("1060x640")
-        self.minsize(860, 520)
+        self.geometry("1100x700")
+        self.minsize(880, 560)
         self.configure(fg_color=ui.BG)
         self.transient(app)
 
         head = ctk.CTkFrame(self, fg_color="transparent")
-        head.pack(fill="x", padx=16, pady=(14, 0))
-        ctk.CTkLabel(head, text=self.folder.name, font=ui.font(18, "bold"), text_color=ui.TEXT).pack(side="left")
-        self.summary = ctk.CTkLabel(head, text="", font=ui.font(13), text_color=ui.MUTED)
-        self.summary.pack(side="left", padx=16)
-        app.secondary_button(head, "Open folder", lambda: __import__("os").startfile(self.folder), width=110) \
-            .pack(side="right")
+        head.pack(fill="x", padx=20, pady=(18, 0))
+        ctk.CTkLabel(head, text=self.folder.name, font=ui.font(22, "bold"), text_color=ui.TEXT).pack(side="left")
+        app.secondary_button(head, "Open folder", lambda: os.startfile(self.folder), width=110).pack(side="right")
 
-        self.tabs = ctk.CTkTabview(self, fg_color=ui.SURFACE, segmented_button_selected_color=ui.PRIMARY,
-                                   segmented_button_selected_hover_color=ui.PRIMARY_HOVER,
-                                   border_width=1, border_color=ui.BORDER)
-        self.tabs.pack(fill="both", expand=True, padx=16, pady=16)
+        # Facts a broker looks for first, in one readable sentence-sized row
+        facts = ctk.CTkFrame(self, fg_color="transparent")
+        facts.pack(fill="x", padx=20, pady=(10, 0))
+        self.facts = {}
+        for key, label in (("active", "Active policies"), ("premium", "Annual premium"),
+                           ("monthly", "Monthly payments"), ("todo", "To do")):
+            box = ctk.CTkFrame(facts, fg_color=ui.SURFACE, corner_radius=10)
+            box.pack(side="left", padx=(0, 10))
+            value = ctk.CTkLabel(box, text="–", font=ui.font(20, "bold"), text_color=ui.TEXT)
+            value.pack(anchor="w", padx=16, pady=(8, 0))
+            ctk.CTkLabel(box, text=label, font=ui.font(12), text_color=ui.MUTED).pack(anchor="w", padx=16, pady=(0, 8))
+            self.facts[key] = value
+
+        self.tabs = ctk.CTkTabview(self, fg_color=ui.SURFACE, segmented_button_selected_color=ui.SELECTED,
+                                   segmented_button_selected_hover_color=ui.SELECTED,
+                                   segmented_button_fg_color=ui.SURFACE_ALT,
+                                   segmented_button_unselected_color=ui.SURFACE_ALT,
+                                   segmented_button_unselected_hover_color=ui.BORDER,
+                                   text_color=ui.TEXT, border_width=0, corner_radius=12)
+        self.tabs.pack(fill="both", expand=True, padx=20, pady=(14, 20))
+        self.tabs._segmented_button.configure(font=ui.font(13), height=34)
         self.trees = {}
         for kind, spec in records.KINDS.items():
             tab = self.tabs.add(spec["title"])
-            cols = [(k, next(f[1] for f in spec["fields"] if f[0] == k) if k != "by" else "Added by")
+            cols = [(k, SHORT.get(k) or next(f[1] for f in spec["fields"] if f[0] == k).split(" (")[0])
                     for k in spec["columns"]]
-            cols = [(k, l.split(" (")[0]) for k, l in cols]
-            frame, tree = make_table(tab, ui, cols, widths={"text": 380, "address": 240, "coverage": 240})
-            frame.pack(fill="both", expand=True, padx=8, pady=(8, 0))
+            frame, tree = make_table(tab, ui, cols, right=("premium", "revenue"),
+                                     widths={"text": 420, "address": 260, "vin": 190, "lienholder": 220})
+            frame.pack(fill="both", expand=True, padx=6, pady=(6, 0))
             tree.bind("<Double-1>", lambda e, k=kind: self.edit(k))
             bar = ctk.CTkFrame(tab, fg_color="transparent")
-            bar.pack(fill="x", padx=8, pady=8)
-            ctk.CTkButton(bar, text=f"Add {spec['singular']}", height=34, font=ui.font(13, "bold"),
+            bar.pack(fill="x", padx=6, pady=10)
+            ctk.CTkButton(bar, text=f"Add {spec['singular']}", height=36, font=ui.font(13, "bold"),
                           fg_color=ui.PRIMARY, hover_color=ui.PRIMARY_HOVER,
                           command=lambda k=kind: self.add(k)).pack(side="left")
             app.secondary_button(bar, "Edit", lambda k=kind: self.edit(k), width=80).pack(side="left", padx=8)
             app.secondary_button(bar, "Delete", lambda k=kind: self.delete(k), width=80).pack(side="left")
             if kind == "reminders":
                 app.secondary_button(bar, "Mark done", self.mark_done, width=100).pack(side="left", padx=8)
+            ctk.CTkLabel(bar, text="Double-click a row to edit it.", font=ui.font(12), text_color=ui.MUTED) \
+                .pack(side="right")
             self.trees[kind] = tree
         self.tabs.set(tab if tab in [s["title"] for s in records.KINDS.values()] else "Policies")
         self.bind("<Escape>", lambda e: self.destroy())
@@ -255,19 +345,31 @@ class ClientRecordDialog(ctk.CTkToplevel):
         for kind, tree in self.trees.items():
             tree.delete(*tree.get_children())
             items = self.data[kind]
-            if kind in ("notes", "reminders"):
-                items = sorted(items, key=lambda x: x.get("date") or x.get("due") or "", reverse=kind == "notes")
-            for it in items:
-                tags = ("muted",) if (kind == "reminders" and it.get("done")) or \
-                    (kind == "policies" and it.get("status") in ("Cancelled", "Lapsed", "Lost")) else ()
-                tree.insert("", "end", iid=it["id"], tags=tags,
+            if kind == "notes":
+                items = sorted(items, key=lambda x: x.get("date") or "", reverse=True)
+            elif kind == "reminders":
+                items = sorted(items, key=lambda x: (bool(x.get("done")), x.get("due") or ""))
+            elif kind == "policies":
+                items = sorted(items, key=lambda x: (x.get("status") in ENDED, x.get("expiry") or ""))
+            for n, it in enumerate(items):
+                tags = []
+                if kind == "policies":
+                    tags.append(status_tag(it.get("status")))
+                if kind == "reminders" and it.get("done"):
+                    tags.append("muted")
+                if n % 2:
+                    tags.append("odd")
+                tree.insert("", "end", iid=it["id"], tags=[t for t in tags if t],
                             values=[show_value(kind, k, it.get(k)) for k in records.KINDS[kind]["columns"]])
-        live = [p for p in self.data["policies"] if p.get("status") in ("Bound", "Active", "Renewed")]
-        total = sum(records.money(p.get("premium")) for p in live)
+        live = [p for p in self.data["policies"] if p.get("status") in LIVE]
+        monthly = sum(records.money(p.get("monthly")) for p in live if p.get("plan") == "Monthly")
         due = records.due_items(self.folder, self.data)
-        overdue = sum(1 for d in due if d["due"] <= datetime.date.today())
-        self.summary.configure(text=f"{len(live)} active polic{'y' if len(live) == 1 else 'ies'}  ·  "
-                                    f"${total:,.2f} / year  ·  {len(due)} to do" + (f" ({overdue} due now)" if overdue else ""))
+        now = sum(1 for d in due if d["due"] <= datetime.date.today())
+        self.facts["active"].configure(text=str(len(live)))
+        self.facts["premium"].configure(text=f"${sum(records.money(p.get('premium')) for p in live):,.0f}")
+        self.facts["monthly"].configure(text=f"${monthly:,.2f}" if monthly else "None")
+        self.facts["todo"].configure(text=f"{len(due)}" + (f"  ({now} due now)" if now else ""),
+                                     text_color=self.ui.DANGER if now else self.ui.TEXT)
 
     def _selected(self, kind):
         sel = self.trees[kind].selection()
@@ -303,6 +405,9 @@ class ClientRecordDialog(ctk.CTkToplevel):
 
 
 # ==================================================================== tracker
+TODO_KIND = {"Reminder": "Reminder", "Renewal": "Renewal", "Quote": "Quote follow-up", "Missing info": "Missing info"}
+
+
 class TrackerWindow(ctk.CTkToplevel):
     """All clients: what needs doing, every policy, and premium totals."""
 
@@ -312,64 +417,81 @@ class TrackerWindow(ctk.CTkToplevel):
         ui = self.ui = _ui(app)
         style_tables(ui)
         self.title("Tracker")
-        self.geometry("1180x700")
-        self.minsize(900, 560)
+        self.geometry("1220x760")
+        self.minsize(960, 600)
         self.configure(fg_color=ui.BG)
 
         head = ctk.CTkFrame(self, fg_color="transparent")
-        head.pack(fill="x", padx=16, pady=(14, 0))
-        ctk.CTkLabel(head, text="Tracker", font=ui.font(20, "bold"), text_color=ui.TEXT).pack(side="left")
+        head.pack(fill="x", padx=20, pady=(18, 0))
+        ctk.CTkLabel(head, text="Tracker", font=ui.font(24, "bold"), text_color=ui.TEXT).pack(side="left")
         self.status = ctk.CTkLabel(head, text="Loading…", font=ui.font(13), text_color=ui.MUTED)
-        self.status.pack(side="left", padx=16)
+        self.status.pack(side="left", padx=16, pady=(6, 0))
         app.secondary_button(head, "Refresh", self.load, width=90).pack(side="right")
 
-        self.tabs = ctk.CTkTabview(self, fg_color=ui.SURFACE, segmented_button_selected_color=ui.PRIMARY,
-                                   segmented_button_selected_hover_color=ui.PRIMARY_HOVER,
-                                   border_width=1, border_color=ui.BORDER)
-        self.tabs.pack(fill="both", expand=True, padx=16, pady=16)
+        # Counters double as filters for the To do list
+        self.view = "all"
+        row = ctk.CTkFrame(self, fg_color="transparent")
+        row.pack(fill="x", padx=20, pady=(12, 0))
+        self.counters = {}
+        for key, label, color in (("now", "Due now", ui.DANGER), ("soon", "Next 14 days", WARN),
+                                  ("Renewal", "Renewals", ui.TEXT), ("Quote", "Quotes waiting", ui.TEXT),
+                                  ("all", "Everything", ui.MUTED)):
+            c = Counter(row, ui, label, color, lambda k=key: self.set_view(k))
+            c.pack(side="left", padx=(0, 10))
+            self.counters[key] = c
 
-        # --- To do
+        self.tabs = ctk.CTkTabview(self, fg_color=ui.SURFACE, segmented_button_selected_color=ui.SELECTED,
+                                   segmented_button_selected_hover_color=ui.SELECTED,
+                                   segmented_button_fg_color=ui.SURFACE_ALT,
+                                   segmented_button_unselected_color=ui.SURFACE_ALT,
+                                   segmented_button_unselected_hover_color=ui.BORDER,
+                                   text_color=ui.TEXT, corner_radius=12)
+        self.tabs.pack(fill="both", expand=True, padx=20, pady=(14, 20))
+        self.tabs._segmented_button.configure(font=ui.font(13), height=34)
+
+        # --- To do (grouped: due now / next 14 days / later)
         t = self.tabs.add("To do")
-        frame, self.todo = make_table(t, ui, [("due", "Due"), ("client", "Client"), ("kind", "Type"), ("what", "What")],
-                                      widths={"due": 110, "client": 200, "kind": 110, "what": 560}, height=16)
-        frame.pack(fill="both", expand=True, padx=8, pady=8)
+        frame, self.todo = make_table(t, ui, [("when", "When"), ("client", "Client"), ("kind", "Type"), ("what", "What to do")],
+                                      widths={"when": 150, "client": 200, "kind": 130, "what": 600}, height=14,
+                                      tree_col=True)
+        frame.pack(fill="both", expand=True, padx=6, pady=6)
         self.todo.bind("<Double-1>", lambda e: self.open_client(self.todo, "Reminders"))
-        ctk.CTkLabel(t, text="Red = due or overdue, amber = within 14 days. Renewals show 45 days ahead; "
-                             "quotes get a follow-up after 7 days. Double-click to open the client.",
+        ctk.CTkLabel(t, text="Renewals appear 45 days before expiry. Quotes get a follow-up after 7 days. "
+                             "Double-click a row to open the client.",
                      font=ui.font(12), text_color=ui.MUTED).pack(anchor="w", padx=8, pady=(0, 8))
 
         # --- Policies
         t = self.tabs.add("Policies")
         filters = ctk.CTkFrame(t, fg_color="transparent")
-        filters.pack(fill="x", padx=8, pady=(8, 0))
+        filters.pack(fill="x", padx=6, pady=(6, 0))
         self.f_status = tk.StringVar(value="Bound / Active")
         self.f_line = tk.StringVar(value="All lines")
         self.f_month = tk.StringVar(value="All months")
-        for var, values in ((self.f_status, ["Bound / Active", "All statuses"] + records.STATUSES),
-                            (self.f_line, ["All lines"] + records.LINES)):
-            ctk.CTkOptionMenu(filters, values=values, variable=var, width=170, height=32, font=ui.font(13),
-                              fg_color=ui.SURFACE_ALT, button_color=ui.PRIMARY, text_color=ui.TEXT,
-                              button_hover_color=ui.PRIMARY_HOVER, command=lambda _: self.fill_policies()) \
-                .pack(side="left", padx=(0, 8))
-        self.month_menu = ctk.CTkOptionMenu(filters, values=["All months"], variable=self.f_month, width=170,
-                                            height=32, font=ui.font(13), fg_color=ui.SURFACE_ALT,
-                                            button_color=ui.PRIMARY, text_color=ui.TEXT,
-                                            button_hover_color=ui.PRIMARY_HOVER,
-                                            command=lambda _: self.fill_policies())
+        menu = dict(width=170, height=34, font=ui.font(13), fg_color=ui.SURFACE_ALT, button_color=ui.SURFACE_ALT,
+                    button_hover_color=ui.BORDER, text_color=ui.TEXT, dropdown_font=ui.font(13),
+                    command=lambda _: self.fill_policies())
+        ctk.CTkOptionMenu(filters, values=["Bound / Active", "All statuses"] + records.STATUSES,
+                          variable=self.f_status, **menu).pack(side="left", padx=(0, 8))
+        ctk.CTkOptionMenu(filters, values=["All lines"] + records.LINES, variable=self.f_line, **menu) \
+            .pack(side="left", padx=(0, 8))
+        self.month_menu = ctk.CTkOptionMenu(filters, values=["All months"], variable=self.f_month, **menu)
         self.month_menu.pack(side="left")
-        self.totals = ctk.CTkLabel(filters, text="", font=ui.font(13, "bold"), text_color=ui.TEXT)
-        self.totals.pack(side="right")
         cols = [("client", "Client"), ("line", "Line"), ("status", "Status"), ("insurer", "Insurer"),
                 ("policy_number", "Policy #"), ("effective", "Effective"), ("expiry", "Expiry"),
                 ("premium", "Premium"), ("plan", "Plan"), ("by", "Added by")]
-        frame, self.pol = make_table(t, ui, cols, widths={"client": 190, "premium": 100}, height=16)
-        frame.pack(fill="both", expand=True, padx=8, pady=8)
+        frame, self.pol = make_table(t, ui, cols, right=("premium",),
+                                     widths={"client": 190, "premium": 110, "effective": 120, "expiry": 120},
+                                     height=14)
+        self.totals = ctk.CTkLabel(t, text="", font=ui.font(14, "bold"), text_color=ui.TEXT, anchor="e")
+        self.totals.pack(side="bottom", fill="x", padx=12, pady=(0, 10))  # pinned below the table
+        frame.pack(fill="both", expand=True, padx=6, pady=6)
         self.pol.bind("<Double-1>", lambda e: self.open_client(self.pol, "Policies"))
 
-        self.items = []
+        self.items, self.todo_rows = [], []
         self.bind("<Escape>", lambda e: self.destroy())
         self.load()
 
+    # ----- data
     def load(self):
         self.status.configure(text="Loading…")
         folders = list(self.app.client_type_of)
@@ -383,34 +505,72 @@ class TrackerWindow(ctk.CTkToplevel):
         if not self.winfo_exists():
             return
         self.items = result
-        today = datetime.date.today()
-        self.todo.delete(*self.todo.get_children())
-        todo = []
-        for folder, data in result:
-            for d in records.due_items(folder, data):
-                todo.append((d["due"], folder, d))
-        todo.sort(key=lambda x: x[0])
-        for n, (due, folder, d) in enumerate(todo):
-            tag = "overdue" if due <= today else "soon" if due <= today + datetime.timedelta(days=14) else ""
-            self.todo.insert("", "end", iid=f"{n}", tags=(tag,) if tag else (),
-                             values=[due.isoformat(), folder.name, d["kind"], d["what"]])
-        self._todo_folders = {f"{n}": folder for n, (_, folder, _) in enumerate(todo)}
+        self.todo_rows = sorted(((d["due"], folder, d) for folder, data in result
+                                 for d in records.due_items(folder, data)), key=lambda x: x[0])
         months = sorted({(p.get("effective") or "")[:7] for _, data in result for p in data["policies"]
                          if p.get("effective")}, reverse=True)
         self.month_menu.configure(values=["All months"] + months)
-        overdue = sum(1 for due, _, _ in todo if due <= today)
-        self.status.configure(text=f"{len(result)} clients with records  ·  {len(todo)} to do"
-                                   + (f"  ·  {overdue} due now" if overdue else ""))
+        self.status.configure(text=f"{len(result)} clients with records, updated "
+                                   f"{datetime.datetime.now():%I:%M %p}".replace(" 0", " "))
+        self.fill_todo()
         self.fill_policies()
 
+    # ----- To do
+    def _bucket(self, due, today):
+        return "now" if due <= today else "soon" if due <= today + datetime.timedelta(days=14) else "later"
+
+    def set_view(self, key):
+        self.view = "all" if self.view == key else key
+        self.tabs.set("To do")
+        self.fill_todo()
+
+    def fill_todo(self):
+        today = datetime.date.today()
+        rows = self.todo_rows
+        counts = {"now": 0, "soon": 0, "Renewal": 0, "Quote": 0, "all": len(rows)}
+        for due, _, d in rows:
+            counts[self._bucket(due, today)] = counts.get(self._bucket(due, today), 0) + 1
+            if d["kind"] in counts:
+                counts[d["kind"]] += 1
+        for key, c in self.counters.items():
+            c.set(counts.get(key, 0), active=(key == self.view))
+
+        if self.view in ("now", "soon"):
+            rows = [r for r in rows if self._bucket(r[0], today) == self.view]
+        elif self.view in ("Renewal", "Quote"):
+            rows = [r for r in rows if r[2]["kind"] == self.view]
+
+        tree = self.todo
+        tree.delete(*tree.get_children())
+        self._todo_folders = {}
+        groups = (("now", "Due now"), ("soon", "Next 14 days"), ("later", "Later"))
+        for key, title in groups:
+            members = [r for r in rows if self._bucket(r[0], today) == key]
+            if not members:
+                continue
+            parent = tree.insert("", "end", iid=f"g-{key}", open=True, tags=("group",),
+                                 values=[f"{title} ({len(members)})", "", "", ""])
+            for n, (due, folder, d) in enumerate(members):
+                iid = f"{key}-{n}"
+                tag = {"now": "overdue", "soon": "soon"}.get(key, "")
+                tree.insert(parent, "end", iid=iid, tags=[t for t in (tag, "odd" if n % 2 else "") if t],
+                            values=[when_text(due, today), folder.name, TODO_KIND.get(d["kind"], d["kind"]),
+                                    d["what"]])
+                self._todo_folders[iid] = folder
+        if not rows:
+            tree.insert("", "end", iid="empty", tags=("muted",),
+                        values=["", "Nothing to do here.", "", "Add reminders from a client's record."])
+
+    # ----- Policies
     def fill_policies(self):
         self.pol.delete(*self.pol.get_children())
         status, line, month = self.f_status.get(), self.f_line.get(), self.f_month.get()
-        total, count = 0.0, 0
+        total, by_line, count = 0.0, {}, 0
         self._pol_folders = {}
+        rows = []
         for folder, data in self.items:
             for p in data["policies"]:
-                if status == "Bound / Active" and p.get("status") not in ("Bound", "Active", "Renewed"):
+                if status == "Bound / Active" and p.get("status") not in LIVE:
                     continue
                 if status not in ("Bound / Active", "All statuses") and p.get("status") != status:
                     continue
@@ -418,14 +578,21 @@ class TrackerWindow(ctk.CTkToplevel):
                     continue
                 if month != "All months" and not (p.get("effective") or "").startswith(month):
                     continue
-                iid = f"{folder}|{p['id']}"
-                self._pol_folders[iid] = folder
-                self.pol.insert("", "end", iid=iid, values=[folder.name] + [
-                    show_value("policies", k, p.get(k)) for k in
-                    ("line", "status", "insurer", "policy_number", "effective", "expiry", "premium", "plan", "by")])
-                total += records.money(p.get("premium"))
-                count += 1
-        self.totals.configure(text=f"{count} polic{'y' if count == 1 else 'ies'}  ·  ${total:,.2f} premium")
+                rows.append((p.get("expiry") or "", folder, p))
+        for n, (_, folder, p) in enumerate(sorted(rows, key=lambda r: r[0])):
+            iid = f"{folder}|{p['id']}"
+            self._pol_folders[iid] = folder
+            tags = [t for t in (status_tag(p.get("status")), "odd" if n % 2 else "") if t]
+            self.pol.insert("", "end", iid=iid, tags=tags, values=[folder.name] + [
+                show_value("policies", k, p.get(k)) for k in
+                ("line", "status", "insurer", "policy_number", "effective", "expiry", "premium", "plan", "by")])
+            amount = records.money(p.get("premium"))
+            total += amount
+            by_line[p.get("line") or "Other"] = by_line.get(p.get("line") or "Other", 0) + amount
+            count += 1
+        parts = [f"{k} ${v:,.0f}" for k, v in sorted(by_line.items(), key=lambda kv: -kv[1])]
+        self.totals.configure(text=("     ".join(parts) + "        " if len(parts) > 1 else "")
+                                   + f"{count} polic{'y' if count == 1 else 'ies'}, ${total:,.2f} total premium")
 
     def open_client(self, tree, tab):
         sel = tree.selection()

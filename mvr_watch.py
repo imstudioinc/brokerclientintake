@@ -45,7 +45,7 @@ class ClientIndex:
                 info = load_client(folder)
                 dln, name = info.get("dln", ""), info.get("name", "") or folder.name
                 if not dln:  # older clients: the licence # is on the consent form
-                    for consent in folder.glob("Client Consent*.pdf"):
+                    for consent in folder.glob("*Client Consent*.pdf"):
                         found = read_consent(consent)
                         if found and found[1]:
                             dln = found[1]

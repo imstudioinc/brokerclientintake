@@ -104,7 +104,7 @@ template, the MVR request recipients (To / CC), or light/dark mode. Settings are
 
 | Document | File name starts with / contains |
 |---|---|
-| Consent | `Client Consent…` |
+| Consent | contains `Client Consent` (e.g. `New Client Consent Form.pdf`) |
 | DASH | `DASH Report…` (the DASH portal's default name) |
 | Quote | contains `Quote` (e.g. `Quote Information.pdf`) |
 | MVR | contains `MVR` |
@@ -123,3 +123,10 @@ commits, tags, and publishes the zip to
 Installed apps offer the update the next time they open.
 
 `build.bat` alone only builds `release\ClientIntake` and the zip, without publishing.
+
+## Sample clients
+
+**Settings > Try with sample clients** builds a separate sample folder
+(`Documents\Client Intake sample\Clients`) with Auto, Home, Tenant and Commercial clients and
+policies, and switches to it so you can try the Tracker. **Back to my Clients folder** returns
+to your real folder; real clients are never touched.
