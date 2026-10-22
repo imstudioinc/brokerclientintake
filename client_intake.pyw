@@ -752,6 +752,11 @@ class App(ctk.CTk):
         self.selected = None
         self.note = None
         self.client_type_of = {}
+        self.rows = {}            # folder -> list row (kept between refreshes)
+        self._docs_cache = {}     # folder -> (mtime, documents found)
+        self._rows_mode = None
+        self._refresh_job = None
+        self.list_limit = self.PAGE
         self.ui_queue = queue.Queue()  # created before any background thread starts
         self._drain_ui()
         self.row_buttons = {}
@@ -803,7 +808,7 @@ class App(ctk.CTk):
     def _on_focus(self, event):
         # Refresh when returning to the app, so files saved elsewhere show up
         if event.widget is self:
-            self.refresh_list(keep_scroll=True)
+            self.refresh_soon(300)
 
     def _first_run(self):
         if self.clients_root and self.clients_root.exists():
@@ -1151,151 +1156,253 @@ class App(ctk.CTk):
         self.search_entry = ctk.CTkEntry(c, height=36, font=font(13),
                                          border_color=BORDER, placeholder_text="Search clients")
         self.search_entry.grid(row=1, column=0, sticky="ew", padx=p, pady=SP * 1.5)
-        self.search_entry.bind("<KeyRelease>", lambda e: self.refresh_list())
+        self.search_entry.bind("<KeyRelease>", lambda e: self.refresh_soon(200, reset_page=True))
 
         self.filter_var = tk.StringVar(value="All")
         self.filter_buttons = ctk.CTkSegmentedButton(c, values=["All"] + self.client_types,
                                                      variable=self.filter_var, font=font(11), height=30,
                                                      selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER,
-                                                     command=lambda _: self.refresh_list())
+                                                     command=lambda _: self.refresh_soon(0, reset_page=True))
         self.filter_buttons.grid(row=2, column=0, sticky="ew", padx=p, pady=(0, SP))
 
         self.list_frame = ctk.CTkScrollableFrame(c, fg_color="transparent")
         self.list_frame.grid(row=3, column=0, sticky="nsew", padx=SP, pady=(0, SP))
         self.list_frame.grid_columnconfigure(0, weight=1)
+        self.empty_label = ctk.CTkLabel(self.list_frame, text="", font=font(13), text_color=MUTED)
+        self.more_btn = self.secondary_button(self.list_frame, "Show more", self.show_more)
+
+    # The list uses plain Tk widgets (much faster than CTk ones) and keeps its rows between
+    # refreshes; a refresh only re-orders, shows or hides them. Rows are drawn in pages.
+    PAGE = 100
+
+    def _c(self, pair):
+        """Pick the light or dark colour of a (light, dark) token for plain Tk widgets."""
+        return pair[1] if ctk.get_appearance_mode() == "Dark" else pair[0]
+
+    def _make_row(self, folder):
+        row = tk.Frame(self.list_frame, cursor="hand2", bd=0, highlightthickness=0)
+        row.name = tk.Label(row, anchor="w", font=(FONT, 10, "bold"), cursor="hand2")
+        row.sub = tk.Label(row, anchor="w", font=(FONT, 9), cursor="hand2")
+        row.name.pack(fill="x", padx=12, pady=(7, 0))
+        row.sub.pack(fill="x", padx=12, pady=(0, 7))
+        row.sub_text = None
+        for w in (row, row.name, row.sub):
+            w.bind("<Button-1>", lambda e, f=folder: self.select(f))
+            w.bind("<Double-Button-1>", lambda e, f=folder: os.startfile(f))
+            w.bind("<Enter>", lambda e, f=folder: self._paint_row(f, hover=True))
+            w.bind("<Leave>", lambda e, f=folder: self._paint_row(f))
+        row.name.configure(text=shorten(folder.name, 34))
+        self.rows[folder] = row
+        self._paint_row(folder)
+        return row
+
+    def _paint_row(self, folder, hover=False):
+        row = self.rows.get(folder)
+        if not row:
+            return
+        if folder == self.selected:
+            bg = self._c(SELECTED)
+        elif hover:
+            bg = self._c(SURFACE_ALT)
+        else:
+            bg = self._c(SURFACE)
+        for w in (row, row.name, row.sub):
+            w.configure(bg=bg)
+        row.name.configure(fg=self._c(TEXT))
+        row.sub.configure(fg=self._c(MUTED))
+
+    def _doc_count(self, folder, mtime):
+        cached = self._docs_cache.get(folder)
+        if not cached or cached[0] != mtime:  # re-check files only when the folder changed
+            cached = (mtime, sum(1 for v in find_docs(folder).values() if v))
+            self._docs_cache[folder] = cached
+        return cached[1]
+
+    def refresh_soon(self, delay=250, reset_page=False):
+        """Coalesce bursts (typing, focus events) into one refresh."""
+        if reset_page:
+            self.list_limit = self.PAGE
+        if self._refresh_job:
+            self.after_cancel(self._refresh_job)
+        self._refresh_job = self.after(delay, self._run_refresh)
+
+    def _run_refresh(self):
+        self._refresh_job = None
+        self.refresh_list(keep_scroll=True)
 
     def refresh_list(self, keep_scroll=False):
-        for w in self.list_frame.winfo_children():
-            w.destroy()
-        self.row_buttons = {}
         root = self.clients_root
+        for row in self.rows.values():
+            row.grid_forget()
+        self.more_btn.grid_forget()
         if not root or not root.exists():
             self.count_label.configure(text="")
-            self._empty_list("Set your Clients folder in Settings.")
+            self.empty_label.configure(text="Set your Clients folder in Settings.")
+            self.empty_label.grid(row=0, column=0, pady=4 * SP)
+            self.row_buttons = {}
             self.show_details(None)
             return
 
         q = self.search_entry.get().lower().strip()
         types = self.client_types
-        clients = sorted(scan_clients(root, types), key=lambda ft: ft[0].stat().st_mtime, reverse=True)
-        self.client_type_of = dict(clients)
-        values = ["All"] + types + (["Other"] if any(t == "Other" for _, t in clients) else [])
+        clients = []
+        for f, t in scan_clients(root, types):
+            try:
+                clients.append((f, t, f.stat().st_mtime))
+            except OSError:
+                continue
+        clients.sort(key=lambda c: c[2], reverse=True)
+        self.client_type_of = {f: t for f, t, _ in clients}
+
+        values = ["All"] + types + (["Other"] if any(t == "Other" for _, t, _ in clients) else [])
         if list(self.filter_buttons.cget("values")) != values:
             self.filter_buttons.configure(values=values)
         if self.filter_var.get() not in values:
             self.filter_var.set("All")
         kind = self.filter_var.get()
-        shown = [(f, t) for f, t in clients if q in f.name.lower() and kind in ("All", t)]
+        shown = [c for c in clients if q in c[0].name.lower() and kind in ("All", c[1])]
         filtered = bool(q) or kind != "All"
         self.count_label.configure(text=f"{len(shown)} of {len(clients)}" if filtered else f"{len(clients)}")
-        if not shown:
-            self._empty_list("No clients match your search." if filtered else "No clients yet.")
 
-        for i, (folder, ftype) in enumerate(shown[:300]):
-            docs = find_docs(folder)
-            have = sum(1 for v in docs.values() if v)
-            when = datetime.datetime.fromtimestamp(folder.stat().st_mtime).strftime("%b %d, %Y")
-            row = ctk.CTkFrame(self.list_frame, fg_color="transparent", corner_radius=8, cursor="hand2")
-            row.grid(row=i, column=0, sticky="ew", pady=1)
-            ctk.CTkLabel(row, text=shorten(folder.name, 34), font=font(14, "bold"), text_color=TEXT,
-                         anchor="w", height=20).pack(fill="x", padx=1.5 * SP, pady=(SP, 0))
-            ctk.CTkLabel(row, text=f"{ftype}  ·  {when}  ·  {have} of {len(DOCUMENTS)} docs", font=font(12),
-                         text_color=MUTED, anchor="w", height=18).pack(fill="x", padx=1.5 * SP, pady=(0, SP))
-            for w in (row, *row.winfo_children()):
-                w.bind("<Button-1>", lambda e, f=folder: self.select(f))
-                w.bind("<Double-Button-1>", lambda e, f=folder: os.startfile(f))
-                w.bind("<Enter>", lambda e, f=folder, r=row: self.selected != f and r.configure(fg_color=SURFACE_ALT))
-                w.bind("<Leave>", lambda e, f=folder, r=row: self.selected != f and r.configure(fg_color="transparent"))
-            self.row_buttons[folder] = row
+        # forget rows of folders that are gone; restyle everything after a light/dark switch
+        for f in [f for f in self.rows if f not in self.client_type_of]:
+            self.rows.pop(f).destroy()
+        mode = ctk.get_appearance_mode()
+        if mode != self._rows_mode:
+            self._rows_mode = mode
+            for f in self.rows:
+                self._paint_row(f)
 
-        if self.selected and self.selected in self.row_buttons:
-            self.select(self.selected)
+        if shown:
+            self.empty_label.grid_forget()
         else:
+            self.empty_label.configure(text="No clients match your search." if filtered else "No clients yet.")
+            self.empty_label.grid(row=0, column=0, pady=4 * SP)
+
+        page = shown[:self.list_limit]
+        for i, (folder, ftype, mtime) in enumerate(page):
+            row = self.rows.get(folder) or self._make_row(folder)
+            when = datetime.datetime.fromtimestamp(mtime).strftime("%b %d, %Y")
+            sub = f"{ftype}  ·  {when}  ·  {self._doc_count(folder, mtime)} of {len(DOCUMENTS)} docs"
+            if row.sub_text != sub:
+                row.sub.configure(text=sub)
+                row.sub_text = sub
+            row.grid(row=i + 1, column=0, sticky="ew", pady=1)
+        if len(shown) > len(page):
+            self.more_btn.configure(text=f"Show more ({len(shown) - len(page)} left)")
+            self.more_btn.grid(row=len(page) + 1, column=0, pady=SP)
+        self.row_buttons = {f: self.rows[f] for f, _, _ in page}
+
+        if self.selected and self.selected in self.client_type_of:
+            self._paint_row(self.selected)
+            self.show_details(self.selected)
+        else:
+            self.selected = None
             self.show_details(None)
 
-    def _empty_list(self, text):
-        ctk.CTkLabel(self.list_frame, text=text, font=font(13), text_color=MUTED) \
-            .grid(row=0, column=0, pady=4 * SP)
+    def show_more(self):
+        self.list_limit += self.PAGE
+        self.refresh_list(keep_scroll=True)
 
     def select(self, folder):
-        if folder != self.selected:
+        previous = self.selected
+        if folder != previous:
             self.note = None  # result messages belong to one client
-        for f, b in self.row_buttons.items():
-            b.configure(fg_color=SELECTED if f == folder else "transparent")
         self.selected = folder
+        self._paint_row(previous)  # only the two rows that change are repainted
+        self._paint_row(folder)
         self.show_details(folder)
 
-    # ---------- column 3: details ----------
+    # ---------- column 3: details (built once, then only updated) ----------
     def _build_details(self, parent):
-        self.details = self.card(parent, row=0, column=2)
-        self.details.grid_columnconfigure(0, weight=1)
-
-    def show_details(self, folder):
-        d = self.details
-        for w in d.winfo_children():
-            w.destroy()
+        d = self.details = self.card(parent, row=0, column=2)
+        d.grid_columnconfigure(0, weight=1)
         p = 2.5 * SP
-        if not folder or not folder.exists():
-            ctk.CTkLabel(d, text="Select a client", font=font(16, "bold"), text_color=TEXT) \
-                .grid(row=0, column=0, pady=(10 * SP, SP))
-            ctk.CTkLabel(d, text="Their documents and actions will show here.", font=font(13),
-                         text_color=MUTED).grid(row=1, column=0)
-            return
 
-        ctk.CTkLabel(d, text=shorten(folder.name, 40) + f"   ·   {self.client_type_of.get(folder, '')}".rstrip(" ·"),
-                     font=font(18, "bold"), text_color=TEXT, anchor="w") \
-            .grid(row=0, column=0, sticky="ew", padx=p, pady=(p, 0))
-        ctk.CTkLabel(d, text="Documents", font=font(12, "bold"), text_color=MUTED) \
+        self.details_empty = ctk.CTkFrame(d, fg_color="transparent")
+        ctk.CTkLabel(self.details_empty, text="Select a client", font=font(16, "bold"), text_color=TEXT) \
+            .pack(pady=(10 * SP, SP))
+        ctk.CTkLabel(self.details_empty, text="Their documents and actions will show here.", font=font(13),
+                     text_color=MUTED).pack()
+
+        body = self.details_body = ctk.CTkFrame(d, fg_color="transparent")
+        body.grid_columnconfigure(0, weight=1)
+        self.details_title = ctk.CTkLabel(body, text="", font=font(18, "bold"), text_color=TEXT, anchor="w")
+        self.details_title.grid(row=0, column=0, sticky="ew", padx=p, pady=(p, 0))
+        ctk.CTkLabel(body, text="Documents", font=font(12, "bold"), text_color=MUTED) \
             .grid(row=1, column=0, sticky="w", padx=p, pady=(2 * SP, SP))
 
-        docs = find_docs(folder)
-        lst = ctk.CTkFrame(d, fg_color="transparent")
+        lst = ctk.CTkFrame(body, fg_color="transparent")
         lst.grid(row=2, column=0, sticky="ew", padx=p)
         lst.grid_columnconfigure(0, weight=1)
+        self.doc_rows = []
         for i, (label, _) in enumerate(DOCUMENTS):
-            files = docs[label]
             row = ctk.CTkFrame(lst, fg_color=SURFACE_ALT, corner_radius=8, border_width=1, border_color=BORDER)
             row.grid(row=i, column=0, sticky="ew", pady=SP / 2)
             row.grid_columnconfigure(1, weight=1)
-
-            dot = ctk.CTkFrame(row, width=10, height=10, corner_radius=5,
-                               fg_color=SUCCESS if files else BORDER)
+            dot = ctk.CTkFrame(row, width=10, height=10, corner_radius=5, fg_color=BORDER)
             dot.grid(row=0, column=0, rowspan=2, padx=(1.5 * SP, SP))
             ctk.CTkLabel(row, text=label, font=font(14, "bold"), text_color=TEXT, anchor="w", height=20) \
                 .grid(row=0, column=1, sticky="w", pady=(SP, 0))
+            status = ctk.CTkLabel(row, text="", font=font(12), anchor="w", height=18)
+            status.grid(row=1, column=1, sticky="w", pady=(0, SP))
+            open_btn = self.secondary_button(row, "Open", None, width=72)
+            open_btn.grid(row=0, column=2, rowspan=2, padx=1.5 * SP)
+            self.doc_rows.append({"dot": dot, "status": status, "open": open_btn, "state": None})
+
+        ctk.CTkLabel(body, text="Actions", font=font(12, "bold"), text_color=MUTED) \
+            .grid(row=3, column=0, sticky="w", padx=p, pady=(3 * SP, SP))
+        acts = ctk.CTkFrame(body, fg_color="transparent")  # two equal columns so buttons always fit
+        acts.grid(row=4, column=0, sticky="ew", padx=p)
+        acts.grid_columnconfigure((0, 1), weight=1, uniform="acts")
+        sel = lambda fn: (lambda: self.selected and fn(self.selected))
+        self.refill_btn = self.secondary_button(acts, "Refill consent", sel(self.refill))
+        buttons = [
+            ctk.CTkButton(acts, text="Request MVR", height=36, font=font(13, "bold"), fg_color=PRIMARY,
+                          hover_color=PRIMARY_HOVER, command=sel(lambda f: MvrDialog(self, f))),
+            self.secondary_button(acts, "Email client…", sel(lambda f: EmailDialog(self, f))),
+            self.secondary_button(acts, "Import DASH", sel(lambda f: ImportDashDialog(self, f))),
+            self.refill_btn,
+            self.secondary_button(acts, "Open folder", sel(os.startfile)),
+        ]
+        for i, b in enumerate(buttons):
+            b.grid(row=i // 2, column=i % 2, sticky="ew", padx=(0, SP) if i % 2 == 0 else 0, pady=(0, SP))
+        self.detail_msg = ctk.CTkLabel(body, text="", font=font(13), text_color=SUCCESS,
+                                       justify="left", anchor="w", wraplength=380)
+        self.detail_msg.grid(row=6, column=0, sticky="w", padx=p, pady=(1.5 * SP, 0))
+        self._details_showing = None
+
+    def show_details(self, folder):
+        if not folder or not folder.exists():
+            if self._details_showing != "empty":
+                self.details_body.grid_forget()
+                self.details_empty.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+                self._details_showing = "empty"
+            return
+        if self._details_showing != "body":
+            self.details_empty.grid_forget()
+            self.details_body.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+            self._details_showing = "body"
+
+        kind = self.client_type_of.get(folder, "")
+        self.details_title.configure(text=shorten(folder.name, 40) + (f"   ·   {kind}" if kind else ""))
+        docs = find_docs(folder)
+        for (label, _), r in zip(DOCUMENTS, self.doc_rows):
+            files = docs[label]
             if files:
                 status = shorten(files[-1].name, 44) if len(files) == 1 else f"{len(files)} files"
             else:
                 status = "Missing"
-            ctk.CTkLabel(row, text=status, font=font(12), anchor="w", height=18,
-                         text_color=MUTED if files else DANGER) \
-                .grid(row=1, column=1, sticky="w", pady=(0, SP))
-            open_btn = self.secondary_button(row, "Open", lambda fs=files: [os.startfile(f) for f in fs],
-                                             width=72, state="normal" if files else "disabled")
-            open_btn.grid(row=0, column=2, rowspan=2, padx=1.5 * SP)
-
-        ctk.CTkLabel(d, text="Actions", font=font(12, "bold"), text_color=MUTED) \
-            .grid(row=3, column=0, sticky="w", padx=p, pady=(3 * SP, SP))
-        # two equal columns so the buttons always fit the panel
-        acts = ctk.CTkFrame(d, fg_color="transparent")
-        acts.grid(row=4, column=0, sticky="ew", padx=p)
-        acts.grid_columnconfigure((0, 1), weight=1, uniform="acts")
-        buttons = [
-            ctk.CTkButton(acts, text="Request MVR", height=36, font=font(13, "bold"),
-                          fg_color=PRIMARY, hover_color=PRIMARY_HOVER, command=lambda: MvrDialog(self, folder)),
-            self.secondary_button(acts, "Email client…", lambda: EmailDialog(self, folder)),
-            self.secondary_button(acts, "Import DASH", lambda: ImportDashDialog(self, folder)),
-            self.secondary_button(acts, "Refill consent", lambda: self.refill(folder),
-                                  state="normal" if docs["DASH report"] else "disabled"),
-            self.secondary_button(acts, "Open folder", lambda: os.startfile(folder)),
-        ]
-        for i, b in enumerate(buttons):
-            b.grid(row=i // 2, column=i % 2, sticky="ew", padx=(0, SP) if i % 2 == 0 else 0, pady=(0, SP))
-        self.detail_msg = ctk.CTkLabel(d, text="", font=font(13), text_color=SUCCESS,
-                                       justify="left", anchor="w", wraplength=380)
-        self.detail_msg.grid(row=6, column=0, sticky="w", padx=p, pady=(1.5 * SP, 0))
-        if self.note and self.note[0] == folder:
-            self.detail_msg.configure(text=self.note[1], text_color=self.note[2])
+            state = (status, bool(files))
+            if r["state"] != state:  # only touch widgets whose content changed
+                r["dot"].configure(fg_color=SUCCESS if files else BORDER)
+                r["status"].configure(text=status, text_color=MUTED if files else DANGER)
+                r["open"].configure(state="normal" if files else "disabled")
+                r["state"] = state
+            r["open"].configure(command=lambda fs=files: [os.startfile(f) for f in fs])
+        self.refill_btn.configure(state="normal" if docs["DASH report"] else "disabled")
+        note = self.note[1:] if self.note and self.note[0] == folder else ("", SUCCESS)
+        self.detail_msg.configure(text=note[0], text_color=note[1])
 
     def refill(self, folder, prefix=""):
         try:
