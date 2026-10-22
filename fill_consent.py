@@ -55,7 +55,8 @@ def read_consent(pdf_path):
 
 def fill(client_folder, dln=None, template=None):
     folder = Path(client_folder)
-    template = Path(template or DEFAULT_TEMPLATE)
+    # Empty or missing custom template -> the built-in form
+    template = Path(template) if template and Path(template).exists() else DEFAULT_TEMPLATE
     if not template.exists():
         raise FileNotFoundError(f"Consent template not found: {template}")
     client_name = folder.name.upper()

@@ -13,7 +13,23 @@ Windows desktop app for setting up a new insurance client.
 - **Request MVR**: opens an Outlook draft to the branch manager with the client's
   details and the DASH, consent and Quote Information PDFs attached. You review and send.
 
-## Install
+## Install on a computer without Python (work / remote desktop)
+
+1. Download **ClientIntake-windows.zip** from the repo's **Releases** page.
+2. Unzip it somewhere permanent, e.g. `Documents\ClientIntake`. Keep the `_internal`
+   folder next to `ClientIntake.exe`.
+3. Double-click **ClientIntake.exe**. The first run adds a desktop shortcut and asks
+   for your Clients folder. Nothing is installed and no admin rights are needed.
+
+If Windows shows "Windows protected your PC", click **More info > Run anyway**.
+If your IT blocks unsigned programs, ask them to allow `ClientIntake.exe`.
+
+To update: download the new zip and replace the folder. Settings are kept
+(they live in `%APPDATA%\ClientIntake`).
+
+Troubleshooting: `ClientIntake.exe --selftest` writes `%TEMP%\ClientIntake-selftest.txt`.
+
+## Install with Python (development)
 
 1. Install **Python 3.10+** from [python.org](https://www.python.org/downloads/).
    During setup, tick **"Add python.exe to PATH"**.
@@ -58,3 +74,9 @@ template, the MVR request recipients (To / CC), or light/dark mode. Settings are
 
 This repo holds code and the blank consent template only. Client files stay in
 your Clients folder and are never committed (see `.gitignore`).
+
+## Building the exe
+
+On a computer with Python, double-click **build.bat**. It creates
+`release\ClientIntake\ClientIntake.exe` and `ClientIntake-windows.zip` to upload
+to a GitHub Release.

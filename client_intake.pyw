@@ -6,6 +6,7 @@ documents (Consent, DASH, Quote, MVR) each client folder already has.
 import datetime
 import os
 import re
+import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog
@@ -95,7 +96,7 @@ class SettingsDialog(ctk.CTkToplevel):
         self.cc_var = tk.StringVar(value=app.cfg["mvr_cc"])
 
         self._path_row(body, 0, "Clients folder", self.root_var, folder=True)
-        self._path_row(body, 2, "Consent form template", self.tpl_var, folder=False)
+        self._path_row(body, 2, "Consent form template (empty = built-in form)", self.tpl_var, folder=False)
 
         ctk.CTkLabel(body, text="Appearance", font=font(13, "bold"), text_color=TEXT) \
             .grid(row=4, column=0, sticky="w", padx=2 * SP, pady=(2 * SP, SP / 2))
@@ -154,13 +155,13 @@ class SettingsDialog(ctk.CTkToplevel):
                       command=browse).grid(row=0, column=1)
 
     def save(self):
-        self.app.cfg.update(clients_root=self.root_var.get().strip(),
-                            consent_template=self.tpl_var.get().strip(),
-                            appearance=self.mode_var.get(),
-                            mvr_to=self.to_var.get().strip(),
-                            mvr_cc=self.cc_var.get().strip(),
-                            email_app=self.mail_var.get())
-        config.save(self.app.cfg)
+        config.update(self.app.cfg,
+                      clients_root=self.root_var.get().strip(),
+                      consent_template=self.tpl_var.get().strip(),
+                      appearance=self.mode_var.get(),
+                      mvr_to=self.to_var.get().strip(),
+                      mvr_cc=self.cc_var.get().strip(),
+                      email_app=self.mail_var.get())
         ctk.set_appearance_mode(self.app.cfg["appearance"])
         self.app.on_settings_changed()
         self.destroy()
@@ -216,8 +217,7 @@ class SignatureDialog(ctk.CTkToplevel):
         self.bind("<Escape>", lambda e: self.destroy())
 
     def save(self):
-        self.app.cfg.update({f"sig_{k}": e.get().strip() for k, e in self.entries.items()})
-        config.save(self.app.cfg)
+        config.update(self.app.cfg, **{f"sig_{k}": e.get().strip() for k, e in self.entries.items()})
         self.destroy()
 
 
@@ -477,6 +477,9 @@ class App(ctk.CTk):
         super().__init__()
         self.cfg = config.load()
         ctk.set_appearance_mode(self.cfg["appearance"])
+        icon = Path(__file__).parent / "templates" / "app.ico"
+        if icon.exists():
+            self.after(250, lambda: self.iconbitmap(str(icon)))  # after CTk sets its own icon
         self.title("Client Intake")
         self.geometry("1100x680")
         self.minsize(980, 600)
@@ -536,8 +539,7 @@ class App(ctk.CTk):
             return
         p = filedialog.askdirectory(parent=self, title="Choose your Clients folder")
         if p:
-            self.cfg["clients_root"] = str(Path(p))
-            config.save(self.cfg)
+            config.update(self.cfg, clients_root=str(Path(p)))
         self.on_settings_changed()
 
     def on_settings_changed(self):
@@ -849,6 +851,57 @@ class App(ctk.CTk):
             self.detail_msg.configure(text=text, text_color=color)
 
 
+def ensure_desktop_shortcut():
+    """Packaged exe only: add a desktop shortcut the first time it runs."""
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        import win32com.client
+        shell = win32com.client.Dispatch("WScript.Shell")
+        lnk = Path(shell.SpecialFolders("Desktop")) / "Client Intake.lnk"
+        if lnk.exists():
+            return
+        sc = shell.CreateShortcut(str(lnk))
+        sc.TargetPath = sys.executable
+        sc.WorkingDirectory = str(Path(sys.executable).parent)
+        sc.IconLocation = sys.executable
+        sc.Save()
+    except Exception:
+        pass  # a missing shortcut must never stop the app
+
+
+def selftest():
+    """`ClientIntake.exe --selftest`: check PDF and email features without the UI or settings.
+
+    Writes the result to %TEMP%\\ClientIntake-selftest.txt.
+    """
+    import tempfile
+    import traceback
+    from fill_consent import read_consent
+    lines = []
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "TEST CLIENT"
+            folder.mkdir()
+            out, _ = fill(folder, "A12345678901234")
+            lines.append(f"consent: {read_consent(out)}")
+            msg = mvr_email.build_signature({"sig_name": "Test"})
+            lines.append(f"signature: {len(msg)} chars")
+            eml_body = mvr_email.build_body_html("TEST", "CLIENT", "A1234-56789-01234", "", "")
+            lines.append(f"email body: {len(eml_body)} chars")
+            lines.append(f"downloads: {dash_import.downloads_dir()}")
+            for arg in sys.argv[2:]:  # optional DASH report(s) to read
+                lines.append(f"dash {Path(arg).name}: {read_dash(Path(arg))}")
+        lines.append("OK")
+    except Exception:
+        lines.append(traceback.format_exc())
+    Path(tempfile.gettempdir(), "ClientIntake-selftest.txt").write_text("\n".join(lines), encoding="utf-8")
+
+
 if __name__ == "__main__":
     os.chdir(Path(__file__).parent)
+    if "--selftest" in sys.argv:
+        selftest()
+        sys.exit(0)
+    ensure_desktop_shortcut()
     App().mainloop()

@@ -10,3 +10,8 @@ Client Consent*.pdf
 *Quote*.pdf
 Clients/
 client.json
+build/
+dist/
+*.spec
+ClientIntake-windows.zip
+release/
