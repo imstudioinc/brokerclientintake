@@ -41,6 +41,19 @@ Windows desktop app for setting up a new insurance client.
   Clients folder sees the same records. Each save re-reads the file and changes only that one
   record, and every record shows who added / edited it.
 
+## Ask (underwriting chat)
+
+- **Ask** (top bar): ask about eligibility, underwriting rules, endorsements and payments.
+  Answers come from the notes folder (`.md` files; default
+  `Documents\Docs\Insurance\Underwriting Knowledge`, change it with **Notes folder…**) and name
+  the note they used.
+- **Include client record** adds the client selected on the Clients tab: its policies, vehicles,
+  property, notes and reminders, the DASH report's counts, and the list of PDFs in the folder.
+- Needs an Anthropic API key (**API key…**, saved in this computer's settings only, or the
+  `ANTHROPIC_API_KEY` environment variable) and internet access to `api.anthropic.com`.
+  Uses Claude Opus 5.5; the notes are cached, so follow-up questions cost less.
+- Guidance only: confirm anything borderline with the underwriter before binding.
+
 ## Install on a computer without Python (work / remote desktop)
 
 1. Download **ClientIntake-windows.zip** from
@@ -113,6 +126,8 @@ template, the MVR request recipients (To / CC), or light/dark mode. Settings are
 
 This repo holds code and the blank consent template only. Client files stay in
 your Clients folder and are never committed (see `.gitignore`).
+The **Ask** tab sends your question, the notes and (only when ticked) the selected client's
+record to Anthropic to answer it; nothing is sent until you ask.
 
 ## Publishing an update
 

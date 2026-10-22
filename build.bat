@@ -12,6 +12,7 @@ python -m PyInstaller --noconfirm --clean --windowed --name ClientIntake --distp
   --add-data "templates;templates" ^
   --collect-data customtkinter ^
   --collect-data pdfminer ^
+  --collect-submodules anthropic ^
   --hidden-import win32com.client ^
   --exclude-module release ^
   client_intake.pyw

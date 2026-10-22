@@ -17,6 +17,7 @@ import customtkinter as ctk
 
 import config
 from fill_consent import fill, format_dln, is_valid_dln, read_consent, read_dash
+import assistant_ui
 import dash_import
 import emails
 import mvr_email
@@ -883,9 +884,9 @@ class App(ctk.CTk):
         self.root_label.pack(anchor="w")
         self.secondary_button(bar, "Settings", lambda: SettingsDialog(self), width=96) \
             .pack(side="right")
-        # Clients | Tracker: two views in this one window
+        # Clients | Tracker | Ask: three views in this one window
         self.view_var = tk.StringVar(value="Clients")
-        ctk.CTkSegmentedButton(bar, values=["Clients", "Tracker"], variable=self.view_var, height=36,
+        ctk.CTkSegmentedButton(bar, values=["Clients", "Tracker", "Ask"], variable=self.view_var, height=36,
                                font=font(13, "bold"), selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER,
                                command=self.show_view).pack(side="right", padx=(0, 2 * SP))
         self.sample_btn = self.secondary_button(bar, "Back to my Clients folder", self.leave_sample, width=190)
@@ -893,6 +894,7 @@ class App(ctk.CTk):
             self.root_label.configure(text="Sample clients - not your real files", text_color=DANGER)
             self.sample_btn.pack(side="right", padx=(0, SP))
         self.tracker_win = None
+        self.ask_view = None
 
         # Shown only when a newer version is published
         self.update_bar = ctk.CTkFrame(bar, fg_color=SUCCESS_BG, corner_radius=8)
@@ -987,18 +989,25 @@ class App(ctk.CTk):
         self.show_view("Tracker")
 
     def show_view(self, name):
-        """Switch between the Clients and Tracker views inside this window."""
+        """Switch between the Clients, Tracker and Ask views inside this window."""
+        for view in (self.clients_view, self.tracker_win, self.ask_view):
+            if view:
+                view.pack_forget()
         if name == "Tracker":
             if not (self.tracker_win and self.tracker_win.winfo_exists()):
                 self.tracker_win = tracker_ui.TrackerView(self, self)   # built on first use
             else:
                 self.tracker_win.load()
-            self.clients_view.pack_forget()
-            self.tracker_win.pack(fill="both", expand=True, padx=3 * SP, pady=(0, 3 * SP))
+            view = self.tracker_win
+        elif name == "Ask":
+            if not (self.ask_view and self.ask_view.winfo_exists()):
+                self.ask_view = assistant_ui.AssistantView(self, self)  # built on first use
+            else:
+                self.ask_view.load()
+            view = self.ask_view
         else:
-            if self.tracker_win:
-                self.tracker_win.pack_forget()
-            self.clients_view.pack(fill="both", expand=True, padx=3 * SP, pady=(0, 3 * SP))
+            view = self.clients_view
+        view.pack(fill="both", expand=True, padx=3 * SP, pady=(0, 3 * SP))
         self.view_var.set(name)
 
     def tracker_changed(self):
