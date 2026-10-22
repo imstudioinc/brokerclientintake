@@ -2,13 +2,23 @@
 
 The finished zips are published to a public repo (RELEASES_REPO) so work
 computers can download them without a GitHub login.
+
+How an update is applied (no scripts - work computers often block them):
+1. The running app downloads the zip and extracts it into <install>\\_update\\new.
+2. It starts the NEW ClientIntake.exe from there with --finish-update and closes.
+3. The new exe waits for the old one to exit, swaps <install>\\_internal and
+   ClientIntake.exe, starts the installed app, and exits.
+Every step is logged to <install>\\_update\\update.log.
 """
+import ctypes
+import datetime
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
-import tempfile
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -18,6 +28,7 @@ from version import __version__
 RELEASES_REPO = "imstudioinc/brokerclientintake-releases"
 ASSET_NAME = "ClientIntake-windows.zip"
 LATEST_URL = f"https://api.github.com/repos/{RELEASES_REPO}/releases/latest"
+EXE = "ClientIntake.exe"
 
 
 def parse_version(text):
@@ -26,6 +37,24 @@ def parse_version(text):
 
 def is_packaged():
     return bool(getattr(sys, "frozen", False))
+
+
+def install_dir():
+    return Path(sys.executable).parent
+
+
+def update_dir(install=None):
+    return Path(install or install_dir()) / "_update"
+
+
+def log(message, install=None):
+    try:
+        folder = update_dir(install)
+        folder.mkdir(exist_ok=True)
+        with open(folder / "update.log", "a", encoding="utf-8") as f:
+            f.write(f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S}  {message}\n")
+    except OSError:
+        pass
 
 
 def check_for_update(timeout=10):
@@ -44,14 +73,20 @@ def check_for_update(timeout=10):
             "notes": release.get("body") or ""}
 
 
+def _rmtree(path):
+    shutil.rmtree(path, ignore_errors=True)
+
+
 def download_and_install(update, progress=None):
-    """Download the new zip, then hand over to a small script that swaps the files
-    once this app has closed and starts the new version. Caller must exit right after.
-    """
-    work = Path(tempfile.gettempdir()) / "ClientIntake-update"
-    if work.exists():
-        subprocess.run(["cmd", "/c", "rmdir", "/s", "/q", str(work)], capture_output=True)
-    work.mkdir(parents=True)
+    """Step 1-2: download + extract next to the app, then hand over to the new exe.
+    The caller must close the app right after this returns."""
+    install = install_dir()
+    work = update_dir(install)
+    for leftover in ("new", ASSET_NAME, "failed.txt"):
+        p = work / leftover
+        _rmtree(p) if p.is_dir() else p.unlink(missing_ok=True)
+    work.mkdir(exist_ok=True)
+    log(f"--- update {__version__} -> {update['version']} ---")
 
     zip_path = work / ASSET_NAME
     req = urllib.request.Request(update["url"], headers={"User-Agent": "ClientIntake"})
@@ -63,23 +98,92 @@ def download_and_install(update, progress=None):
             done += len(chunk)
             if progress and total:
                 progress(done / total)
+    log(f"downloaded {zip_path.stat().st_size} bytes")
 
     with zipfile.ZipFile(zip_path) as z:
         z.extractall(work / "new")
+    zip_path.unlink(missing_ok=True)
     src = work / "new" / "ClientIntake"
-    if not (src / "ClientIntake.exe").exists() or not (src / "_internal").exists():
+    if not (src / EXE).exists() or not (src / "_internal").exists():
         raise RuntimeError("The downloaded update is incomplete.")
+    log("extracted; starting the new version to finish")
 
-    install = Path(sys.executable).parent
-    # Only the app's own files are replaced (_internal and the exe), never anything
-    # else in the install folder.
-    script = work / "apply-update.cmd"
-    script.write_text(f"""@echo off
-:wait
-tasklist /FI "PID eq {os.getpid()}" 2>nul | find "{os.getpid()}" >nul && (timeout /t 1 /nobreak >nul & goto wait)
-robocopy "{src / '_internal'}" "{install / '_internal'}" /MIR /R:10 /W:1 /NFL /NDL /NJH /NJS >nul
-copy /Y "{src / 'ClientIntake.exe'}" "{install / 'ClientIntake.exe'}" >nul
-start "" "{install / 'ClientIntake.exe'}"
-""", encoding="mbcs")
-    subprocess.Popen(["cmd", "/c", str(script)], creationflags=subprocess.CREATE_NO_WINDOW,
-                     close_fds=True)
+    subprocess.Popen([str(src / EXE), "--finish-update", str(install), str(os.getpid())],
+                     cwd=str(src), close_fds=True,
+                     creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+
+
+def _wait_for_exit(pid, seconds=60):
+    SYNCHRONIZE = 0x00100000
+    handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+    if handle:
+        ctypes.windll.kernel32.WaitForSingleObject(handle, seconds * 1000)
+        ctypes.windll.kernel32.CloseHandle(handle)
+    time.sleep(1)  # let Windows release the file locks
+
+
+def _retry(action, what, install, attempts=15):
+    for i in range(attempts):
+        try:
+            return action()
+        except OSError as e:
+            if i == attempts - 1:
+                raise
+            log(f"{what}: {e} - retrying", install)
+            time.sleep(1)
+
+
+def finish_update(install, old_pid):
+    """Step 3 - runs inside the NEW exe (from <install>\\_update\\new\\ClientIntake)."""
+    install = Path(install)
+    src = Path(sys.executable).parent
+    log(f"finishing: new version {__version__} from {src}", install)
+    _wait_for_exit(int(old_pid))
+
+    internal, old_internal = install / "_internal", install / "_internal.old"
+    exe, old_exe = install / EXE, install / "ClientIntake.old.exe"
+    try:
+        _rmtree(old_internal)
+        old_exe.unlink(missing_ok=True)
+        _retry(lambda: internal.rename(old_internal), "move old files", install)
+        _retry(lambda: exe.rename(old_exe), "move old exe", install)
+        shutil.copytree(src / "_internal", internal)
+        shutil.copy2(src / EXE, exe)
+        for extra in src.iterdir():  # e.g. READ ME FIRST.txt
+            if extra.is_file() and extra.name != EXE:
+                shutil.copy2(extra, install / extra.name)
+        log("files replaced", install)
+    except Exception as e:
+        log(f"FAILED: {e!r} - restoring the previous version", install)
+        if old_internal.exists() and not internal.exists():
+            old_internal.rename(internal)
+        elif old_internal.exists():
+            _rmtree(internal)
+            old_internal.rename(internal)
+        if old_exe.exists():
+            exe.unlink(missing_ok=True)
+            old_exe.rename(exe)
+        (update_dir(install) / "failed.txt").write_text(str(e), encoding="utf-8")
+
+    subprocess.Popen([str(exe)], cwd=str(install), close_fds=True,
+                     creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+    log("started the app", install)
+
+
+def cleanup_after_update():
+    """Runs in the installed app at startup: remove leftovers, report a failed update."""
+    install = install_dir()
+    failed = update_dir(install) / "failed.txt"
+    reason = failed.read_text(encoding="utf-8") if failed.exists() else None
+    for _ in range(20):  # the finishing exe may still be exiting
+        _rmtree(install / "_internal.old")
+        try:
+            (install / "ClientIntake.old.exe").unlink(missing_ok=True)
+        except OSError:
+            pass
+        _rmtree(update_dir(install) / "new")
+        if not (install / "_internal.old").exists() and not (update_dir(install) / "new").exists():
+            break
+        time.sleep(1)
+    failed.unlink(missing_ok=True)
+    return reason

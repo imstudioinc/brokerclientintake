@@ -857,6 +857,7 @@ class App(ctk.CTk):
         self.pending_update = None
         if updater.is_packaged():
             threading.Thread(target=self._check_update, daemon=True).start()
+            threading.Thread(target=self._after_update_cleanup, daemon=True).start()
 
         # Toast for things that happen in the background (MVR filed)
         self.toast = ctk.CTkFrame(bar, fg_color=SUCCESS_BG, corner_radius=8)
@@ -933,6 +934,13 @@ class App(ctk.CTk):
         self._toast_job = None
 
     # ---------- updates ----------
+    def _after_update_cleanup(self):
+        reason = updater.cleanup_after_update()
+        if reason:
+            self.ui(lambda: self.show_toast(f"The last update could not be installed: {shorten(reason, 60)}",
+                                            "Details", lambda: os.startfile(updater.update_dir() / "update.log"),
+                                            ok=False))
+
     def _check_update(self):
         try:
             found = updater.check_for_update()
@@ -1348,16 +1356,46 @@ def selftest():
             lines.append(f"downloads: {dash_import.downloads_dir()}")
             for arg in sys.argv[2:]:  # optional DASH report(s) to read
                 lines.append(f"dash {Path(arg).name}: {read_dash(Path(arg))}")
+        lines.append(f"logo: {(mvr_email.TEMPLATES / 'logo.png').exists()}")
+        lines.append(f"version: {__version__}")
         lines.append("OK")
     except Exception:
         lines.append(traceback.format_exc())
     Path(tempfile.gettempdir(), "ClientIntake-selftest.txt").write_text("\n".join(lines), encoding="utf-8")
 
 
+def run_finish_update(install, old_pid):
+    """Small 'Updating…' window while the new version replaces the old files."""
+    win = ctk.CTk()
+    win.title("Client Intake")
+    win.geometry("360x120")
+    win.resizable(False, False)
+    ctk.CTkLabel(win, text=f"Updating Client Intake to v{__version__}…", font=font(15, "bold")).pack(pady=(28, 6))
+    ctk.CTkLabel(win, text="It will reopen by itself in a few seconds.", font=font(12),
+                 text_color=MUTED).pack()
+
+    def work():
+        try:
+            updater.finish_update(install, old_pid)
+        finally:
+            win.after(0, win.destroy)
+
+    win.after(300, lambda: threading.Thread(target=work, daemon=True).start())
+    win.mainloop()
+
+
 if __name__ == "__main__":
     os.chdir(Path(__file__).parent)
     if "--selftest" in sys.argv:
         selftest()
+        sys.exit(0)
+    if "--finish-update" in sys.argv:          # started by the previous version
+        i = sys.argv.index("--finish-update")
+        run_finish_update(sys.argv[i + 1], sys.argv[i + 2])
+        sys.exit(0)
+    if "--update-from" in sys.argv:            # install a downloaded zip by hand / for testing
+        zip_file = Path(sys.argv[sys.argv.index("--update-from") + 1]).resolve()
+        updater.download_and_install({"version": "from file", "url": zip_file.as_uri()})
         sys.exit(0)
     ensure_desktop_shortcut()
     App().mainloop()
