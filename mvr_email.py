@@ -66,11 +66,27 @@ def build_body_html(first, last, dln, phone, email):
     )
 
 
+TEMPLATES = Path(__file__).parent / "templates"
+SIGNATURE_FIELDS = ["name", "title", "phone", "email", "address1", "address2", "branch"]
+
+
+def build_signature(cfg):
+    """Fill templates/signature.html from the sig_* settings. Empty name -> no signature."""
+    values = {k: (cfg.get(f"sig_{k}") or "").strip() for k in SIGNATURE_FIELDS}
+    if not values["name"]:
+        return ""
+    template = (TEMPLATES / "signature.html").read_text(encoding="utf-8")
+    template = re.sub(r"<!--.*?-->", "", template, flags=re.S).strip()
+    filled = {k: html.escape(v) for k, v in values.items()}
+    filled["phone_link"] = "+" + re.sub(r"\D", "", values["phone"]) if values["phone"] else ""
+    return template.format(**filled)
+
+
 class OutlookNotReady(Exception):
     pass
 
 
-def create_new_outlook_draft(folder, to, cc, subject, body_html, attachments=()):
+def create_new_outlook_draft(folder, to, cc, subject, body_html, attachments=(), signature_html=""):
     """Write an unsent .eml into the client folder and open it in New Outlook as a draft.
 
     New Outlook (olk.exe) has no automation API, but opens an .eml with
@@ -85,7 +101,12 @@ def create_new_outlook_draft(folder, to, cc, subject, body_html, attachments=())
     msg["X-Unsent"] = "1"
     msg["Message-ID"] = make_msgid()
     msg.set_content(re.sub(r"<[^>]+>", "", body_html.replace("<br>", "\n").replace("</p>", "\n\n")))
-    msg.add_alternative(body_html, subtype="html")
+    msg.add_alternative(f"<html><body>{body_html}{signature_html}</body></html>", subtype="html")
+    logo = TEMPLATES / "logo.png"
+    if "cid:logo" in signature_html and logo.exists():
+        html_part = msg.get_payload()[1]
+        html_part.add_related(logo.read_bytes(), maintype="image", subtype="png",
+                              cid="<logo>", filename="logo.png", disposition="inline")
     for path in attachments:
         path = Path(path)
         maintype, subtype = ("application", "pdf") if path.suffix.lower() == ".pdf" \

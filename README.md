@@ -27,8 +27,8 @@ Works with **New Outlook** (default) or **Classic Outlook**: choose in **Setting
 Set the branch manager's email (To / CC) in **Settings** first.
 
 - **New Outlook**: the app saves `MVR Request - <NAME>.eml` in the client folder and opens it
-  in New Outlook as a draft with the attachments. Add your signature with
-  **Message > Signature**, then Send.
+  in New Outlook as a draft with the attachments and your email signature
+  (set it once in **Settings > Email signature…**). Review it, then Send.
 - **Classic Outlook**: the draft opens directly with your default signature. Needs your work
   account added in Classic Outlook (File > Add Account).
 

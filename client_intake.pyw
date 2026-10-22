@@ -111,6 +111,8 @@ class SettingsDialog(ctk.CTkToplevel):
         ctk.CTkSegmentedButton(body, values=["New Outlook", "Classic Outlook"], variable=self.mail_var,
                                font=font(13), selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER) \
             .grid(row=11, column=0, sticky="w", padx=2 * SP)
+        app.secondary_button(body, "Email signature…", lambda: SignatureDialog(self, app), width=150) \
+            .grid(row=11, column=0, sticky="e", padx=2 * SP)
 
         btns = ctk.CTkFrame(body, fg_color="transparent")
         btns.grid(row=12, column=0, sticky="e", padx=2 * SP, pady=2 * SP)
@@ -160,6 +162,61 @@ class SettingsDialog(ctk.CTkToplevel):
         config.save(self.app.cfg)
         ctk.set_appearance_mode(self.app.cfg["appearance"])
         self.app.on_settings_changed()
+        self.destroy()
+
+
+class SignatureDialog(ctk.CTkToplevel):
+    """Per-computer email signature details (logo, website and notice come from templates/)."""
+
+    FIELDS = [("name", "Your name", "e.g. Ilkin Mammadzada"),
+              ("title", "Title", "e.g. Insurance Broker"),
+              ("phone", "Phone", "e.g. +1 (437) 421-3210"),
+              ("email", "Email", "e.g. name@wellcareinsurance.ca"),
+              ("address1", "Address line 1", "e.g. Unit 2-427 Dundas St E"),
+              ("address2", "Address line 2", "e.g. Waterdown, ON L8B 0K4"),
+              ("branch", "Branch", "e.g. Branch #24")]
+
+    def __init__(self, parent, app):
+        super().__init__(parent)
+        self.app = app
+        self.title("Email signature")
+        self.geometry("520x660")
+        self.configure(fg_color=BG)
+        self.transient(parent)
+        self.grab_set()
+
+        body = ctk.CTkScrollableFrame(self, fg_color=SURFACE, corner_radius=12,
+                                      border_width=1, border_color=BORDER)
+        body.pack(fill="both", expand=True, padx=2 * SP, pady=(2 * SP, 0))
+        body.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(body, text="Added to the bottom of MVR request emails (New Outlook).\n"
+                                "Logo, website and confidentiality notice are added automatically.\n"
+                                "Leave your name empty for no signature.",
+                     font=font(12), text_color=MUTED, justify="left") \
+            .grid(row=0, column=0, sticky="w", padx=2 * SP, pady=(2 * SP, 0))
+
+        self.entries = {}
+        for i, (key, label, hint) in enumerate(self.FIELDS):
+            ctk.CTkLabel(body, text=label, font=font(13, "bold"), text_color=TEXT) \
+                .grid(row=1 + 2 * i, column=0, sticky="w", padx=2 * SP, pady=(1.5 * SP, SP / 2))
+            e = ctk.CTkEntry(body, height=36, font=font(13), border_color=BORDER, placeholder_text=hint)
+            e.grid(row=2 + 2 * i, column=0, sticky="ew", padx=2 * SP)
+            value = app.cfg.get(f"sig_{key}") or ("Insurance Broker" if key == "title" else "")
+            if value:
+                e.insert(0, value)
+            self.entries[key] = e
+        ctk.CTkLabel(body, text="").grid(row=99, column=0)
+
+        btns = ctk.CTkFrame(self, fg_color="transparent")
+        btns.pack(fill="x", padx=2 * SP, pady=2 * SP)
+        ctk.CTkButton(btns, text="Save", width=96, height=36, font=font(13, "bold"),
+                      fg_color=PRIMARY, hover_color=PRIMARY_HOVER, command=self.save).pack(side="right")
+        app.secondary_button(btns, "Cancel", self.destroy, width=96).pack(side="right", padx=(0, SP))
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    def save(self):
+        self.app.cfg.update({f"sig_{k}": e.get().strip() for k, e in self.entries.items()})
+        config.save(self.app.cfg)
         self.destroy()
 
 
@@ -316,7 +373,8 @@ class MvrDialog(ctk.CTkToplevel):
             if classic:
                 mail = mvr_email.create_outlook_draft(display=display, **email)
             else:
-                mail = mvr_email.create_new_outlook_draft(self.folder, **email)
+                mail = mvr_email.create_new_outlook_draft(
+                    self.folder, signature_html=mvr_email.build_signature(self.app.cfg), **email)
         except mvr_email.OutlookNotReady as e:
             self.go.configure(state="normal", text="Create Outlook draft")
             self.error.configure(text=str(e))
