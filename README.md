@@ -8,6 +8,8 @@ Windows desktop app for setting up a new insurance client.
 - Copies the licence # to the clipboard, ready to paste into DASH
 - Shows which documents each client already has: Consent, DASH, Quote, MVR
 - Refills the consent form from saved DASH reports (up to 3 drivers)
+- **Request MVR**: opens a Classic Outlook draft to the branch manager with the client's
+  details and the DASH, consent and Quote Information PDFs attached. You review and send.
 
 ## Install
 
@@ -19,6 +21,12 @@ Windows desktop app for setting up a new insurance client.
    **Client Intake** shortcut to the desktop and Start menu.
 4. Open the app and choose your Clients folder.
 
+## Email (Request MVR)
+
+Needs **Classic Outlook** (desktop) with your work email account added
+(File > Add Account). The new Outlook app and Outlook on the web are not supported.
+Set the branch manager's email in **Settings** first.
+
 ## Update
 
 - Cloned with git: double-click **update.bat**.
@@ -27,7 +35,7 @@ Windows desktop app for setting up a new insurance client.
 ## Settings
 
 Click **Settings** in the app to change the Clients folder, the consent form
-template, or light/dark mode. Settings are saved per computer in
+template, the MVR request recipients (To / CC), or light/dark mode. Settings are saved per computer in
 `%APPDATA%\ClientIntake\config.json`.
 
 ## File names the app recognises
@@ -36,7 +44,7 @@ template, or light/dark mode. Settings are saved per computer in
 |---|---|
 | Consent | `Client Consent…` |
 | DASH | `DASH Report…` (the DASH portal's default name) |
-| Quote | contains `Quote` |
+| Quote | contains `Quote` (e.g. `Quote Information.pdf`) |
 | MVR | contains `MVR` |
 
 ## Privacy

@@ -13,7 +13,8 @@ from tkinter import filedialog
 import customtkinter as ctk
 
 import config
-from fill_consent import fill, format_dln, is_valid_dln
+from fill_consent import fill, format_dln, is_valid_dln, read_dash
+import mvr_email
 
 # ---------- Design tokens (light, dark) ----------
 BG = ("#F3F5F8", "#0F1419")
@@ -76,7 +77,7 @@ class SettingsDialog(ctk.CTkToplevel):
         super().__init__(app)
         self.app = app
         self.title("Settings")
-        self.geometry("560x330")
+        self.geometry("560x520")
         self.resizable(False, False)
         self.configure(fg_color=BG)
         self.transient(app)
@@ -89,6 +90,8 @@ class SettingsDialog(ctk.CTkToplevel):
         self.root_var = tk.StringVar(value=app.cfg["clients_root"])
         self.tpl_var = tk.StringVar(value=app.cfg["consent_template"])
         self.mode_var = tk.StringVar(value=app.cfg["appearance"])
+        self.to_var = tk.StringVar(value=app.cfg["mvr_to"])
+        self.cc_var = tk.StringVar(value=app.cfg["mvr_cc"])
 
         self._path_row(body, 0, "Clients folder", self.root_var, folder=True)
         self._path_row(body, 2, "Consent form template", self.tpl_var, folder=False)
@@ -99,14 +102,25 @@ class SettingsDialog(ctk.CTkToplevel):
                                font=font(13), selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER) \
             .grid(row=5, column=0, sticky="w", padx=2 * SP)
 
+        self._text_row(body, 6, "MVR request: To", self.to_var, "branch manager's email")
+        self._text_row(body, 8, "MVR request: CC", self.cc_var, "optional; separate several with ;")
+
         btns = ctk.CTkFrame(body, fg_color="transparent")
-        btns.grid(row=6, column=0, sticky="e", padx=2 * SP, pady=2 * SP)
+        btns.grid(row=10, column=0, sticky="e", padx=2 * SP, pady=2 * SP)
         ctk.CTkButton(btns, text="Cancel", width=96, height=36, font=font(13), fg_color="transparent",
                       border_width=1, border_color=BORDER, text_color=TEXT, hover_color=SURFACE_ALT,
                       command=self.destroy).pack(side="left", padx=(0, SP))
         ctk.CTkButton(btns, text="Save", width=96, height=36, font=font(13, "bold"),
                       fg_color=PRIMARY, hover_color=PRIMARY_HOVER, command=self.save).pack(side="left")
         self.bind("<Escape>", lambda e: self.destroy())
+
+    def _text_row(self, parent, row, label, var, hint):
+        ctk.CTkLabel(parent, text=label, font=font(13, "bold"), text_color=TEXT) \
+            .grid(row=row, column=0, sticky="w", padx=2 * SP, pady=(2 * SP, SP / 2))
+        ctk.CTkLabel(parent, text=hint, font=font(12), text_color=MUTED) \
+            .grid(row=row, column=0, sticky="e", padx=2 * SP, pady=(2 * SP, SP / 2))
+        ctk.CTkEntry(parent, textvariable=var, height=36, font=font(13), border_color=BORDER) \
+            .grid(row=row + 1, column=0, sticky="ew", padx=2 * SP)
 
     def _path_row(self, parent, row, label, var, folder):
         ctk.CTkLabel(parent, text=label, font=font(13, "bold"), text_color=TEXT) \
@@ -132,11 +146,173 @@ class SettingsDialog(ctk.CTkToplevel):
     def save(self):
         self.app.cfg.update(clients_root=self.root_var.get().strip(),
                             consent_template=self.tpl_var.get().strip(),
-                            appearance=self.mode_var.get())
+                            appearance=self.mode_var.get(),
+                            mvr_to=self.to_var.get().strip(),
+                            mvr_cc=self.cc_var.get().strip())
         config.save(self.app.cfg)
         ctk.set_appearance_mode(self.app.cfg["appearance"])
         self.app.on_settings_changed()
         self.destroy()
+
+
+class MvrDialog(ctk.CTkToplevel):
+    """Collects the MVR request details and opens a Classic Outlook draft."""
+
+    ATTACHABLE = ["DASH report", "Client consent", "Quote (ARS)"]
+
+    def __init__(self, app, folder):
+        super().__init__(app)
+        self.app, self.folder = app, folder
+        self.title(f"Request MVR - {folder.name.upper()}")
+        self.geometry("520x720")
+        self.resizable(False, True)
+        self.configure(fg_color=BG)
+        self.transient(app)
+        self.grab_set()
+
+        info = mvr_email.load_client(folder)
+        docs = find_docs(folder)
+        dash = docs["DASH report"]
+        dash_driver = read_dash(dash[0]) if dash else None
+        name = (info.get("name") or (dash_driver[0] if dash_driver else folder.name)).upper()
+        first, last = mvr_email.split_name(name)
+        dln = info.get("dln") or (dash_driver[1] if dash_driver else "")
+
+        body = ctk.CTkScrollableFrame(self, fg_color=SURFACE, corner_radius=12,
+                                      border_width=1, border_color=BORDER)
+        body.pack(fill="both", expand=True, padx=2 * SP, pady=(2 * SP, 0))
+        body.grid_columnconfigure((0, 1), weight=1, uniform="c")
+        p = 2 * SP
+
+        ctk.CTkLabel(body, text="Client details", font=font(15, "bold"), text_color=TEXT) \
+            .grid(row=0, column=0, columnspan=2, sticky="w", padx=p, pady=(p, 0))
+        self.first = self._field(body, 1, 0, "First name *", first)
+        self.last = self._field(body, 1, 1, "Last name *", last)
+        self.dln = self._field(body, 3, 0, "Licence # *", dln, span=2)
+        self.phone = self._field(body, 5, 0, "Phone", info.get("phone", ""), placeholder="647-555-0123")
+        self.email = self._field(body, 5, 1, "Email", info.get("email", ""), placeholder="client@email.com",
+                                 upper=False)
+
+        self.error = ctk.CTkLabel(body, text="", font=font(12), text_color=DANGER, justify="left")
+        self.error.grid(row=7, column=0, columnspan=2, sticky="w", padx=p)
+
+        ctk.CTkLabel(body, text="Attach", font=font(15, "bold"), text_color=TEXT) \
+            .grid(row=8, column=0, columnspan=2, sticky="w", padx=p, pady=(SP, SP / 2))
+        self.attach = []
+        self.attach_frame = ctk.CTkFrame(body, fg_color="transparent")
+        self.attach_frame.grid(row=9, column=0, columnspan=2, sticky="ew", padx=p)
+        for label in self.ATTACHABLE:
+            for f in docs[label]:
+                self._add_attachment(f)
+        self.no_files = None
+        if not self.attach:
+            self.no_files = ctk.CTkLabel(self.attach_frame, font=font(12), text_color=MUTED,
+                                         text="No DASH, consent or Quote Information files in this folder yet.")
+            self.no_files.pack(anchor="w")
+        app.secondary_button(body, "Add file…", self.browse_file, width=100) \
+            .grid(row=10, column=0, sticky="w", padx=p, pady=(SP, 0))
+        r = 11
+
+        to, cc = app.cfg.get("mvr_to", ""), app.cfg.get("mvr_cc", "")
+        if to:
+            rcpt = f"To: {to}" + (f"\nCC: {cc}" if cc else "")
+        else:
+            rcpt = "No recipient set. Add the branch manager's email in Settings."
+        ctk.CTkLabel(body, text=rcpt, font=font(12), text_color=MUTED if to else DANGER,
+                     justify="left").grid(row=r, column=0, columnspan=2, sticky="w", padx=p, pady=p)
+
+        btns = ctk.CTkFrame(self, fg_color="transparent")
+        btns.pack(fill="x", padx=2 * SP, pady=2 * SP)
+        self.go = ctk.CTkButton(btns, text="Create Outlook draft", height=40, font=font(14, "bold"),
+                                fg_color=PRIMARY, hover_color=PRIMARY_HOVER, command=self.submit)
+        self.go.pack(side="right")
+        app.secondary_button(btns, "Cancel", self.destroy, width=96).pack(side="right", padx=(0, SP))
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.bind("<Return>", lambda e: self.submit())
+
+    def _add_attachment(self, path):
+        if any(f == path for _, f in self.attach):
+            return
+        var = tk.BooleanVar(value=True)
+        ctk.CTkCheckBox(self.attach_frame, text=shorten(Path(path).name, 52), variable=var, font=font(13),
+                        text_color=TEXT, fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
+                        border_color=MUTED).pack(anchor="w", pady=SP / 2)
+        self.attach.append((var, Path(path)))
+
+    def browse_file(self):
+        paths = filedialog.askopenfilenames(parent=self, title="Attach files", initialdir=self.folder)
+        if paths and self.no_files:
+            self.no_files.destroy()
+            self.no_files = None
+        for p in paths:
+            self._add_attachment(Path(p))
+
+    def _field(self, parent, row, col, label, value, span=1, placeholder="", upper=True):
+        if span == 2:
+            padx = 2 * SP
+        else:
+            padx = (2 * SP, SP) if col == 0 else (SP, 2 * SP)
+        ctk.CTkLabel(parent, text=label, font=font(13, "bold"), text_color=TEXT) \
+            .grid(row=row, column=col, columnspan=span, sticky="w", padx=padx, pady=(1.5 * SP, SP / 2))
+        e = ctk.CTkEntry(parent, height=38, font=font(14), border_color=BORDER, placeholder_text=placeholder)
+        e.grid(row=row + 1, column=col, columnspan=span, sticky="ew", padx=padx)
+        if value:
+            e.insert(0, value)
+        if upper:
+            e.bind("<KeyRelease>", lambda ev: self._upper(e))
+        return e
+
+    @staticmethod
+    def _upper(e):
+        t = e.get()
+        if t != t.upper():
+            pos = e._entry.index("insert")
+            e.delete(0, "end")
+            e.insert(0, t.upper())
+            e._entry.icursor(pos)
+
+    def values(self):
+        return dict(first=self.first.get().strip().upper(), last=self.last.get().strip().upper(),
+                    dln=format_dln(self.dln.get()), phone=mvr_email.format_phone(self.phone.get()),
+                    email=self.email.get().strip().lower())
+
+    def submit(self, display=True):
+        v = self.values()
+        problems = []
+        if not v["first"] or not v["last"]:
+            problems.append("Enter first and last name.")
+        if not is_valid_dln(v["dln"]):
+            problems.append("Licence # must be 1 letter + 14 digits.")
+        if v["email"] and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", v["email"]):
+            problems.append("Email address doesn't look right.")
+        if not self.app.cfg.get("mvr_to"):
+            problems.append("Set the branch manager's email in Settings first.")
+        if problems:
+            self.error.configure(text="\n".join(problems))
+            return None
+
+        mvr_email.save_client(self.folder, name=f"{v['first']} {v['last']}", dln=v["dln"],
+                              phone=v["phone"], email=v["email"])
+        self.go.configure(state="disabled", text="Opening Outlook…")
+        self.update_idletasks()
+        try:
+            mail = mvr_email.create_outlook_draft(
+                to=self.app.cfg["mvr_to"], cc=self.app.cfg.get("mvr_cc", ""),
+                subject=mvr_email.build_subject(v["dln"], v["first"], v["last"]),
+                body_html=mvr_email.build_body_html(v["first"], v["last"], v["dln"], v["phone"], v["email"]),
+                attachments=[f for var, f in self.attach if var.get()],
+                display=display)
+        except mvr_email.OutlookNotReady as e:
+            self.go.configure(state="normal", text="Create Outlook draft")
+            self.error.configure(text=str(e))
+            return None
+        except Exception as e:
+            self.go.configure(state="normal", text="Create Outlook draft")
+            self.error.configure(text=f"Could not open Classic Outlook.\n{e}")
+            return None
+        if display:
+            self.destroy()
+        return mail
 
 
 class App(ctk.CTk):
@@ -329,6 +505,7 @@ class App(ctk.CTk):
         self.create_btn.configure(state="disabled", text="Creating…")
         self.update_idletasks()
         folder.mkdir()
+        mvr_email.save_client(folder, name=name, dln=format_dln(dln))
         lines = [f"Created {name}"]
         ok = True
         try:
@@ -476,7 +653,10 @@ class App(ctk.CTk):
             .grid(row=3, column=0, sticky="w", padx=p, pady=(3 * SP, SP))
         acts = ctk.CTkFrame(d, fg_color="transparent")
         acts.grid(row=4, column=0, sticky="ew", padx=p)
-        self.secondary_button(acts, "Open folder", lambda: os.startfile(folder), width=120) \
+        ctk.CTkButton(acts, text="Request MVR", height=36, width=120, font=font(13, "bold"),
+                      fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
+                      command=lambda: MvrDialog(self, folder)).pack(side="left", padx=(0, SP))
+        self.secondary_button(acts, "Open folder", lambda: os.startfile(folder), width=110) \
             .pack(side="left", padx=(0, SP))
         refill = self.secondary_button(acts, "Refill consent from DASH", lambda: self.refill(folder),
                                        state="normal" if docs["DASH report"] else "disabled")
@@ -496,6 +676,7 @@ class App(ctk.CTk):
             self.detail_msg.configure(text=f"Could not refill: {e}", text_color=DANGER)
             return
         self.refresh_list(keep_scroll=True)
+        self.select(folder)
         names = "\n".join(f"{n}   {d}" for n, d in drivers)
         self.detail_msg.configure(text=f"✓ Consent refilled with:\n{names}", text_color=SUCCESS)
 

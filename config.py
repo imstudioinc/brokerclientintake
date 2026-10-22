@@ -10,6 +10,8 @@ DEFAULTS = {
     "clients_root": "",
     "consent_template": str(APP_DIR / "templates" / "New Client Consent Form.pdf"),
     "appearance": "System",   # System | Light | Dark
+    "mvr_to": "",             # branch manager, e.g. name@brokerage.ca
+    "mvr_cc": "",             # separate several with ;
 }
 
 
