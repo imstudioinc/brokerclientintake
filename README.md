@@ -10,6 +10,11 @@ Windows desktop app for setting up a new insurance client.
 - **Import DASH from Downloads**: moves the client's DASH report(s) from Downloads into
   their folder (matching names pre-ticked) and refills the consent form
 - Refills the consent form from saved DASH reports (up to 3 drivers)
+- **Email client…**: ready-made client emails, opened as an Outlook draft with your signature:
+  - Quote requests: Auto, Homeowner, Tenant, Auto + Home, Auto + Tenant
+  - Quote accepted (documents & coverage choices): Auto, Home, Tenant, Auto + Home, Auto + Tenant
+  - Policy confirmations: Auto, Home, Tenant, Auto + Home, Auto + Tenant
+  - Auto pink card
 - **Request MVR**: opens an Outlook draft to the branch manager with the client's
   details and the DASH, consent and Quote Information PDFs attached. You review and send.
 
@@ -56,6 +61,15 @@ Set the branch manager's email (To / CC) in **Settings** first.
 
 - Cloned with git: double-click **update.bat**.
 - Downloaded as ZIP: download the new ZIP, unzip over the old folder, run **install.bat**.
+
+## Email templates
+
+Templates live in `templates/emails/` (shared blocks in `templates/emails/_blocks/`).
+In the app, **Email client… > Edit this template** makes your own copy in
+`%APPDATA%\ClientIntake\emails` and opens it; your copy is used from then on.
+Placeholders like `{insurer}` listed on the template's `fields:` line are asked for in the
+app and remembered per client (e.g. the policy number is reused for the pink card email).
+Every draft is also saved in the client's `Emails` folder as a record.
 
 ## Settings
 

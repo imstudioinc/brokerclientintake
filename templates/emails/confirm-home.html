@@ -1,0 +1,20 @@
+<!--
+name: Home policy confirmation
+group: 3. Policy confirmations
+order: 31
+subject: Your Home Insurance Policy - Confirmation | {CLIENT_NAME}
+fields: insurer = Insurance company; home_policy_number = Home policy number; effective_date = Effective date (e.g. October 22, 2026); premium = Premium and payment plan (e.g. $185.40 / month)
+attach: Policy documents (declarations page)
+-->
+<p>Hi {first_name},</p><p>Your home insurance is now in place. Here are your policy details:</p>
+<ul>
+  <li>Insurance company: <b>{insurer}</b></li>
+  <li>Home policy number: <b>{home_policy_number}</b></li>
+  <li>Effective date: <b>{effective_date}</b></li>
+  <li>Premium and payment plan: <b>{premium}</b></li>
+</ul>
+<p>Your policy documents are attached. Please keep them in a safe place.</p>
+<p>If you have a mortgage, we have sent proof of insurance to your lender, or will once we receive their details.</p>
+{{include:policy_reminders}}
+<p>Thank you for choosing us. Please call or email me anytime you have a question or need a change.</p>
+<p>Thank you,</p>

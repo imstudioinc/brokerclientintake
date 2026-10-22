@@ -1,0 +1,20 @@
+<!--
+name: Tenant policy confirmation
+group: 3. Policy confirmations
+order: 32
+subject: Your Tenant Insurance Policy - Confirmation | {CLIENT_NAME}
+fields: insurer = Insurance company; tenant_policy_number = Tenant policy number; effective_date = Effective date (e.g. October 22, 2026); premium = Premium and payment plan (e.g. $185.40 / month)
+attach: Policy documents (declarations page)
+-->
+<p>Hi {first_name},</p><p>Your tenant insurance is now in place. Here are your policy details:</p>
+<ul>
+  <li>Insurance company: <b>{insurer}</b></li>
+  <li>Tenant policy number: <b>{tenant_policy_number}</b></li>
+  <li>Effective date: <b>{effective_date}</b></li>
+  <li>Premium and payment plan: <b>{premium}</b></li>
+</ul>
+<p>Your policy documents are attached. Please keep them in a safe place.</p>
+<p>If your landlord asks for proof of insurance, you can send them the attached declarations page.</p>
+{{include:policy_reminders}}
+<p>Thank you for choosing us. Please call or email me anytime you have a question or need a change.</p>
+<p>Thank you,</p>

@@ -1,6 +1,8 @@
 """MVR request email (New or Classic Outlook draft) and per-client details (client.json)."""
+import datetime
 import html
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -86,7 +88,8 @@ class OutlookNotReady(Exception):
     pass
 
 
-def create_new_outlook_draft(folder, to, cc, subject, body_html, attachments=(), signature_html=""):
+def create_new_outlook_draft(folder, to, cc, subject, body_html, attachments=(), signature_html="",
+                             label="MVR Request"):
     """Write an unsent .eml into the client folder and open it in New Outlook as a draft.
 
     New Outlook (olk.exe) has no automation API, but opens an .eml with
@@ -109,12 +112,15 @@ def create_new_outlook_draft(folder, to, cc, subject, body_html, attachments=(),
                               cid="<logo>", filename="logo.png", disposition="inline")
     for path in attachments:
         path = Path(path)
-        maintype, subtype = ("application", "pdf") if path.suffix.lower() == ".pdf" \
-            else ("application", "octet-stream")
+        ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        maintype, subtype = ctype.split("/", 1)
         msg.add_attachment(path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name)
 
-    name = re.sub(r'[\\/:*?"<>|]', "", subject.split("|")[-1]).strip()
-    out = Path(folder) / f"MVR Request - {name}.eml"
+    clean = lambda t: re.sub(r'[\\/:*?"<>|]', "", t).strip()
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H%M")
+    out_dir = Path(folder) / "Emails"   # a record of every email prepared for this client
+    out_dir.mkdir(exist_ok=True)
+    out = out_dir / f"{stamp} {clean(label)} - {clean(subject.split('|')[-1])}.eml"
     out.write_bytes(bytes(msg))
 
     olk = shutil.which("olk.exe") or str(Path(os.environ.get("LOCALAPPDATA", "")) /

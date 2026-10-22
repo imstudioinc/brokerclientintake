@@ -1,0 +1,21 @@
+<!--
+name: Auto + Tenant policy confirmation
+group: 3. Policy confirmations
+order: 34
+subject: Your Auto & Tenant Insurance Policy - Confirmation | {CLIENT_NAME}
+fields: insurer = Insurance company; auto_policy_number = Auto policy number; tenant_policy_number = Tenant policy number; effective_date = Effective date (e.g. October 22, 2026); premium = Premium and payment plan (e.g. $185.40 / month)
+attach: Auto and tenant policy documents, and pink card(s)
+-->
+<p>Hi {first_name},</p><p>Your auto & tenant insurance is now in place. Here are your policy details:</p>
+<ul>
+  <li>Insurance company: <b>{insurer}</b></li>
+  <li>Auto policy number: <b>{auto_policy_number}</b></li>
+  <li>Tenant policy number: <b>{tenant_policy_number}</b></li>
+  <li>Effective date: <b>{effective_date}</b></li>
+  <li>Premium and payment plan: <b>{premium}</b></li>
+</ul>
+<p>Your policy documents are attached. Please keep them in a safe place.</p>
+<p>Your <b>pink card</b> (proof of auto insurance) is attached. Keep it in your vehicle - printed or on your phone - and show it if police ask.</p>
+{{include:policy_reminders}}
+<p>Thank you for choosing us. Please call or email me anytime you have a question or need a change.</p>
+<p>Thank you,</p>

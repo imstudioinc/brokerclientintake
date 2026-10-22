@@ -17,6 +17,7 @@ import customtkinter as ctk
 import config
 from fill_consent import fill, format_dln, is_valid_dln, read_consent, read_dash
 import dash_import
+import emails
 import mvr_email
 import updater
 from version import __version__
@@ -392,6 +393,214 @@ class MvrDialog(ctk.CTkToplevel):
         return mail
 
 
+class EmailDialog(ctk.CTkToplevel):
+    """Pick a client email template, fill the blanks, attach files, open an Outlook draft."""
+
+    ATTACHABLE = {".pdf", ".jpg", ".jpeg", ".png", ".heic", ".doc", ".docx", ".xlsx"}
+
+    def __init__(self, app, folder):
+        super().__init__(app)
+        self.app, self.folder = app, folder
+        self.title(f"Email client - {folder.name.upper()}")
+        self.geometry("1040x720")
+        self.minsize(900, 600)
+        self.configure(fg_color=BG)
+        self.transient(app)
+        self.grab_set()
+
+        self.info = mvr_email.load_client(folder)
+        self.client = (self.info.get("name") or folder.name).upper()
+        self.saved_fields = dict(self.info.get("email_fields", {}))
+        self.templates = emails.load_templates()
+        self.by_label = {f"{t.group[3:]}  ·  {t.name}" if t.group[:1].isdigit() else t.name: t
+                         for t in self.templates}
+
+        self.grid_columnconfigure(0, weight=2, uniform="cols")
+        self.grid_columnconfigure(1, weight=3, uniform="cols")
+        self.grid_rowconfigure(0, weight=1)
+        p = 2 * SP
+
+        # ----- left: template, recipient, blanks, attachments -----
+        left = ctk.CTkScrollableFrame(self, fg_color=SURFACE, corner_radius=12, border_width=1, border_color=BORDER)
+        left.grid(row=0, column=0, sticky="nsew", padx=(2 * SP, SP), pady=(2 * SP, 0))
+        left.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(left, text="Template", font=font(13, "bold"), text_color=TEXT) \
+            .grid(row=0, column=0, sticky="w", padx=p, pady=(p, SP / 2))
+        self.choice = tk.StringVar(value=next(iter(self.by_label)))
+        ctk.CTkOptionMenu(left, values=list(self.by_label), variable=self.choice, height=36, font=font(13),
+                          dropdown_font=font(13), fg_color=SURFACE_ALT, button_color=PRIMARY,
+                          button_hover_color=PRIMARY_HOVER, text_color=TEXT, dynamic_resizing=False,
+                          command=lambda _: self.on_template()) \
+            .grid(row=1, column=0, sticky="ew", padx=p)
+
+        ctk.CTkLabel(left, text="To (client email) *", font=font(13, "bold"), text_color=TEXT) \
+            .grid(row=2, column=0, sticky="w", padx=p, pady=(1.5 * SP, SP / 2))
+        self.to = ctk.CTkEntry(left, height=36, font=font(13), border_color=BORDER,
+                               placeholder_text="client@email.com")
+        self.to.grid(row=3, column=0, sticky="ew", padx=p)
+        if self.info.get("email"):
+            self.to.insert(0, self.info["email"])
+
+        ctk.CTkLabel(left, text="Greeting name", font=font(13, "bold"), text_color=TEXT) \
+            .grid(row=4, column=0, sticky="w", padx=p, pady=(1.5 * SP, SP / 2))
+        self.greeting = ctk.CTkEntry(left, height=36, font=font(13), border_color=BORDER)
+        self.greeting.grid(row=5, column=0, sticky="ew", padx=p)
+        self.greeting.insert(0, emails.first_name(self.client))
+        self.greeting.bind("<KeyRelease>", lambda e: self.refresh_preview())
+
+        self.fields_frame = ctk.CTkFrame(left, fg_color="transparent")
+        self.fields_frame.grid(row=6, column=0, sticky="ew", padx=p)
+        self.fields_frame.grid_columnconfigure(0, weight=1)
+        self.field_entries = {}
+
+        ctk.CTkLabel(left, text="Attach", font=font(13, "bold"), text_color=TEXT) \
+            .grid(row=7, column=0, sticky="w", padx=p, pady=(2 * SP, 0))
+        self.attach_note = ctk.CTkLabel(left, text="", font=font(12), text_color=MUTED,
+                                        justify="left", wraplength=340)
+        self.attach_note.grid(row=8, column=0, sticky="w", padx=p)
+        self.attach_frame = ctk.CTkFrame(left, fg_color="transparent")
+        self.attach_frame.grid(row=9, column=0, sticky="ew", padx=p)
+        self.attach = []
+        for f in sorted(folder.iterdir(), key=lambda f: f.stat().st_mtime, reverse=True):
+            if f.is_file() and f.suffix.lower() in self.ATTACHABLE:
+                self._add_attachment(f, checked=False)
+        app.secondary_button(left, "Add file…", self.browse_file, width=100) \
+            .grid(row=10, column=0, sticky="w", padx=p, pady=(SP, p))
+
+        # ----- right: preview -----
+        right = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=12, border_width=1, border_color=BORDER)
+        right.grid(row=0, column=1, sticky="nsew", padx=(SP, 2 * SP), pady=(2 * SP, 0))
+        right.grid_columnconfigure(0, weight=1)
+        right.grid_rowconfigure(3, weight=1)
+        ctk.CTkLabel(right, text="Subject", font=font(12, "bold"), text_color=MUTED) \
+            .grid(row=0, column=0, sticky="w", padx=p, pady=(p, 0))
+        self.subject_label = ctk.CTkLabel(right, text="", font=font(14, "bold"), text_color=TEXT,
+                                          justify="left", anchor="w", wraplength=560)
+        self.subject_label.grid(row=1, column=0, sticky="ew", padx=p)
+        ctk.CTkLabel(right, text="Preview (your signature is added at the bottom)", font=font(12, "bold"),
+                     text_color=MUTED).grid(row=2, column=0, sticky="w", padx=p, pady=(1.5 * SP, SP / 2))
+        self.preview = ctk.CTkTextbox(right, font=font(13), wrap="word", fg_color=SURFACE_ALT,
+                                      border_width=1, border_color=BORDER, text_color=TEXT)
+        self.preview.grid(row=3, column=0, sticky="nsew", padx=p, pady=(0, p))
+
+        # ----- bottom bar -----
+        bottom = ctk.CTkFrame(self, fg_color="transparent")
+        bottom.grid(row=1, column=0, columnspan=2, sticky="ew", padx=2 * SP, pady=2 * SP)
+        # buttons are packed first so a long message can never push them off-screen
+        self.go = ctk.CTkButton(bottom, text="Create Outlook draft", height=40, font=font(14, "bold"),
+                                fg_color=PRIMARY, hover_color=PRIMARY_HOVER, command=self.submit)
+        self.go.pack(side="right")
+        app.secondary_button(bottom, "Cancel", self.destroy, width=96).pack(side="right", padx=(0, SP))
+        app.secondary_button(bottom, "Edit this template", self.edit_template, width=150).pack(side="left")
+        self.error = ctk.CTkLabel(bottom, text="", font=font(12), text_color=DANGER, justify="left",
+                                  anchor="w", wraplength=560)
+        self.error.pack(side="left", fill="x", expand=True, padx=2 * SP)
+        self.bind("<Escape>", lambda e: self.destroy())
+
+        self.on_template()
+
+    # ----- template + fields -----
+    @property
+    def template(self):
+        return self.by_label[self.choice.get()]
+
+    def on_template(self):
+        for w in self.fields_frame.winfo_children():
+            w.destroy()
+        self.field_entries = {}
+        for i, (key, label) in enumerate(self.template.fields):
+            ctk.CTkLabel(self.fields_frame, text=label, font=font(13, "bold"), text_color=TEXT, anchor="w") \
+                .grid(row=2 * i, column=0, sticky="w", pady=(1.5 * SP, SP / 2))
+            e = ctk.CTkEntry(self.fields_frame, height=36, font=font(13), border_color=BORDER)
+            e.grid(row=2 * i + 1, column=0, sticky="ew")
+            if self.saved_fields.get(key):
+                e.insert(0, self.saved_fields[key])
+            e.bind("<KeyRelease>", lambda ev: self.refresh_preview())
+            self.field_entries[key] = e
+        note = self.template.attach
+        self.attach_note.configure(text=f"Suggested: {note}" if note else "Nothing needed for this email.")
+        self.error.configure(text="")
+        self.refresh_preview()
+
+    def values(self):
+        v = {"first_name": self.greeting.get().strip(), "CLIENT_NAME": self.client,
+             "client_name": self.client.title(), "broker_name": self.app.cfg.get("sig_name", "")}
+        v.update({k: e.get().strip() for k, e in self.field_entries.items()})
+        return v
+
+    def refresh_preview(self):
+        if self.error.cget("text").startswith("Fill in"):
+            self.error.configure(text="")
+        subject, body = emails.render(self.template, self.values())
+        self.subject_label.configure(text=subject)
+        self.preview.configure(state="normal")
+        self.preview.delete("1.0", "end")
+        self.preview.insert("1.0", emails.to_text(body))
+        self.preview.configure(state="disabled")
+
+    # ----- attachments -----
+    def _add_attachment(self, path, checked=True):
+        if any(f == path for _, f in self.attach):
+            return
+        var = tk.BooleanVar(value=checked)
+        ctk.CTkCheckBox(self.attach_frame, text=shorten(Path(path).name, 46), variable=var, font=font(13),
+                        text_color=TEXT, fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
+                        border_color=MUTED).pack(anchor="w", pady=SP / 2)
+        self.attach.append((var, Path(path)))
+
+    def browse_file(self):
+        for p in filedialog.askopenfilenames(parent=self, title="Attach files", initialdir=self.folder):
+            self._add_attachment(Path(p))
+
+    def edit_template(self):
+        path = emails.edit_copy(self.template)
+        os.startfile(path)
+        self.error.configure(text=f"Editing your copy: {path.name}. Save it, then reopen this window.",
+                             text_color=MUTED)
+
+    # ----- create -----
+    def submit(self):
+        to = self.to.get().strip()
+        if not re.fullmatch(r"[^@\s;]+@[^@\s;]+\.[^@\s;]+", to):
+            self.error.configure(text="Enter the client's email address.", text_color=DANGER)
+            self.to.focus_set()
+            return
+        values = self.values()
+        missing = emails.missing_fields(self.template, values)
+        if missing:
+            labels = dict(self.template.fields)
+            names = ", ".join(re.sub(r"\s*\(.*\)", "", labels.get(m, m)) for m in missing)
+            self.error.configure(text=f"Fill in: {names}", text_color=DANGER)
+            return
+        subject, body = emails.render(self.template, values)
+
+        self.saved_fields.update({k: e.get().strip() for k, e in self.field_entries.items() if e.get().strip()})
+        mvr_email.save_client(self.folder, email=to.lower(), email_fields=self.saved_fields)
+
+        self.go.configure(state="disabled", text="Opening Outlook…")
+        self.update_idletasks()
+        attachments = [f for var, f in self.attach if var.get()]
+        try:
+            if self.app.cfg.get("email_app") == "Classic Outlook":
+                mvr_email.create_outlook_draft(to=to, cc="", subject=subject, body_html=body,
+                                               attachments=attachments)
+            else:
+                mvr_email.create_new_outlook_draft(
+                    self.folder, to=to, cc="", subject=subject, body_html=body, attachments=attachments,
+                    signature_html=mvr_email.build_signature(self.app.cfg), label=self.template.name)
+        except mvr_email.OutlookNotReady as e:
+            self.go.configure(state="normal", text="Create Outlook draft")
+            self.error.configure(text=str(e), text_color=DANGER)
+            return
+        except Exception as e:
+            self.go.configure(state="normal", text="Create Outlook draft")
+            self.error.configure(text=f"Could not open Outlook.\n{e}", text_color=DANGER)
+            return
+        self.destroy()
+        self.app.show_note(self.folder, f"✓ Draft opened: {self.template.name}", SUCCESS)
+
+
 class ImportDashDialog(ctk.CTkToplevel):
     """Pick DASH reports from Downloads and move them into the client folder."""
 
@@ -644,19 +853,33 @@ class App(ctk.CTk):
         self.dln_help.grid(row=7, column=0, sticky="w", padx=p, pady=(SP / 2, 0))
         dln_entry.bind("<KeyRelease>", lambda e: self._on_type(e, dln_entry))
 
+        contact = ctk.CTkFrame(c, fg_color="transparent")
+        contact.grid(row=8, column=0, sticky="ew", padx=p, pady=(1.5 * SP, 0))
+        contact.grid_columnconfigure((0, 1), weight=1, uniform="contact")
+        ctk.CTkLabel(contact, text="Phone", font=font(13, "bold"), text_color=TEXT) \
+            .grid(row=0, column=0, sticky="w", pady=(0, SP / 2))
+        ctk.CTkLabel(contact, text="Email", font=font(13, "bold"), text_color=TEXT) \
+            .grid(row=0, column=1, sticky="w", padx=(SP, 0), pady=(0, SP / 2))
+        self.phone_entry = ctk.CTkEntry(contact, height=36, font=font(13), border_color=BORDER,
+                                        placeholder_text="optional")
+        self.phone_entry.grid(row=1, column=0, sticky="ew")
+        self.email_entry = ctk.CTkEntry(contact, height=36, font=font(13), border_color=BORDER,
+                                        placeholder_text="optional")
+        self.email_entry.grid(row=1, column=1, sticky="ew", padx=(SP, 0))
+
         self.create_btn = ctk.CTkButton(c, text="Create client", height=44, font=font(14, "bold"),
                                         fg_color=PRIMARY, hover_color=PRIMARY_HOVER, corner_radius=8,
                                         command=self.create)
-        self.create_btn.grid(row=8, column=0, sticky="ew", padx=p, pady=(3 * SP, SP))
+        self.create_btn.grid(row=9, column=0, sticky="ew", padx=p, pady=(2.5 * SP, SP))
         ctk.CTkLabel(c, text="Enter to create  ·  Ctrl+N new  ·  Ctrl+F search", font=font(11),
-                     text_color=MUTED).grid(row=9, column=0, padx=p)
+                     text_color=MUTED).grid(row=10, column=0, padx=p)
 
         self.banner = ctk.CTkFrame(c, fg_color=SUCCESS_BG, corner_radius=8)
         self.banner_text = ctk.CTkLabel(self.banner, text="", font=font(13), text_color=SUCCESS,
                                         justify="left", anchor="w", wraplength=260)
         self.banner_text.pack(fill="x", padx=1.5 * SP, pady=1.5 * SP)
 
-        for w in (self.name_entry, dln_entry):
+        for w in (self.name_entry, dln_entry, self.phone_entry, self.email_entry):
             w.bind("<Return>", lambda e: self.create())
 
     def _on_type(self, event, entry):
@@ -684,7 +907,7 @@ class App(ctk.CTk):
     def _show_banner(self, text, ok=True):
         self.banner.configure(fg_color=SUCCESS_BG if ok else WARN_BG)
         self.banner_text.configure(text=text, text_color=SUCCESS if ok else DANGER)
-        self.banner.grid(row=10, column=0, sticky="ew", padx=2.5 * SP, pady=(2 * SP, 0))
+        self.banner.grid(row=11, column=0, sticky="ew", padx=2.5 * SP, pady=(1.5 * SP, 0))
 
     def create(self):
         name = clean_name(self.name_entry.get())
@@ -716,7 +939,9 @@ class App(ctk.CTk):
         self.create_btn.configure(state="disabled", text="Creating…")
         self.update_idletasks()
         folder.mkdir()
-        mvr_email.save_client(folder, name=name, dln=format_dln(dln))
+        mvr_email.save_client(folder, name=name, dln=format_dln(dln),
+                              phone=mvr_email.format_phone(self.phone_entry.get()) or None,
+                              email=self.email_entry.get().strip().lower() or None)
         lines = [f"Created {name}"]
         ok = True
         try:
@@ -733,6 +958,8 @@ class App(ctk.CTk):
         self._show_banner(("✓ " if ok else "") + "\n".join(lines), ok=ok)
         self.clear_entry(self.name_entry)
         self.clear_entry(self.dln_entry)
+        self.clear_entry(self.phone_entry)
+        self.clear_entry(self.email_entry)
         self.clear_entry(self.search_entry)
         self.refresh_list()
         self.select(folder)
@@ -869,6 +1096,8 @@ class App(ctk.CTk):
         ctk.CTkButton(acts, text="Request MVR", height=36, width=120, font=font(13, "bold"),
                       fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
                       command=lambda: MvrDialog(self, folder)).pack(side="left", padx=(0, SP))
+        self.secondary_button(acts, "Email client…", lambda: EmailDialog(self, folder), width=120) \
+            .pack(side="left", padx=(0, SP))
         self.secondary_button(acts, "Open folder", lambda: os.startfile(folder), width=110) \
             .pack(side="left", padx=(0, SP))
         acts2 = ctk.CTkFrame(d, fg_color="transparent")
