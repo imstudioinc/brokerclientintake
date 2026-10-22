@@ -13,7 +13,7 @@ from tkinter import filedialog
 import customtkinter as ctk
 
 import config
-from fill_consent import fill, format_dln, is_valid_dln, read_dash
+from fill_consent import fill, format_dln, is_valid_dln, read_consent, read_dash
 import mvr_email
 
 # ---------- Design tokens (light, dark) ----------
@@ -172,11 +172,14 @@ class MvrDialog(ctk.CTkToplevel):
 
         info = mvr_email.load_client(folder)
         docs = find_docs(folder)
-        dash = docs["DASH report"]
-        dash_driver = read_dash(dash[0]) if dash else None
-        name = (info.get("name") or (dash_driver[0] if dash_driver else folder.name)).upper()
+        # Prefill from: saved client details -> consent form -> DASH report -> folder name
+        sources = [(info.get("name", ""), info.get("dln", ""))]
+        sources += [read_consent(f) for f in docs["Client consent"][:1]]
+        sources += [read_dash(f) for f in docs["DASH report"][:1]]
+        sources = [s for s in sources if s]
+        name = next((n for n, _ in sources if n), folder.name).upper()
+        dln = next((d for _, d in sources if d), "")
         first, last = mvr_email.split_name(name)
-        dln = info.get("dln") or (dash_driver[1] if dash_driver else "")
 
         body = ctk.CTkScrollableFrame(self, fg_color=SURFACE, corner_radius=12,
                                       border_width=1, border_color=BORDER)

@@ -42,6 +42,17 @@ def read_dash(pdf_path):
     return name.group(1).strip().upper(), format_dln(dln.group(1) if dln else "")
 
 
+def read_consent(pdf_path):
+    """Return (name, dln) of the first driver on a filled consent form, or None."""
+    try:
+        fields = PdfReader(pdf_path).get_fields() or {}
+    except Exception:
+        return None
+    value = lambda k: str((fields.get(k) or {}).get("/V") or "").strip()
+    name, dln = value("Name 1") or value("Client(s) Name"), value("Driver License 1")
+    return (name.upper(), format_dln(dln)) if name or dln else None
+
+
 def fill(client_folder, dln=None, template=None):
     folder = Path(client_folder)
     template = Path(template or DEFAULT_TEMPLATE)
