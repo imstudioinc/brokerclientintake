@@ -14,6 +14,7 @@ import customtkinter as ctk
 
 import config
 from fill_consent import fill, format_dln, is_valid_dln, read_consent, read_dash
+import dash_import
 import mvr_email
 
 # ---------- Design tokens (light, dark) ----------
@@ -388,6 +389,89 @@ class MvrDialog(ctk.CTkToplevel):
         return mail
 
 
+class ImportDashDialog(ctk.CTkToplevel):
+    """Pick DASH reports from Downloads and move them into the client folder."""
+
+    def __init__(self, app, folder):
+        super().__init__(app)
+        self.app, self.folder = app, folder
+        self.title(f"Import DASH - {folder.name.upper()}")
+        self.geometry("560x520")
+        self.configure(fg_color=BG)
+        self.transient(app)
+        self.grab_set()
+
+        self.downloads = dash_import.downloads_dir()
+        reports = dash_import.find_dash_downloads(self.downloads)
+        client = (mvr_email.load_client(folder).get("name") or folder.name).upper()
+
+        body = ctk.CTkScrollableFrame(self, fg_color=SURFACE, corner_radius=12,
+                                      border_width=1, border_color=BORDER)
+        body.pack(fill="both", expand=True, padx=2 * SP, pady=(2 * SP, 0))
+        body.grid_columnconfigure(0, weight=1)
+        p = 2 * SP
+
+        ctk.CTkLabel(body, text="DASH reports in Downloads", font=font(15, "bold"), text_color=TEXT) \
+            .grid(row=0, column=0, sticky="w", padx=p, pady=(p, 0))
+        ctk.CTkLabel(body, text=f"Reports matching {client} are ticked. Tick other drivers on the "
+                                "same policy too.\nThey are moved into the client folder and the "
+                                "consent form is refilled.",
+                     font=font(12), text_color=MUTED, justify="left", wraplength=480) \
+            .grid(row=1, column=0, sticky="w", padx=p, pady=(SP / 2, SP))
+
+        self.rows = []
+        for i, r in enumerate(reports):
+            var = tk.BooleanVar(value=dash_import.names_match(client, r["name"]))
+            when = datetime.datetime.fromtimestamp(r["mtime"]).strftime("%b %d, %I:%M %p")
+            row = ctk.CTkFrame(body, fg_color=SURFACE_ALT, corner_radius=8, border_width=1, border_color=BORDER)
+            row.grid(row=2 + i, column=0, sticky="ew", padx=p, pady=SP / 2)
+            row.grid_columnconfigure(1, weight=1)
+            ctk.CTkCheckBox(row, text="", variable=var, width=24, fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
+                            border_color=MUTED).grid(row=0, column=0, rowspan=2, padx=(1.5 * SP, SP))
+            ctk.CTkLabel(row, text=r["name"] or r["path"].name, font=font(14, "bold"), text_color=TEXT,
+                         anchor="w", height=20).grid(row=0, column=1, sticky="w", pady=(SP, 0))
+            ctk.CTkLabel(row, text=f"{r['dln'] or 'Licence # not found'}  ·  downloaded {when}",
+                         font=font(12), text_color=MUTED, anchor="w", height=18) \
+                .grid(row=1, column=1, sticky="w", pady=(0, SP))
+            self.rows.append((var, r))
+
+        if not reports:
+            ctk.CTkLabel(body, text="No DASH reports found in Downloads.\n"
+                                    "Download the report from the DASH portal first.",
+                         font=font(13), text_color=MUTED, justify="center") \
+                .grid(row=2, column=0, pady=5 * SP)
+        self.error = ctk.CTkLabel(body, text="", font=font(12), text_color=DANGER)
+        self.error.grid(row=99, column=0, sticky="w", padx=p, pady=(SP, p))
+
+        btns = ctk.CTkFrame(self, fg_color="transparent")
+        btns.pack(fill="x", padx=2 * SP, pady=2 * SP)
+        app.secondary_button(btns, "Open Downloads", lambda: os.startfile(self.downloads), width=130) \
+            .pack(side="left")
+        self.go = ctk.CTkButton(btns, text="Import selected", height=40, font=font(14, "bold"),
+                                fg_color=PRIMARY, hover_color=PRIMARY_HOVER, command=self.submit,
+                                state="normal" if reports else "disabled")
+        self.go.pack(side="right")
+        app.secondary_button(btns, "Cancel", self.destroy, width=96).pack(side="right", padx=(0, SP))
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    def submit(self):
+        chosen = [r for var, r in self.rows if var.get()]
+        if not chosen:
+            self.error.configure(text="Tick at least one report.")
+            return
+        try:
+            moved = dash_import.import_reports([r["path"] for r in chosen], self.folder)
+        except OSError as e:
+            self.error.configure(text=f"Could not move the file (is it open in another program?)\n{e}")
+            return
+        info = mvr_email.load_client(self.folder)
+        if not info.get("dln") and chosen[0]["dln"]:
+            mvr_email.save_client(self.folder, dln=chosen[0]["dln"])
+        self.destroy()
+        n = len(moved)
+        self.app.refill(self.folder, prefix=f"✓ Imported {n} DASH report{'s' if n > 1 else ''}.\n")
+
+
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -398,6 +482,7 @@ class App(ctk.CTk):
         self.minsize(980, 600)
         self.configure(fg_color=BG)
         self.selected = None
+        self.note = None
         self.row_buttons = {}
 
         self._build_topbar()
@@ -669,6 +754,8 @@ class App(ctk.CTk):
             .grid(row=0, column=0, pady=4 * SP)
 
     def select(self, folder):
+        if folder != self.selected:
+            self.note = None  # result messages belong to one client
         for f, b in self.row_buttons.items():
             b.configure(fg_color=SELECTED if f == folder else "transparent")
         self.selected = folder
@@ -731,27 +818,35 @@ class App(ctk.CTk):
                       command=lambda: MvrDialog(self, folder)).pack(side="left", padx=(0, SP))
         self.secondary_button(acts, "Open folder", lambda: os.startfile(folder), width=110) \
             .pack(side="left", padx=(0, SP))
-        refill = self.secondary_button(acts, "Refill consent from DASH", lambda: self.refill(folder),
+        acts2 = ctk.CTkFrame(d, fg_color="transparent")
+        acts2.grid(row=5, column=0, sticky="ew", padx=p, pady=(SP, 0))
+        self.secondary_button(acts2, "Import DASH from Downloads", lambda: ImportDashDialog(self, folder)) \
+            .pack(side="left", padx=(0, SP))
+        refill = self.secondary_button(acts2, "Refill consent from DASH", lambda: self.refill(folder),
                                        state="normal" if docs["DASH report"] else "disabled")
         refill.pack(side="left")
-        if not docs["DASH report"]:
-            ctk.CTkLabel(d, text="Save the DASH report(s) here to refill the consent with every driver.",
-                         font=font(12), text_color=MUTED, wraplength=380, justify="left") \
-                .grid(row=5, column=0, sticky="w", padx=p, pady=(SP, 0))
         self.detail_msg = ctk.CTkLabel(d, text="", font=font(13), text_color=SUCCESS,
                                        justify="left", anchor="w", wraplength=380)
-        self.detail_msg.grid(row=6, column=0, sticky="w", padx=p, pady=(SP, 0))
+        self.detail_msg.grid(row=6, column=0, sticky="w", padx=p, pady=(1.5 * SP, 0))
+        if self.note and self.note[0] == folder:
+            self.detail_msg.configure(text=self.note[1], text_color=self.note[2])
 
-    def refill(self, folder):
+    def refill(self, folder, prefix=""):
         try:
             _, drivers = fill(folder, template=self.cfg["consent_template"])
         except Exception as e:
-            self.detail_msg.configure(text=f"Could not refill: {e}", text_color=DANGER)
+            self.show_note(folder, f"{prefix}Could not refill consent: {e}", DANGER)
             return
         self.refresh_list(keep_scroll=True)
         self.select(folder)
         names = "\n".join(f"{n}   {d}" for n, d in drivers)
-        self.detail_msg.configure(text=f"✓ Consent refilled with:\n{names}", text_color=SUCCESS)
+        self.show_note(folder, f"{prefix}✓ Consent refilled with:\n{names}", SUCCESS)
+
+    def show_note(self, folder, text, color):
+        """Result message under the actions; survives list refreshes."""
+        self.note = (folder, text, color)
+        if self.selected == folder:
+            self.detail_msg.configure(text=text, text_color=color)
 
 
 if __name__ == "__main__":
