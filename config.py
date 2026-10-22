@@ -12,6 +12,7 @@ DEFAULTS = {
     "appearance": "System",   # System | Light | Dark
     "mvr_to": "",             # branch manager, e.g. name@brokerage.ca
     "mvr_cc": "",             # separate several with ;
+    "email_app": "New Outlook",  # New Outlook | Classic Outlook
 }
 
 

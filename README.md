@@ -8,7 +8,7 @@ Windows desktop app for setting up a new insurance client.
 - Copies the licence # to the clipboard, ready to paste into DASH
 - Shows which documents each client already has: Consent, DASH, Quote, MVR
 - Refills the consent form from saved DASH reports (up to 3 drivers)
-- **Request MVR**: opens a Classic Outlook draft to the branch manager with the client's
+- **Request MVR**: opens an Outlook draft to the branch manager with the client's
   details and the DASH, consent and Quote Information PDFs attached. You review and send.
 
 ## Install
@@ -23,9 +23,14 @@ Windows desktop app for setting up a new insurance client.
 
 ## Email (Request MVR)
 
-Needs **Classic Outlook** (desktop) with your work email account added
-(File > Add Account). The new Outlook app and Outlook on the web are not supported.
-Set the branch manager's email in **Settings** first.
+Works with **New Outlook** (default) or **Classic Outlook**: choose in **Settings > Email app**.
+Set the branch manager's email (To / CC) in **Settings** first.
+
+- **New Outlook**: the app saves `MVR Request - <NAME>.eml` in the client folder and opens it
+  in New Outlook as a draft with the attachments. Add your signature with
+  **Message > Signature**, then Send.
+- **Classic Outlook**: the draft opens directly with your default signature. Needs your work
+  account added in Classic Outlook (File > Add Account).
 
 ## Update
 

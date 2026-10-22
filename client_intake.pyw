@@ -77,7 +77,7 @@ class SettingsDialog(ctk.CTkToplevel):
         super().__init__(app)
         self.app = app
         self.title("Settings")
-        self.geometry("560x520")
+        self.geometry("560x600")
         self.resizable(False, False)
         self.configure(fg_color=BG)
         self.transient(app)
@@ -105,8 +105,15 @@ class SettingsDialog(ctk.CTkToplevel):
         self._text_row(body, 6, "MVR request: To", self.to_var, "branch manager's email")
         self._text_row(body, 8, "MVR request: CC", self.cc_var, "optional; separate several with ;")
 
+        self.mail_var = tk.StringVar(value=app.cfg.get("email_app", "New Outlook"))
+        ctk.CTkLabel(body, text="Email app", font=font(13, "bold"), text_color=TEXT) \
+            .grid(row=10, column=0, sticky="w", padx=2 * SP, pady=(2 * SP, SP / 2))
+        ctk.CTkSegmentedButton(body, values=["New Outlook", "Classic Outlook"], variable=self.mail_var,
+                               font=font(13), selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER) \
+            .grid(row=11, column=0, sticky="w", padx=2 * SP)
+
         btns = ctk.CTkFrame(body, fg_color="transparent")
-        btns.grid(row=10, column=0, sticky="e", padx=2 * SP, pady=2 * SP)
+        btns.grid(row=12, column=0, sticky="e", padx=2 * SP, pady=2 * SP)
         ctk.CTkButton(btns, text="Cancel", width=96, height=36, font=font(13), fg_color="transparent",
                       border_width=1, border_color=BORDER, text_color=TEXT, hover_color=SURFACE_ALT,
                       command=self.destroy).pack(side="left", padx=(0, SP))
@@ -148,7 +155,8 @@ class SettingsDialog(ctk.CTkToplevel):
                             consent_template=self.tpl_var.get().strip(),
                             appearance=self.mode_var.get(),
                             mvr_to=self.to_var.get().strip(),
-                            mvr_cc=self.cc_var.get().strip())
+                            mvr_cc=self.cc_var.get().strip(),
+                            email_app=self.mail_var.get())
         config.save(self.app.cfg)
         ctk.set_appearance_mode(self.app.cfg["appearance"])
         self.app.on_settings_changed()
@@ -298,20 +306,24 @@ class MvrDialog(ctk.CTkToplevel):
                               phone=v["phone"], email=v["email"])
         self.go.configure(state="disabled", text="Opening Outlook…")
         self.update_idletasks()
+        email = dict(
+            to=self.app.cfg["mvr_to"], cc=self.app.cfg.get("mvr_cc", ""),
+            subject=mvr_email.build_subject(v["dln"], v["first"], v["last"]),
+            body_html=mvr_email.build_body_html(v["first"], v["last"], v["dln"], v["phone"], v["email"]),
+            attachments=[f for var, f in self.attach if var.get()])
+        classic = self.app.cfg.get("email_app") == "Classic Outlook"
         try:
-            mail = mvr_email.create_outlook_draft(
-                to=self.app.cfg["mvr_to"], cc=self.app.cfg.get("mvr_cc", ""),
-                subject=mvr_email.build_subject(v["dln"], v["first"], v["last"]),
-                body_html=mvr_email.build_body_html(v["first"], v["last"], v["dln"], v["phone"], v["email"]),
-                attachments=[f for var, f in self.attach if var.get()],
-                display=display)
+            if classic:
+                mail = mvr_email.create_outlook_draft(display=display, **email)
+            else:
+                mail = mvr_email.create_new_outlook_draft(self.folder, **email)
         except mvr_email.OutlookNotReady as e:
             self.go.configure(state="normal", text="Create Outlook draft")
             self.error.configure(text=str(e))
             return None
         except Exception as e:
             self.go.configure(state="normal", text="Create Outlook draft")
-            self.error.configure(text=f"Could not open Classic Outlook.\n{e}")
+            self.error.configure(text=f"Could not open {'Classic' if classic else 'New'} Outlook.\n{e}")
             return None
         if display:
             self.destroy()

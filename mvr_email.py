@@ -1,7 +1,12 @@
-"""MVR request email (Classic Outlook draft) and per-client details (client.json)."""
+"""MVR request email (New or Classic Outlook draft) and per-client details (client.json)."""
 import html
 import json
+import os
 import re
+import shutil
+import subprocess
+from email.message import EmailMessage
+from email.utils import make_msgid
 from pathlib import Path
 
 CLIENT_FILE = "client.json"
@@ -63,6 +68,41 @@ def build_body_html(first, last, dln, phone, email):
 
 class OutlookNotReady(Exception):
     pass
+
+
+def create_new_outlook_draft(folder, to, cc, subject, body_html, attachments=()):
+    """Write an unsent .eml into the client folder and open it in New Outlook as a draft.
+
+    New Outlook (olk.exe) has no automation API, but opens an .eml with
+    'X-Unsent: 1' as an editable draft with its attachments. It cannot read
+    files under AppData, so the draft is kept in the client folder (also a record).
+    """
+    msg = EmailMessage()
+    msg["To"] = to
+    if cc:
+        msg["Cc"] = cc
+    msg["Subject"] = subject
+    msg["X-Unsent"] = "1"
+    msg["Message-ID"] = make_msgid()
+    msg.set_content(re.sub(r"<[^>]+>", "", body_html.replace("<br>", "\n").replace("</p>", "\n\n")))
+    msg.add_alternative(body_html, subtype="html")
+    for path in attachments:
+        path = Path(path)
+        maintype, subtype = ("application", "pdf") if path.suffix.lower() == ".pdf" \
+            else ("application", "octet-stream")
+        msg.add_attachment(path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name)
+
+    name = re.sub(r'[\\/:*?"<>|]', "", subject.split("|")[-1]).strip()
+    out = Path(folder) / f"MVR Request - {name}.eml"
+    out.write_bytes(bytes(msg))
+
+    olk = shutil.which("olk.exe") or str(Path(os.environ.get("LOCALAPPDATA", "")) /
+                                          "Microsoft" / "WindowsApps" / "olk.exe")
+    if not Path(olk).exists():
+        raise OutlookNotReady("New Outlook is not installed. Install it from the Microsoft Store, "
+                              "or switch to Classic Outlook in Settings.")
+    subprocess.Popen([olk, str(out)])
+    return out
 
 
 def _retry(fn, seconds=20):
