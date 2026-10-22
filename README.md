@@ -27,6 +27,20 @@ Windows desktop app for setting up a new insurance client.
 - **Request MVR**: opens an Outlook draft to the branch manager with the client's
   details and the DASH, consent and Quote Information PDFs attached. You review and send.
 
+## Client records & Tracker
+
+- **Client record…** (on each client): tabs for **Policies** (line, status, insurer, policy #,
+  effective/expiry, premium, payment plan, monthly amount, payment method/day, coverage notes),
+  **Vehicles**, **Property**, **Business**, **Activity notes** (dated file notes for E&O) and
+  **Reminders**. Expiry defaults to effective + 1 year; monthly payment to premium / 12.
+- **Tracker** (top bar): every client at once.
+  - **To do**: your reminders plus automatic ones - renewals 45 days ahead (or expired),
+    quote follow-ups after 7 days, bound auto policies with no vehicle details. Red = due now.
+  - **Policies**: all policies with status / line / month filters and premium totals.
+- Saved per client in `tracking.json` inside the client folder, so everyone using the shared
+  Clients folder sees the same records. Each save re-reads the file and changes only that one
+  record, and every record shows who added / edited it.
+
 ## Install on a computer without Python (work / remote desktop)
 
 1. Download **ClientIntake-windows.zip** from

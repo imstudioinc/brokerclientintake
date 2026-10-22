@@ -21,6 +21,7 @@ import dash_import
 import emails
 import mvr_email
 import mvr_watch
+import tracker_ui
 import updater
 from version import __version__
 
@@ -850,6 +851,9 @@ class App(ctk.CTk):
         self.root_label.pack(anchor="w")
         self.secondary_button(bar, "Settings", lambda: SettingsDialog(self), width=96) \
             .pack(side="right")
+        ctk.CTkButton(bar, text="Tracker", width=96, height=36, font=font(13, "bold"), fg_color=PRIMARY,
+                      hover_color=PRIMARY_HOVER, command=self.open_tracker).pack(side="right", padx=(0, SP))
+        self.tracker_win = None
 
         # Shown only when a newer version is published
         self.update_bar = ctk.CTkFrame(bar, fg_color=SUCCESS_BG, corner_radius=8)
@@ -937,6 +941,19 @@ class App(ctk.CTk):
     def hide_toast(self):
         self.toast.pack_forget()
         self._toast_job = None
+
+    # ---------- tracker ----------
+    def open_tracker(self):
+        if self.tracker_win and self.tracker_win.winfo_exists():
+            self.tracker_win.lift()
+            self.tracker_win.load()
+            return
+        self.tracker_win = tracker_ui.TrackerWindow(self)
+
+    def tracker_changed(self):
+        """A client record was saved: keep an open Tracker window up to date."""
+        if self.tracker_win and self.tracker_win.winfo_exists():
+            self.tracker_win.load()
 
     # ---------- updates ----------
     def _after_update_cleanup(self):
@@ -1363,6 +1380,7 @@ class App(ctk.CTk):
             self.secondary_button(acts, "Email client…", sel(lambda f: EmailDialog(self, f))),
             self.secondary_button(acts, "Import DASH", sel(lambda f: ImportDashDialog(self, f))),
             self.refill_btn,
+            self.secondary_button(acts, "Client record…", sel(lambda f: tracker_ui.ClientRecordDialog(self, f))),
             self.secondary_button(acts, "Open folder", sel(os.startfile)),
         ]
         for i, b in enumerate(buttons):
