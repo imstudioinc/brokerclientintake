@@ -14,6 +14,7 @@ DEFAULTS = {
     "email_app": "New Outlook",  # New Outlook | Classic Outlook
     "client_types": "Auto, Home, Tenant, Commercial",  # sub-folders of the Clients folder
     "last_type": "Auto",
+    "mvr_autosave": True,     # file MVR PDFs from Downloads into client folders
 }
 
 

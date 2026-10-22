@@ -11,6 +11,11 @@ Windows desktop app for setting up a new insurance client.
 - Names are saved in CAPITALS; an Ontario licence # is required
 - Copies the licence # to the clipboard, ready to paste into DASH
 - Shows which documents each client already has: Consent, DASH, Quote, MVR
+- **MVR auto-save**: when the branch manager replies, click Download on the MVR in Outlook.
+  While the app is open it spots the MVR in Downloads, matches it to the client by the
+  licence # printed on it (or the name), and moves it to that client's folder as
+  `MVR - NAME.pdf`. Only PDFs that look like an MVR are touched; DASH reports, consent forms
+  and quotes are ignored. Turn off in Settings.
 - **Import DASH from Downloads**: moves the client's DASH report(s) from Downloads into
   their folder (matching names pre-ticked) and refills the consent form
 - Refills the consent form from saved DASH reports (up to 3 drivers)

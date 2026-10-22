@@ -5,6 +5,7 @@ documents (Consent, DASH, Quote, MVR) each client folder already has.
 """
 import datetime
 import os
+import queue
 import re
 import sys
 import threading
@@ -19,6 +20,7 @@ from fill_consent import fill, format_dln, is_valid_dln, read_consent, read_dash
 import dash_import
 import emails
 import mvr_email
+import mvr_watch
 import updater
 from version import __version__
 
@@ -111,7 +113,7 @@ class SettingsDialog(ctk.CTkToplevel):
         super().__init__(app)
         self.app = app
         self.title("Settings")
-        self.geometry("560x680")
+        self.geometry("580x730")
         self.resizable(False, False)
         self.configure(fg_color=BG)
         self.transient(app)
@@ -151,8 +153,13 @@ class SettingsDialog(ctk.CTkToplevel):
         self.types_var = tk.StringVar(value=app.cfg.get("client_types", ""))
         self._text_row(body, 12, "Client types", self.types_var, "folders inside Clients, separated by commas")
 
+        self.autosave_var = tk.BooleanVar(value=app.cfg.get("mvr_autosave", True))
+        ctk.CTkSwitch(body, text="Auto-save MVRs: file MVR PDFs from Downloads into the client's folder",
+                      variable=self.autosave_var, font=font(13), text_color=TEXT, progress_color=PRIMARY) \
+            .grid(row=14, column=0, sticky="w", padx=2 * SP, pady=(2 * SP, 0))
+
         btns = ctk.CTkFrame(body, fg_color="transparent")
-        btns.grid(row=14, column=0, sticky="e", padx=2 * SP, pady=2 * SP)
+        btns.grid(row=15, column=0, sticky="e", padx=2 * SP, pady=2 * SP)
         ctk.CTkButton(btns, text="Cancel", width=96, height=36, font=font(13), fg_color="transparent",
                       border_width=1, border_color=BORDER, text_color=TEXT, hover_color=SURFACE_ALT,
                       command=self.destroy).pack(side="left", padx=(0, SP))
@@ -197,6 +204,7 @@ class SettingsDialog(ctk.CTkToplevel):
                       mvr_to=self.to_var.get().strip(),
                       mvr_cc=self.cc_var.get().strip(),
                       email_app=self.mail_var.get(),
+                      mvr_autosave=self.autosave_var.get(),
                       client_types=", ".join(parse_types(self.types_var.get())) or config.DEFAULTS["client_types"])
         ctk.set_appearance_mode(self.app.cfg["appearance"])
         self.app.on_settings_changed()
@@ -319,6 +327,12 @@ class MvrDialog(ctk.CTkToplevel):
             .grid(row=10, column=0, sticky="w", padx=p, pady=(SP, 0))
         r = 11
 
+        if app.cfg.get("mvr_autosave", True):
+            ctk.CTkLabel(body, text="When the reply arrives, click Download on the MVR in Outlook - "
+                                    "Client Intake files it into this client's folder automatically.",
+                         font=font(12), text_color=SUCCESS, justify="left", wraplength=440) \
+                .grid(row=98, column=0, columnspan=2, sticky="w", padx=p, pady=(SP, 0))
+
         to, cc = app.cfg.get("mvr_to", ""), app.cfg.get("mvr_cc", "")
         if to:
             rcpt = f"To: {to}" + (f"\nCC: {cc}" if cc else "")
@@ -398,7 +412,8 @@ class MvrDialog(ctk.CTkToplevel):
             return None
 
         mvr_email.save_client(self.folder, name=f"{v['first']} {v['last']}", dln=v["dln"],
-                              phone=v["phone"], email=v["email"])
+                              phone=v["phone"], email=v["email"],
+                              mvr_requested=datetime.datetime.now().isoformat(timespec="minutes"))
         self.go.configure(state="disabled", text="Opening Outlook…")
         self.update_idletasks()
         email = dict(
@@ -735,6 +750,8 @@ class App(ctk.CTk):
         self.selected = None
         self.note = None
         self.client_type_of = {}
+        self.ui_queue = queue.Queue()  # created before any background thread starts
+        self._drain_ui()
         self.row_buttons = {}
 
         self._build_topbar()
@@ -839,6 +856,80 @@ class App(ctk.CTk):
         if updater.is_packaged():
             threading.Thread(target=self._check_update, daemon=True).start()
 
+        # Toast for things that happen in the background (MVR filed)
+        self.toast = ctk.CTkFrame(bar, fg_color=SUCCESS_BG, corner_radius=8)
+        self.toast_text = ctk.CTkLabel(self.toast, text="", font=font(13), text_color=SUCCESS)
+        self.toast_text.pack(side="left", padx=(1.5 * SP, SP), pady=SP)
+        self.toast_btn = ctk.CTkButton(self.toast, text="Open", height=30, width=80, font=font(13, "bold"),
+                                       fg_color=SUCCESS, hover_color=SUCCESS, text_color=("#FFFFFF", "#0F1419"))
+        self.toast_btn.pack(side="left", padx=(0, SP / 2), pady=SP)
+        ctk.CTkButton(self.toast, text="✕", width=30, height=30, font=font(13), fg_color="transparent",
+                      hover_color=SURFACE_ALT, text_color=MUTED, command=self.hide_toast) \
+            .pack(side="left", padx=(0, SP / 2))
+        self._toast_job = None
+        self.mvr_watcher = mvr_watch.Watcher(dash_import.downloads_dir())
+        threading.Thread(target=self._watch_mvrs, daemon=True).start()
+
+    # ---------- background threads -> window ----------
+    def ui(self, func, *args):
+        """Run func on the window's thread. Background threads must not touch widgets."""
+        self.ui_queue.put((func, args))
+
+    def _drain_ui(self):
+        while True:
+            try:
+                func, args = self.ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                func(*args)
+            except Exception:
+                pass
+        self.after(200, self._drain_ui)
+
+    # ---------- MVR auto-save ----------
+    def _watch_mvrs(self):
+        import time
+        while True:
+            time.sleep(4)
+            if not self.cfg.get("mvr_autosave", True):
+                continue
+            try:
+                events = self.mvr_watcher.poll(list(self.client_type_of))
+            except Exception:
+                continue  # a bad file must never stop the watcher
+            # warnings last, so a success message never hides them
+            for ev in sorted(events, key=lambda ev: ev[0] == "unmatched"):
+                self.ui(lambda ev=ev: self._on_mvr_event(ev))
+
+    def _on_mvr_event(self, ev):
+        if ev[0] == "filed":
+            _, dest, folder, how = ev
+            kind = self.client_type_of.get(folder, "")
+            self.show_toast(f"✓ MVR saved for {folder.name}" + (f" ({kind})" if kind else ""),
+                            "Open", lambda: os.startfile(dest), ok=True)
+            self.refresh_list(keep_scroll=True)
+            if self.selected == folder:
+                self.show_note(folder, f"✓ MVR received and saved: {dest.name}", SUCCESS)
+        else:
+            _, path, reason = ev
+            self.show_toast(f"MVR in Downloads not filed ({reason}): {shorten(path.name, 40)}",
+                            "Show", lambda: os.startfile(path.parent), ok=False)
+
+    def show_toast(self, text, button, command, ok=True):
+        self.toast.configure(fg_color=SUCCESS_BG if ok else WARN_BG)
+        self.toast_text.configure(text=text, text_color=SUCCESS if ok else DANGER)
+        self.toast_btn.configure(text=button, command=command,
+                                 fg_color=SUCCESS if ok else DANGER, hover_color=SUCCESS if ok else DANGER)
+        self.toast.pack(side="right", padx=(0, 2 * SP))
+        if self._toast_job:
+            self.after_cancel(self._toast_job)
+        self._toast_job = self.after(20000 if ok else 60000, self.hide_toast)
+
+    def hide_toast(self):
+        self.toast.pack_forget()
+        self._toast_job = None
+
     # ---------- updates ----------
     def _check_update(self):
         try:
@@ -846,7 +937,7 @@ class App(ctk.CTk):
         except Exception:
             return  # offline or GitHub unreachable: try again next launch
         if found:
-            self.after(0, lambda: self._show_update(found))
+            self.ui(lambda: self._show_update(found))
 
     def _show_update(self, found):
         self.pending_update = found
@@ -858,16 +949,16 @@ class App(ctk.CTk):
         self.update_text.configure(text=f"Updating to {self.pending_update['version']}…")
 
         def progress(fraction):
-            self.after(0, lambda: self.update_btn.configure(text=f"{int(fraction * 100)}%"))
+            self.ui(lambda: self.update_btn.configure(text=f"{int(fraction * 100)}%"))
 
         def work():
             try:
                 updater.download_and_install(self.pending_update, progress)
             except Exception as e:
-                self.after(0, lambda: (self.update_text.configure(text=f"Update failed: {e}", text_color=DANGER),
+                self.ui(lambda: (self.update_text.configure(text=f"Update failed: {e}", text_color=DANGER),
                                        self.update_btn.configure(state="normal", text="Try again")))
                 return
-            self.after(0, self.destroy)  # the update script waits for this window to close
+            self.ui(self.destroy)  # the update script waits for this window to close
 
         threading.Thread(target=work, daemon=True).start()
 
