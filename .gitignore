@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Never commit client documents
+DASH Report*.pdf
+Client Consent*.pdf
+*MVR*.pdf
+*Quote*.pdf
+Clients/
