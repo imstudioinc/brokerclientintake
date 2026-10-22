@@ -1,8 +1,8 @@
 """Eligibility check: facts from a DASH report (+ convictions typed in from the MVR),
 compared with a rules table per market. No AI - plain, repeatable rules.
 
-Result per market: "Proceed", "Refer to underwriter" or "Not eligible", with the reasons.
-This is guidance only; the binding decision stays with the broker / underwriter.
+Result per market: "Proceed", "Caution", "Refer to underwriter" or "Not eligible", with the
+reasons. This is guidance only; the binding decision stays with the broker / underwriter.
 """
 import datetime
 import json
@@ -11,24 +11,47 @@ from pathlib import Path
 
 import pdfplumber
 
-EXAMPLE_RULES = Path(__file__).parent / "templates" / "rules_example.json"
+BUILTIN_RULES = Path(__file__).parent / "templates" / "rules_ontario.json"
 
 # Facts the rules can use: key -> label shown to the broker
 FACTS = {
     "years_licensed": "Years licensed",
+    "years_insured": "Years since first insured",
     "years_continuous_insurance": "Years of continuous insurance",
     "age": "Driver age",
-    "at_fault_claims_6y": "At-fault claims (last 6 years)",
-    "claims_6y": "All claims (last 6 years)",
-    "nonpay_cancellations_3y": "Cancellations for non-payment (last 3 years)",
+    "at_fault_claims_6y": "At-fault claims, driver at the wheel (6 yrs)",
+    "at_fault_claims_3y": "At-fault claims, driver at the wheel (3 yrs)",
+    "claims_6y": "All claims on the report (6 yrs)",
+    "claims_3y": "All claims on the report (3 yrs)",
+    "ab_claims_6y": "Accident Benefits claims (6 yrs)",
+    "ab_over_10k_6y": "AB claims over $10,000 (6 yrs)",
+    "ab_claims_10y": "Accident Benefits claims (10 yrs)",
+    "open_claims": "Open claims",
+    "nonpay_cancellations_3y": "Non-payment cancellations (3 yrs)",
+    "nonpay_cancellations_5y": "Non-payment cancellations (5 yrs)",
     "possible_gaps": "Possible gaps in coverage",
-    "minor_convictions_3y": "Minor convictions (last 3 years)",
-    "major_convictions_3y": "Major convictions (last 3 years)",
-    "serious_convictions_3y": "Serious / criminal convictions (last 3 years)",
+    "minor_convictions_3y": "Minor convictions (3 yrs)",
+    "major_convictions_3y": "Major convictions (3 yrs)",
+    "serious_convictions_3y": "Serious / criminal convictions (3 yrs)",
+    "alcohol_convictions_3y": "   of those, alcohol-related",
 }
-MANUAL = ("minor_convictions_3y", "major_convictions_3y", "serious_convictions_3y")  # from the MVR
+MANUAL = ("minor_convictions_3y", "major_convictions_3y", "serious_convictions_3y", "alcohol_convictions_3y")
 
-VERDICTS = ["Proceed", "Refer to underwriter", "Not eligible"]   # in order of severity
+
+def _sum(facts, *keys):
+    vals = [facts.get(k) for k in keys]
+    return None if any(v is None or v == "" for v in vals) else sum(float(v) for v in vals)
+
+
+# Worked out from the facts above, for rules on combined counts
+DERIVED = {
+    "major_serious_3y": ("Major + serious convictions (3 yrs)",
+                         lambda f: _sum(f, "major_convictions_3y", "serious_convictions_3y")),
+    "all_convictions_3y": ("All convictions (3 yrs)",
+                           lambda f: _sum(f, "minor_convictions_3y", "major_convictions_3y", "serious_convictions_3y")),
+}
+
+VERDICTS = ["Proceed", "Caution", "Refer to underwriter", "Not eligible"]   # in order of severity
 
 
 def _date(text):
@@ -46,6 +69,16 @@ def _years_ago(d, today, years):
     return d >= cutoff
 
 
+def _same_person(a, b):
+    a, b = set(a.upper().replace(",", "").split()), set(b.upper().replace(",", "").split())
+    return bool(a) and bool(b) and (a <= b or b <= a)
+
+
+def _field(block, label):
+    m = re.search(label + r":\s*(.+?)(?:\s+(?:Coverage|Date Reported|Claim Status|Expiry Date)\b|$)", block, re.M)
+    return m.group(1).strip() if m else ""
+
+
 def read_dash_facts(pdf_path, today=None, at_fault_over=25):
     """Pull the facts out of a DASH driver report. Returns (facts, details, notes)."""
     today = today or datetime.date.today()
@@ -55,6 +88,8 @@ def read_dash_facts(pdf_path, today=None, at_fault_over=25):
     first, _, rest = text.partition("\nPolicies\n")
     policy_list, _, rest = rest.partition("\nClaims\n")
     claim_list = rest.split("Previous Inquiries", 1)[0]
+    name = re.search(r"DRIVER REPORT\s*\n(.+?)\s+Report Date:", text)
+    driver = name.group(1).strip() if name else ""
 
     def num(label):
         m = re.search(label + r"\s*:\s*(\d+)", first)
@@ -68,40 +103,81 @@ def read_dash_facts(pdf_path, today=None, at_fault_over=25):
         b = _date(dob.group(1))
         facts["age"] = today.year - b.year - ((today.month, today.day) < (b.month, b.day))
 
+    # Claim detail pages: "Claim #2 Date of Loss ..." with Coverage, Claim Status, Total Loss, First Party Driver
+    detail = {}
+    for block in re.split(r"\n(?=Claim #\d+ Date of Loss)", text)[1:]:
+        n = int(re.match(r"Claim #(\d+)", block).group(1))
+        loss = re.search(r"Total Loss:\s*\$([\d,.]+)", block)
+        detail.setdefault(n, {"coverage": _field(block, "Coverage"), "status": _field(block, "Claim Status"),
+                              "driver": _field(block, "First Party Driver"),
+                              "loss": float(loss.group(1).replace(",", "")) if loss else 0.0})
+
     # Claims list: "#2 Date of Loss 2024-12-27 CAA Insurance Company At-Fault : 100%"
     claims = []
     seen = set()
-    for m in re.finditer(r"Date of Loss\s+(\d{4}-\d{2}-\d{2})\s+(.+?)\s+At-Fault\s*:\s*(\d+)%", claim_list):
-        d = _date(m.group(1))
-        key = (m.group(1), m.group(2).strip(), m.group(3))
+    for m in re.finditer(r"#(\d+)\s+Date of Loss\s+(\d{4}-\d{2}-\d{2})\s+(.+?)\s+At-Fault\s*:\s*(\d+)%", claim_list):
+        d = _date(m.group(2))
+        key = (m.group(2), m.group(3).strip(), m.group(4))
         if d and key not in seen:  # each claim once, even if repeated on detail pages
             seen.add(key)
-            claims.append({"date": d, "insurer": m.group(2).strip(), "fault": int(m.group(3))})
-    recent = [c for c in claims if _years_ago(c["date"], today, 6)]
-    at_fault = [c for c in recent if c["fault"] > at_fault_over]
-    facts["claims_6y"] = len(recent)
-    facts["at_fault_claims_6y"] = len(at_fault)
+            c = {"number": int(m.group(1)), "date": d, "insurer": m.group(3).strip(), "fault": int(m.group(4)),
+                 **detail.get(int(m.group(1)), {"coverage": "", "status": "", "driver": "", "loss": 0.0})}
+            named = c["driver"] and c["driver"].lower() != "not available"
+            c["at_wheel"] = _same_person(c["driver"], driver) if named and driver else None   # None = unknown
+            claims.append(c)
+
+    def within(c, years):
+        return _years_ago(c["date"], today, years)
+
+    # At-fault claims count against this driver only when they were driving (as DASH's own summary does)
+    at_fault = [c for c in claims if c["fault"] > at_fault_over]
+    own = [c for c in at_fault if c["at_wheel"]]
+    facts["at_fault_claims_6y"] = len([c for c in own if within(c, 6)])
+    facts["at_fault_claims_3y"] = len([c for c in own if within(c, 3)])
+    facts["claims_6y"] = len([c for c in claims if within(c, 6)])
+    facts["claims_3y"] = len([c for c in claims if within(c, 3)])
+    ab = [c for c in claims if c["coverage"].upper() == "AB"]
+    facts["ab_claims_6y"] = len([c for c in ab if within(c, 6)])
+    facts["ab_over_10k_6y"] = len([c for c in ab if within(c, 6) and c["loss"] > 10000])
+    facts["ab_claims_10y"] = len([c for c in ab if within(c, 10)])
+    facts["open_claims"] = len([c for c in claims if c["status"].lower() == "open"])
+
+    for c in at_fault:
+        if not within(c, 6):
+            continue
+        if c["at_wheel"] is False:
+            notes.append(f"At-fault claim {c['date']} ({c['insurer']}, {c['fault']}%) - {c['driver'].title()} was "
+                         "driving, so it is not counted against this driver. Insurers may still ask about it.")
+        elif c["at_wheel"] is None:
+            notes.append(f"At-fault claim {c['date']} ({c['insurer']}, {c['fault']}%, {c['coverage'] or 'coverage ?'}) "
+                         "names no driver - not counted. Ask who was driving; if it was this driver, add 1 to "
+                         "the at-fault counts.")
+    for c in claims:
+        if c["status"].lower() == "open":
+            notes.append(f"Claim {c['date']} ({c['insurer']}, {c['coverage'] or '?'}) is still OPEN.")
     summary_af = num("Number of At-Fault Claims in Last 6 Years")
-    if summary_af is not None and summary_af != len(at_fault):
-        notes.append(f"DASH summary says {summary_af} at-fault claim(s), but its claims list shows "
-                     f"{len(at_fault)} over {at_fault_over}% fault - check with the insurer / underwriter.")
+    if summary_af is not None and summary_af != facts["at_fault_claims_6y"]:
+        notes.append(f"DASH summary says {summary_af} at-fault claim(s) in 6 years, but the claims with this driver "
+                     f"at the wheel show {facts['at_fault_claims_6y']} - check with the insurer / underwriter.")
 
     # Policies list: "#2 2025-10-21 to 2026-02-05 Coachman Insurance Company Cancelled - non-payment"
     policies = []
     for m in re.finditer(r"^#\d+\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})\s+(.+)$",
                          policy_list, re.M):
         policies.append({"start": _date(m.group(1)), "end": _date(m.group(2)), "rest": m.group(3).strip()})
-    nonpay = [p for p in policies if re.search(r"non-?payment", p["rest"], re.I)
-              and p["end"] and _years_ago(p["end"], today, 3)]
-    facts["nonpay_cancellations_3y"] = len(nonpay)
+    nonpay = [p for p in policies if re.search(r"non-?payment", p["rest"], re.I) and p["end"]]
+    facts["nonpay_cancellations_3y"] = len([p for p in nonpay if _years_ago(p["end"], today, 3)])
+    facts["nonpay_cancellations_5y"] = len([p for p in nonpay if _years_ago(p["end"], today, 5)])
     facts["possible_gaps"] = len(re.findall(r"POSSIBLE GAP", policy_list))
+    starts = [p["start"] for p in policies if p["start"]]
+    facts["years_insured"] = round((today - min(starts)).days / 365.25, 1) if starts else 0
+    if not starts:
+        notes.append("No policies on the DASH report - no insurance history (new driver).")
 
     # Things a broker should notice even if no rule mentions them
     holders = set(n.strip().upper().replace(",", "") for n in re.findall(r"Policyholder Name:\s*(.+?)\s+Expiry", text))
-    name = re.search(r"DRIVER REPORT\s*\n(.+?)\s+Report Date:", text)
-    if name:
-        driver = name.group(1).strip().upper()
-        others = [h for h in holders if set(h.split()) != set(driver.split())]
+    if driver:
+        others = [h for h in holders if not _same_person(h, driver)]
         if others:
             notes.append(f"Listed on a policy held by someone else ({', '.join(sorted(others))}) - "
                          "ask about the relationship and who owns / drives the vehicle.")
@@ -115,48 +191,74 @@ def read_dash_facts(pdf_path, today=None, at_fault_over=25):
 
 
 def load_rules(path=None):
-    path = Path(path) if path else EXAMPLE_RULES
+    path = Path(path) if path else BUILTIN_RULES
     if not path.exists():
-        path = EXAMPLE_RULES
+        path = BUILTIN_RULES
     data = json.loads(path.read_text(encoding="utf-8-sig"))
     return data, path
 
 
+def _label(key):
+    return FACTS.get(key, "").strip() or DERIVED.get(key, (key,))[0]
+
+
+def _check(facts, conds):
+    """True (all conditions met), False (one is not met) or the set of missing facts (the rest are met)."""
+    missing = set()
+    for key, lim in conds.items():
+        v = DERIVED[key][1](facts) if key in DERIVED else facts.get(key)
+        if v is None or v == "":
+            missing.add(_label(key))
+            continue
+        v = float(v)
+        if ("min" in lim and v < lim["min"]) or ("max" in lim and v > lim["max"]):
+            return False
+    return missing or True
+
+
 def evaluate(facts, rules):
-    """Return [{market, verdict, reasons:[(severity, text, source)], unknown:[labels]}]."""
+    """Return [{market, verdict, reasons:[(severity, text, source)], unknown:[labels], incomplete, note}].
+
+    Rule forms in the rules file:
+      {"if": {fact: {"min": n, "max": n}, ...}, "when": {...}, "then": verdict, "text": "...", "source": "..."}
+        - triggers when every condition in "if" and "when" is met (min/max inclusive)
+      {"fact": key, "max": n, "if_over": verdict, "min": n, "if_under": verdict, "source": "..."}  (older form)
+    """
     results = []
     always = [m for m in rules.get("markets", []) if m.get("applies_to_all")]
     for market in [m for m in rules.get("markets", []) if not m.get("applies_to_all")]:
         reasons, unknown = [], set()
         for rule_set in [market] + always:
             for r in rule_set.get("rules", []):
+                src = r.get("source") or rule_set.get("name", "")
+                if "if" in r or "when" in r:
+                    ok = _check(facts, {**r.get("when", {}), **r.get("if", {})})
+                    if ok is True:
+                        reasons.append((r.get("then", "Refer to underwriter"), r.get("text") or "Rule met", src))
+                    elif ok:
+                        unknown |= ok   # could apply: depends on facts not entered yet
+                    continue
                 key = r["fact"]
                 value = facts.get(key)
-                label = FACTS.get(key, key)
+                label = _label(key)
                 if value is None or value == "":
                     unknown.add(label)
                     continue
                 value = float(value)
-                src = r.get("source") or rule_set.get("name", "")
                 if "max" in r and value > r["max"]:
                     reasons.append((r.get("if_over", "Refer to underwriter"),
                                     f"{label}: {value:g} (limit {r['max']:g})", src))
                 if "min" in r and value < r["min"]:
                     reasons.append((r.get("if_under", "Refer to underwriter"),
                                     f"{label}: {value:g} (minimum {r['min']:g})", src))
-        # one line per fact per rule set: keep only the most serious broken limit
+        # each line once; for limits on the same fact keep only the most serious one
         best = {}
         for sev, text, src in reasons:
             key = (text.split(":")[0], src)
             if key not in best or VERDICTS.index(sev) > VERDICTS.index(best[key][0]):
                 best[key] = (sev, text, src)
-        reasons = list(best.values())
+        reasons = sorted(best.values(), key=lambda x: -VERDICTS.index(x[0]) if x[0] in VERDICTS else 0)
         worst = max([VERDICTS.index(s) for s, _, _ in reasons if s in VERDICTS] or [0])
-        verdict = VERDICTS[worst]
-        if verdict == "Proceed" and unknown:
-            verdict = "Refer to underwriter"
-            reasons.append(("Refer to underwriter", "Some facts are missing: " + ", ".join(sorted(unknown)), ""))
-        reasons.sort(key=lambda x: -VERDICTS.index(x[0]) if x[0] in VERDICTS else 0)
-        results.append({"market": market.get("name", "?"), "verdict": verdict,
-                        "reasons": reasons, "unknown": sorted(unknown), "note": market.get("note", "")})
+        results.append({"market": market.get("name", "?"), "verdict": VERDICTS[worst], "reasons": reasons,
+                        "unknown": sorted(unknown), "incomplete": bool(unknown), "note": market.get("note", "")})
     return results

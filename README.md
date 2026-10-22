@@ -53,6 +53,20 @@ Windows desktop app for setting up a new insurance client.
   carrier's notes first; common words have synonyms (ticket → conviction, bike → motorcycle).
 - Notes are a summary: check the carrier manual before quoting exact rates or binding.
 
+## Check eligibility
+
+- **Check eligibility…** (on each client): reads the client's DASH report and checks it against
+  the built-in rules for **Intact**, **Jevco**, **Echelon** (commercial) and **WellCare's in-house
+  rules**, taken from the underwriting notes. Each market shows Proceed / Caution / Refer to
+  underwriter / Not eligible, with the reason and the note it comes from.
+- At-fault claims count only when this driver was at the wheel (DASH's own rule). Claims driven by
+  someone else, or with no driver named, are listed under **Worth a look**: ask the client and
+  correct the number if needed.
+- Type the convictions in from the MVR (minor / major / serious / alcohol-related). Until then a
+  market shows "... so far" and lists what is missing.
+- Driving-record rules only: vehicle, use, value and coverage rules still need the manual.
+  **Create my rules file…** copies the rules to a file you can edit (and share on the shared drive).
+
 ## Install on a computer without Python (work / remote desktop)
 
 1. Download **ClientIntake-windows.zip** from

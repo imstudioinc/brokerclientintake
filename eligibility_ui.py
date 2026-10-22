@@ -13,6 +13,8 @@ import eligibility
 
 WARN = ("#B45309", "#FBBF24")
 WARN_BG = ("#FEF3C7", "#3A2E12")
+CAUTION = ("#6B5B1E", "#E5D38A")
+CAUTION_BG = ("#F5F0DC", "#2E2A1A")
 GOOD_BG = ("#E8F5EC", "#16291D")
 BAD_BG = ("#FDECEC", "#3A1D1D")
 
@@ -95,18 +97,18 @@ class EligibilityDialog(ctk.CTkToplevel):
     # ---------- rules file ----------
     def load_rules(self):
         self.rules, self.rules_path = eligibility.load_rules(self.app.cfg.get("rules_file"))
-        example = self.rules_path == eligibility.EXAMPLE_RULES
+        builtin = self.rules_path == eligibility.BUILTIN_RULES
         self.rules_label.configure(
-            text=("Rules: EXAMPLE rules (not real insurer guidelines) - create your own rules file"
-                  if example else f"Rules: {self.rules_path}"),
-            text_color=self.ui.DANGER if example else self.ui.MUTED)
+            text=("Rules: built in - Intact, Jevco, Echelon and WellCare rules from the underwriting notes (Oct 2026)"
+                  if builtin else f"Rules: {self.rules_path}"),
+            text_color=self.ui.MUTED)
 
     def create_rules(self):
         p = filedialog.asksaveasfilename(parent=self, title="Save your rules file (put it on the shared drive)",
                                          defaultextension=".json", initialfile="Underwriting rules.json",
                                          filetypes=[("Rules file", "*.json")])
         if p:
-            shutil.copy(eligibility.EXAMPLE_RULES, p)
+            shutil.copy(eligibility.BUILTIN_RULES, p)
             config.update(self.app.cfg, rules_file=str(Path(p)))
             self.load_rules()
             self.evaluate()
@@ -159,8 +161,8 @@ class EligibilityDialog(ctk.CTkToplevel):
             w.destroy()
         ctk.CTkLabel(self.results, text="Result by market", font=ui.font(16, "bold"), text_color=ui.TEXT) \
             .grid(row=0, column=0, sticky="w", padx=16, pady=(16, 8))
-        colors = {"Proceed": (ui.SUCCESS, GOOD_BG), "Refer to underwriter": (WARN, WARN_BG),
-                  "Not eligible": (ui.DANGER, BAD_BG)}
+        colors = {"Proceed": (ui.SUCCESS, GOOD_BG), "Caution": (CAUTION, CAUTION_BG),
+                  "Refer to underwriter": (WARN, WARN_BG), "Not eligible": (ui.DANGER, BAD_BG)}
         for i, res in enumerate(eligibility.evaluate(self.facts(), self.rules)):
             fg, bg = colors[res["verdict"]]
             card = ctk.CTkFrame(self.results, fg_color=ui.SURFACE_ALT, corner_radius=10, border_width=1,
@@ -169,16 +171,20 @@ class EligibilityDialog(ctk.CTkToplevel):
             card.grid_columnconfigure(0, weight=1)
             ctk.CTkLabel(card, text=res["market"], font=ui.font(14, "bold"), text_color=ui.TEXT, anchor="w") \
                 .grid(row=0, column=0, sticky="w", padx=14, pady=(12, 0))
-            ctk.CTkLabel(card, text=f"  {res['verdict']}  ", font=ui.font(13, "bold"), text_color=fg,
+            badge = res["verdict"] + (" so far" if res["incomplete"] and res["verdict"] != "Not eligible" else "")
+            ctk.CTkLabel(card, text=f"  {badge}  ", font=ui.font(13, "bold"), text_color=fg,
                          fg_color=bg, corner_radius=6).grid(row=0, column=1, sticky="e", padx=14, pady=(12, 0))
-            lines = res["reasons"] or [("Proceed", "Within every rule in the rules file.", "")]
+            lines = list(res["reasons"]) or [("Proceed", "No rule in the rules file is broken.", "")]
+            if res["incomplete"] and res["verdict"] != "Not eligible":
+                lines.append(("", "Not fully checked - enter: " + ", ".join(res["unknown"]), ""))
             for j, (sev, text, src) in enumerate(lines):
-                color = colors.get(sev, (ui.TEXT, None))[0]
+                color = colors.get(sev, (ui.MUTED, None))[0]
                 ctk.CTkLabel(card, text=f"• {text}" + (f"   ({src})" if src else ""), font=ui.font(12),
                              text_color=color, anchor="w", justify="left", wraplength=560) \
                     .grid(row=j + 1, column=0, columnspan=2, sticky="w", padx=14, pady=(4 if j == 0 else 0, 0))
             if res.get("note"):
-                ctk.CTkLabel(card, text=res["note"], font=ui.font(11), text_color=ui.MUTED, anchor="w") \
+                ctk.CTkLabel(card, text=res["note"], font=ui.font(11), text_color=ui.MUTED, anchor="w",
+                             justify="left", wraplength=560) \
                     .grid(row=len(lines) + 1, column=0, columnspan=2, sticky="w", padx=14)
             ctk.CTkLabel(card, text="").grid(row=len(lines) + 2, column=0, pady=2)
         ctk.CTkLabel(self.results, text="Guidance only - based on the rules file and the reports. Confirm anything "
