@@ -13,9 +13,11 @@ python -m PyInstaller --noconfirm --clean --windowed --name ClientIntake --distp
   --collect-data customtkinter ^
   --collect-data pdfminer ^
   --hidden-import win32com.client ^
+  --exclude-module release ^
   client_intake.pyw
 if errorlevel 1 goto :fail
 
+copy /Y "templates\READ ME FIRST.txt" "release\ClientIntake\READ ME FIRST.txt" >nul
 if exist ClientIntake-windows.zip del ClientIntake-windows.zip
 powershell -NoProfile -Command "Compress-Archive -Path 'release\ClientIntake' -DestinationPath 'ClientIntake-windows.zip'"
 echo.

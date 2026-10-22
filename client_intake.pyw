@@ -7,6 +7,7 @@ import datetime
 import os
 import re
 import sys
+import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog
@@ -17,6 +18,8 @@ import config
 from fill_consent import fill, format_dln, is_valid_dln, read_consent, read_dash
 import dash_import
 import mvr_email
+import updater
+from version import __version__
 
 # ---------- Design tokens (light, dark) ----------
 BG = ("#F3F5F8", "#0F1419")
@@ -555,13 +558,61 @@ class App(ctk.CTk):
         mark.pack(side="left", padx=(0, 1.5 * SP))
         titles = ctk.CTkFrame(bar, fg_color="transparent")
         titles.pack(side="left")
-        ctk.CTkLabel(titles, text="Client Intake", font=font(20, "bold"), text_color=TEXT, height=26) \
-            .pack(anchor="w")
+        name_line = ctk.CTkFrame(titles, fg_color="transparent")
+        name_line.pack(anchor="w")
+        ctk.CTkLabel(name_line, text="Client Intake", font=font(20, "bold"), text_color=TEXT, height=26) \
+            .pack(side="left")
+        ctk.CTkLabel(name_line, text=f"  v{__version__}", font=font(12), text_color=MUTED, height=26) \
+            .pack(side="left", anchor="s")
         self.root_label = ctk.CTkLabel(titles, text=shorten_path(self.cfg["clients_root"]) if self.cfg["clients_root"] else "No Clients folder set",
                                        font=font(12), text_color=MUTED, height=18)
         self.root_label.pack(anchor="w")
         self.secondary_button(bar, "Settings", lambda: SettingsDialog(self), width=96) \
             .pack(side="right")
+
+        # Shown only when a newer version is published
+        self.update_bar = ctk.CTkFrame(bar, fg_color=SUCCESS_BG, corner_radius=8)
+        self.update_text = ctk.CTkLabel(self.update_bar, text="", font=font(13), text_color=SUCCESS)
+        self.update_text.pack(side="left", padx=(1.5 * SP, SP), pady=SP)
+        self.update_btn = ctk.CTkButton(self.update_bar, text="Update now", height=32, width=110,
+                                        font=font(13, "bold"), fg_color=SUCCESS, hover_color=SUCCESS,
+                                        text_color=("#FFFFFF", "#0F1419"), command=self.install_update)
+        self.update_btn.pack(side="left", padx=(0, SP), pady=SP)
+        self.pending_update = None
+        if updater.is_packaged():
+            threading.Thread(target=self._check_update, daemon=True).start()
+
+    # ---------- updates ----------
+    def _check_update(self):
+        try:
+            found = updater.check_for_update()
+        except Exception:
+            return  # offline or GitHub unreachable: try again next launch
+        if found:
+            self.after(0, lambda: self._show_update(found))
+
+    def _show_update(self, found):
+        self.pending_update = found
+        self.update_text.configure(text=f"Version {found['version']} is available")
+        self.update_bar.pack(side="right", padx=(0, 2 * SP))
+
+    def install_update(self):
+        self.update_btn.configure(state="disabled", text="Downloading…")
+        self.update_text.configure(text=f"Updating to {self.pending_update['version']}…")
+
+        def progress(fraction):
+            self.after(0, lambda: self.update_btn.configure(text=f"{int(fraction * 100)}%"))
+
+        def work():
+            try:
+                updater.download_and_install(self.pending_update, progress)
+            except Exception as e:
+                self.after(0, lambda: (self.update_text.configure(text=f"Update failed: {e}", text_color=DANGER),
+                                       self.update_btn.configure(state="normal", text="Try again")))
+                return
+            self.after(0, self.destroy)  # the update script waits for this window to close
+
+        threading.Thread(target=work, daemon=True).start()
 
     # ---------- column 1: new client ----------
     def _build_new_client(self, parent):

@@ -15,7 +15,8 @@ Windows desktop app for setting up a new insurance client.
 
 ## Install on a computer without Python (work / remote desktop)
 
-1. Download **ClientIntake-windows.zip** from the repo's **Releases** page.
+1. Download **ClientIntake-windows.zip** from
+   [brokerclientintake-releases](https://github.com/imstudioinc/brokerclientintake-releases/releases/latest) (no login needed).
 2. Unzip it somewhere permanent, e.g. `Documents\ClientIntake`. Keep the `_internal`
    folder next to `ClientIntake.exe`.
 3. Double-click **ClientIntake.exe**. The first run adds a desktop shortcut and asks
@@ -24,8 +25,9 @@ Windows desktop app for setting up a new insurance client.
 If Windows shows "Windows protected your PC", click **More info > Run anyway**.
 If your IT blocks unsigned programs, ask them to allow `ClientIntake.exe`.
 
-To update: download the new zip and replace the folder. Settings are kept
-(they live in `%APPDATA%\ClientIntake`).
+**Updates install themselves.** When a new version is published, the app shows
+**Update now** at the top; one click downloads it and restarts. Settings and client
+files are kept (settings live in `%APPDATA%\ClientIntake`).
 
 Troubleshooting: `ClientIntake.exe --selftest` writes `%TEMP%\ClientIntake-selftest.txt`.
 
@@ -75,8 +77,12 @@ template, the MVR request recipients (To / CC), or light/dark mode. Settings are
 This repo holds code and the blank consent template only. Client files stay in
 your Clients folder and are never committed (see `.gitignore`).
 
-## Building the exe
+## Publishing an update
 
-On a computer with Python, double-click **build.bat**. It creates
-`release\ClientIntake\ClientIntake.exe` and `ClientIntake-windows.zip` to upload
-to a GitHub Release.
+On the computer with Python and this repo, double-click **release.bat**, enter the
+new version (e.g. `1.0.1`) and a one-line note. It bumps `version.py`, builds the exe,
+commits, tags, and publishes the zip to
+[brokerclientintake-releases](https://github.com/imstudioinc/brokerclientintake-releases).
+Installed apps offer the update the next time they open.
+
+`build.bat` alone only builds `release\ClientIntake` and the zip, without publishing.

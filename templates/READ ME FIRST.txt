@@ -1,0 +1,13 @@
+CLIENT INTAKE - HOW TO START
+
+1. Right-click the zip file > "Extract All..." and extract it to your Documents folder.
+   Do NOT run ClientIntake.exe from inside the zip - it will fail with
+   "Failed to load Python DLL".
+
+2. Open Documents\ClientIntake and double-click ClientIntake.exe.
+   The first run adds a "Client Intake" shortcut to your desktop.
+
+3. If Windows says "Windows protected your PC", click "More info" > "Run anyway".
+
+Updates install themselves: when a new version is out, the app shows
+"Update now" at the top. Your settings and client files are kept.
