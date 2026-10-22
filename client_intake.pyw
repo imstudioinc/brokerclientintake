@@ -21,6 +21,7 @@ import dash_import
 import emails
 import mvr_email
 import mvr_watch
+import eligibility_ui
 import tracker_ui
 import updater
 from version import __version__
@@ -1431,6 +1432,7 @@ class App(ctk.CTk):
             self.secondary_button(acts, "Import DASH", sel(lambda f: ImportDashDialog(self, f))),
             self.refill_btn,
             self.secondary_button(acts, "Client record…", sel(lambda f: tracker_ui.ClientRecordDialog(self, f))),
+            self.secondary_button(acts, "Check eligibility…", sel(lambda f: eligibility_ui.EligibilityDialog(self, f))),
             self.secondary_button(acts, "Open folder", sel(os.startfile)),
         ]
         for i, b in enumerate(buttons):

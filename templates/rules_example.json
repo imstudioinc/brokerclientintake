@@ -1,0 +1,47 @@
+{
+  "_read_me": [
+    "EXAMPLE RULES - NOT REAL INSURER GUIDELINES. Replace the numbers with your insurers' and brokerage's actual limits.",
+    "Each market has rules. A rule checks one fact against a max and/or min.",
+    "if_over / if_under: what happens when the limit is broken - 'Refer to underwriter' or 'Not eligible'.",
+    "source: where the rule comes from (manual name + page), shown to the broker next to the result.",
+    "A market with \"applies_to_all\": true (e.g. your brokerage rules) is checked together with every insurer.",
+    "Facts: years_licensed, years_continuous_insurance, age, at_fault_claims_6y, claims_6y, nonpay_cancellations_3y, possible_gaps, minor_convictions_3y, major_convictions_3y, serious_convictions_3y"
+  ],
+  "markets": [
+    {
+      "name": "Example standard market",
+      "note": "Example only - typical standard-market appetite, not any specific insurer.",
+      "rules": [
+        {"fact": "at_fault_claims_6y", "max": 1, "if_over": "Refer to underwriter", "source": "Example manual p. 1"},
+        {"fact": "at_fault_claims_6y", "max": 2, "if_over": "Not eligible", "source": "Example manual p. 1"},
+        {"fact": "minor_convictions_3y", "max": 2, "if_over": "Refer to underwriter", "source": "Example manual p. 2"},
+        {"fact": "major_convictions_3y", "max": 0, "if_over": "Not eligible", "source": "Example manual p. 2"},
+        {"fact": "serious_convictions_3y", "max": 0, "if_over": "Not eligible", "source": "Example manual p. 2"},
+        {"fact": "nonpay_cancellations_3y", "max": 0, "if_over": "Refer to underwriter", "source": "Example manual p. 3"},
+        {"fact": "nonpay_cancellations_3y", "max": 1, "if_over": "Not eligible", "source": "Example manual p. 3"},
+        {"fact": "years_licensed", "min": 2, "if_under": "Refer to underwriter", "source": "Example manual p. 4"},
+        {"fact": "years_continuous_insurance", "min": 1, "if_under": "Refer to underwriter", "source": "Example manual p. 4"},
+        {"fact": "possible_gaps", "max": 0, "if_over": "Refer to underwriter", "source": "Example manual p. 4"}
+      ]
+    },
+    {
+      "name": "Example non-standard market",
+      "note": "Example only - typical non-standard appetite.",
+      "rules": [
+        {"fact": "at_fault_claims_6y", "max": 3, "if_over": "Refer to underwriter", "source": "Example manual p. 1"},
+        {"fact": "minor_convictions_3y", "max": 4, "if_over": "Refer to underwriter", "source": "Example manual p. 2"},
+        {"fact": "major_convictions_3y", "max": 1, "if_over": "Refer to underwriter", "source": "Example manual p. 2"},
+        {"fact": "serious_convictions_3y", "max": 0, "if_over": "Refer to underwriter", "source": "Example manual p. 2"},
+        {"fact": "nonpay_cancellations_3y", "max": 2, "if_over": "Refer to underwriter", "source": "Example manual p. 3"}
+      ]
+    },
+    {
+      "name": "Brokerage rules (example)",
+      "applies_to_all": true,
+      "rules": [
+        {"fact": "at_fault_claims_6y", "max": 1, "if_over": "Refer to underwriter", "source": "Brokerage binding authority (example)"},
+        {"fact": "serious_convictions_3y", "max": 0, "if_over": "Refer to underwriter", "source": "Brokerage binding authority (example)"}
+      ]
+    }
+  ]
+}
