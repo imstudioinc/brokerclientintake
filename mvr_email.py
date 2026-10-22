@@ -146,8 +146,16 @@ def _retry(fn, seconds=20):
             time.sleep(0.5)
 
 
-def create_outlook_draft(to, cc, subject, body_html, attachments=(), display=True):
-    """Open a Classic Outlook draft with the user's default signature kept at the bottom."""
+PR_ATTACH_CONTENT_ID = "http://schemas.microsoft.com/mapi/proptag/0x3712001F"
+PR_ATTACHMENT_HIDDEN = "http://schemas.microsoft.com/mapi/proptag/0x7FFE000B"
+
+
+def create_outlook_draft(to, cc, subject, body_html, attachments=(), display=True, signature_html=""):
+    """Open a Classic Outlook draft.
+
+    With an app signature (Settings > Email signature) it is used, logo embedded, in place of
+    Outlook's own default signature; without one, Outlook's default signature is kept.
+    """
     import win32com.client  # Windows + Classic Outlook only
 
     outlook = _retry(lambda: win32com.client.Dispatch("Outlook.Application"))
@@ -161,17 +169,27 @@ def create_outlook_draft(to, cc, subject, body_html, attachments=(), display=Tru
 
     mail = _retry(lambda: outlook.CreateItem(0))  # olMailItem
     if display:
-        mail.Display()            # loads the default signature into HTMLBody
-    signature_html = mail.HTMLBody or ""
-
+        mail.Display()            # Outlook inserts its default signature (if any) here
     mail.To = to
     mail.CC = cc
     mail.Subject = subject
-    m = re.search(r"<body[^>]*>", signature_html, re.I)
-    if m:
-        mail.HTMLBody = signature_html[: m.end()] + body_html + signature_html[m.end():]
+
+    if signature_html:
+        # Replace everything, including Outlook's own signature, so there is only ours.
+        mail.HTMLBody = f"<html><body>{body_html}{signature_html}</body></html>"
+        logo = TEMPLATES / "logo.png"
+        if "cid:logo" in signature_html and logo.exists():
+            inline = mail.Attachments.Add(str(logo))
+            inline.PropertyAccessor.SetProperty(PR_ATTACH_CONTENT_ID, "logo")
+            inline.PropertyAccessor.SetProperty(PR_ATTACHMENT_HIDDEN, True)
     else:
-        mail.HTMLBody = body_html + signature_html
+        existing = mail.HTMLBody or ""   # Outlook's default signature, if one is set up
+        m = re.search(r"<body[^>]*>", existing, re.I)
+        if m:
+            mail.HTMLBody = existing[: m.end()] + body_html + existing[m.end():]
+        else:
+            mail.HTMLBody = body_html + existing
+
     for path in attachments:
         mail.Attachments.Add(str(path))
     return mail

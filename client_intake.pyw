@@ -236,7 +236,7 @@ class SignatureDialog(ctk.CTkToplevel):
                                       border_width=1, border_color=BORDER)
         body.pack(fill="both", expand=True, padx=2 * SP, pady=(2 * SP, 0))
         body.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(body, text="Added to the bottom of MVR request emails (New Outlook).\n"
+        ctk.CTkLabel(body, text="Added to the bottom of every email the app creates (New and Classic Outlook).\n"
                                 "Logo, website and confidentiality notice are added automatically.\n"
                                 "Leave your name empty for no signature.",
                      font=font(12), text_color=MUTED, justify="left") \
@@ -424,7 +424,8 @@ class MvrDialog(ctk.CTkToplevel):
         classic = self.app.cfg.get("email_app") == "Classic Outlook"
         try:
             if classic:
-                mail = mvr_email.create_outlook_draft(display=display, **email)
+                mail = mvr_email.create_outlook_draft(
+                    display=display, signature_html=mvr_email.build_signature(self.app.cfg), **email)
             else:
                 mail = mvr_email.create_new_outlook_draft(
                     self.folder, signature_html=mvr_email.build_signature(self.app.cfg), **email)
@@ -635,7 +636,8 @@ class EmailDialog(ctk.CTkToplevel):
         try:
             if self.app.cfg.get("email_app") == "Classic Outlook":
                 mvr_email.create_outlook_draft(to=to, cc="", subject=subject, body_html=body,
-                                               attachments=attachments)
+                                               attachments=attachments,
+                                               signature_html=mvr_email.build_signature(self.app.cfg))
             else:
                 mvr_email.create_new_outlook_draft(
                     self.folder, to=to, cc="", subject=subject, body_html=body, attachments=attachments,
