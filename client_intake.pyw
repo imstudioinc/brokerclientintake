@@ -773,7 +773,7 @@ class App(ctk.CTk):
         self.row_buttons = {}
 
         self._build_topbar()
-        body = ctk.CTkFrame(self, fg_color="transparent")
+        body = self.clients_view = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=3 * SP, pady=(0, 3 * SP))
         body.grid_columnconfigure(0, minsize=330)
         body.grid_columnconfigure(1, weight=1, minsize=280)
@@ -784,7 +784,8 @@ class App(ctk.CTk):
         self._build_client_list(body)
         self._build_details(body)
 
-        self.bind("<Control-n>", lambda e: self.name_entry.focus_set())
+        self.bind("<Control-n>", lambda e: (self.show_view("Clients"), self.name_entry.focus_set()))
+        self.bind("<Control-t>", lambda e: self.show_view("Tracker" if self.view_var.get() == "Clients" else "Clients"))
         self.bind("<Control-f>", lambda e: self.search_entry.focus_set())
         self.bind("<F5>", lambda e: self.refresh_list())
         self.bind("<FocusIn>", self._on_focus)
@@ -881,8 +882,11 @@ class App(ctk.CTk):
         self.root_label.pack(anchor="w")
         self.secondary_button(bar, "Settings", lambda: SettingsDialog(self), width=96) \
             .pack(side="right")
-        ctk.CTkButton(bar, text="Tracker", width=96, height=36, font=font(13, "bold"), fg_color=PRIMARY,
-                      hover_color=PRIMARY_HOVER, command=self.open_tracker).pack(side="right", padx=(0, SP))
+        # Clients | Tracker: two views in this one window
+        self.view_var = tk.StringVar(value="Clients")
+        ctk.CTkSegmentedButton(bar, values=["Clients", "Tracker"], variable=self.view_var, height=36,
+                               font=font(13, "bold"), selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER,
+                               command=self.show_view).pack(side="right", padx=(0, 2 * SP))
         self.sample_btn = self.secondary_button(bar, "Back to my Clients folder", self.leave_sample, width=190)
         if self.cfg.get("sample_prev_root") is not None:
             self.root_label.configure(text="Sample clients - not your real files", text_color=DANGER)
@@ -978,11 +982,23 @@ class App(ctk.CTk):
 
     # ---------- tracker ----------
     def open_tracker(self):
-        if self.tracker_win and self.tracker_win.winfo_exists():
-            self.tracker_win.lift()
-            self.tracker_win.load()
-            return
-        self.tracker_win = tracker_ui.TrackerWindow(self)
+        self.view_var.set("Tracker")
+        self.show_view("Tracker")
+
+    def show_view(self, name):
+        """Switch between the Clients and Tracker views inside this window."""
+        if name == "Tracker":
+            if not (self.tracker_win and self.tracker_win.winfo_exists()):
+                self.tracker_win = tracker_ui.TrackerView(self, self)   # built on first use
+            else:
+                self.tracker_win.load()
+            self.clients_view.pack_forget()
+            self.tracker_win.pack(fill="both", expand=True, padx=3 * SP, pady=(0, 3 * SP))
+        else:
+            if self.tracker_win:
+                self.tracker_win.pack_forget()
+            self.clients_view.pack(fill="both", expand=True, padx=3 * SP, pady=(0, 3 * SP))
+        self.view_var.set(name)
 
     def tracker_changed(self):
         """A client record was saved: keep an open Tracker window up to date."""

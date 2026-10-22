@@ -120,6 +120,173 @@ def show_value(kind, key, value):
     return text if len(text) < 90 else text[:87] + "…"
 
 
+# ================================================================= date picker
+DATE_FMT = "%b %d, %Y"   # shown in fields, e.g. "Oct 22, 2026" (saved as 2026-10-22)
+
+
+def show_date(d):
+    return d.strftime(DATE_FMT).replace(" 0", " ")
+
+
+class CalendarPopup(ctk.CTkToplevel):
+    """Month calendar that drops down under a DateField. Click a day to pick it."""
+
+    def __init__(self, field):
+        super().__init__(field)
+        self.field = field
+        ui = self.ui = field.ui
+        self.overrideredirect(True)
+        self.configure(fg_color=ui.BORDER)
+        picked = records.parse_date(field.get())
+        self.picked = picked
+        self.month = (picked or datetime.date.today()).replace(day=1)
+
+        inner = ctk.CTkFrame(self, fg_color=ui.SURFACE, corner_radius=0)
+        inner.pack(fill="both", expand=True, padx=1, pady=1)
+        head = ctk.CTkFrame(inner, fg_color="transparent")
+        head.pack(fill="x", padx=8, pady=(8, 4))
+        nav = dict(width=32, height=30, font=ui.font(16, "bold"), fg_color="transparent",
+                   hover_color=ui.SURFACE_ALT, text_color=ui.TEXT)
+        ctk.CTkButton(head, text="‹", command=lambda: self.shift(-1), **nav).pack(side="left")
+        ctk.CTkButton(head, text="›", command=lambda: self.shift(1), **nav).pack(side="right")
+        self.title_label = ctk.CTkLabel(head, text="", font=ui.font(14, "bold"), text_color=ui.TEXT)
+        self.title_label.pack(side="left", expand=True)
+
+        grid = tk.Frame(inner, bg=_c(ui.SURFACE))
+        grid.pack(padx=8)
+        for col, name in enumerate(("Su", "Mo", "Tu", "We", "Th", "Fr", "Sa")):
+            tk.Label(grid, text=name, width=4, font=(ui.FONT, 9, "bold"), bg=_c(ui.SURFACE),
+                     fg=_c(ui.MUTED)).grid(row=0, column=col, pady=(0, 2))
+        self.cells = []
+        for r in range(6):
+            for col in range(7):
+                cell = tk.Label(grid, width=4, height=1, font=(ui.FONT, 10), cursor="hand2", pady=4)
+                cell.grid(row=r + 1, column=col, padx=1, pady=1)
+                cell.bind("<Button-1>", lambda e, c=cell: self.pick(c.day) if c.day else None)
+                cell.bind("<Enter>", lambda e, c=cell: c.day and c.configure(bg=_c(ui.SURFACE_ALT))
+                          if c.day not in (self.picked,) else None)
+                cell.bind("<Leave>", lambda e, c=cell: self.paint(c))
+                cell.day = None
+                self.cells.append(cell)
+
+        foot = ctk.CTkFrame(inner, fg_color="transparent")
+        foot.pack(fill="x", padx=8, pady=8)
+        link = dict(height=28, font=ui.font(12), fg_color="transparent", hover_color=ui.SURFACE_ALT,
+                    text_color=ui.TEXT, border_width=1, border_color=ui.BORDER)
+        ctk.CTkButton(foot, text="Today", width=70, command=lambda: self.pick(datetime.date.today()), **link) \
+            .pack(side="left")
+        ctk.CTkButton(foot, text="Clear", width=70, command=self.clear, **link).pack(side="right")
+
+        self.draw()
+        self.update_idletasks()
+        x = field.winfo_rootx()
+        y = field.winfo_rooty() + field.winfo_height() + 2
+        if y + self.winfo_reqheight() > self.winfo_screenheight() - 40:   # no room below: open above
+            y = field.winfo_rooty() - self.winfo_reqheight() - 2
+        self.geometry(f"+{x}+{y}")
+        self.lift()
+        self.prev_grab = self.grab_current()   # the editor is modal; take over clicks while open
+        self._grab()
+        self.focus_force()
+        self.bind("<Escape>", lambda e: self.close())
+        self.bind("<Button-1>", self._click_outside, add="+")
+
+    def _grab(self, tries=10):
+        try:
+            self.grab_set()
+        except tk.TclError:   # window not on screen yet
+            if tries:
+                self.after(30, lambda: self._grab(tries - 1))
+
+    def _click_outside(self, event):
+        x, y = event.x_root, event.y_root
+        if not (self.winfo_rootx() <= x <= self.winfo_rootx() + self.winfo_width()
+                and self.winfo_rooty() <= y <= self.winfo_rooty() + self.winfo_height()):
+            self.close()
+
+    def shift(self, months):
+        m = self.month.month - 1 + months
+        self.month = self.month.replace(year=self.month.year + m // 12, month=m % 12 + 1)
+        self.draw()
+
+    def draw(self):
+        self.title_label.configure(text=self.month.strftime("%B %Y"))
+        first = self.month - datetime.timedelta(days=(self.month.weekday() + 1) % 7)   # Sunday on/before the 1st
+        for i, cell in enumerate(self.cells):
+            day = first + datetime.timedelta(days=i)
+            cell.day = day
+            cell.configure(text=str(day.day))
+            self.paint(cell)
+
+    def paint(self, cell):
+        ui, day = self.ui, cell.day
+        if day == self.picked:
+            cell.configure(bg=_c(ui.PRIMARY), fg="#FFFFFF", font=(ui.FONT, 10, "bold"))
+        elif day == datetime.date.today():
+            cell.configure(bg=_c(ui.SELECTED), fg=_c(ui.TEXT), font=(ui.FONT, 10, "bold"))
+        else:
+            cell.configure(bg=_c(ui.SURFACE), font=(ui.FONT, 10),
+                           fg=_c(ui.TEXT) if day.month == self.month.month else _c(ui.MUTED))
+
+    def pick(self, day):
+        self.field.set_date(day)
+        self.close()
+
+    def clear(self):
+        self.field.set_date(None)
+        self.close()
+
+    def close(self):
+        try:
+            self.grab_release()
+            if self.prev_grab and self.prev_grab.winfo_exists():
+                self.prev_grab.grab_set()
+        finally:
+            self.destroy()
+
+
+class DateField(ctk.CTkFrame):
+    """Text box + calendar button. Typing still works; the button opens the calendar.
+    Behaves like a CTkEntry for get/insert/delete/bind."""
+
+    def __init__(self, parent, ui, on_change=None):
+        super().__init__(parent, fg_color="transparent")
+        self.ui, self.on_change = ui, on_change
+        self.grid_columnconfigure(0, weight=1)
+        self.entry = ctk.CTkEntry(self, height=34, font=ui.font(13), border_color=ui.BORDER,
+                                  placeholder_text="Pick a date")
+        self.entry.grid(row=0, column=0, sticky="ew")
+        self.entry.bind("<Button-1>", lambda e: self.after(10, self.open) if not self.entry.get() else None)
+        self.entry.bind("<Alt-Down>", lambda e: self.open())
+        ctk.CTkButton(self, text="▾  Calendar", width=104, height=34, font=ui.font(12),
+                      fg_color="transparent", border_width=1, border_color=ui.BORDER, text_color=ui.TEXT,
+                      hover_color=ui.SURFACE_ALT, command=self.open).grid(row=0, column=1, padx=(6, 0))
+
+    def open(self):
+        CalendarPopup(self)
+
+    def set_date(self, day):
+        self.entry.delete(0, "end")
+        if day:
+            self.entry.insert(0, show_date(day))
+        if self.on_change:
+            self.on_change()
+
+    # CTkEntry-compatible bits used by the editor
+    def get(self):
+        return self.entry.get()
+
+    def delete(self, *a):
+        self.entry.delete(*a)
+
+    def insert(self, index, value):
+        d = records.parse_date(value) if isinstance(value, str) else None
+        self.entry.insert(index, show_date(d) if d else value)
+
+    def bind(self, *a, **kw):
+        return self.entry.bind(*a, **kw)
+
+
 def status_tag(status):
     """Only statuses that need attention are coloured: quotes amber, ended policies grey."""
     return "soon" if status == "Quoted" else "muted" if status in ENDED else ""
@@ -189,9 +356,15 @@ class RecordEditor(ctk.CTkToplevel):
                 w = ctk.CTkTextbox(body, height=90, font=ui.font(13), border_width=1, border_color=ui.BORDER)
                 w.insert("1.0", value or "")
                 self.inputs[key] = ("long", w)
+            elif ftype == "date":
+                w = DateField(body, ui, on_change=(self._policy_defaults if kind == "policies" else None))
+                if value not in (None, ""):
+                    w.insert(0, str(value))
+                elif key in ("date", "bound_date") and not item:
+                    w.insert(0, records.today())
+                self.inputs[key] = (ftype, w)
             else:
-                w = ctk.CTkEntry(body, height=34, font=ui.font(13), border_color=ui.BORDER,
-                                 placeholder_text="YYYY-MM-DD" if ftype == "date" else "")
+                w = ctk.CTkEntry(body, height=34, font=ui.font(13), border_color=ui.BORDER)
                 if value not in (None, ""):
                     w.insert(0, str(value))
                 elif ftype == "date" and key in ("date", "bound_date") and not item:
@@ -232,9 +405,9 @@ class RecordEditor(ctk.CTkToplevel):
         eff = records.parse_date(self._get("effective"))
         if eff:
             try:
-                self._set_if_empty("expiry", eff.replace(year=eff.year + 1).isoformat())
+                self._set_if_empty("expiry", show_date(eff.replace(year=eff.year + 1)))
             except ValueError:  # Feb 29
-                self._set_if_empty("expiry", (eff + datetime.timedelta(days=365)).isoformat())
+                self._set_if_empty("expiry", show_date(eff + datetime.timedelta(days=365)))
         prem = records.money(self._get("premium"))
         if prem and self.inputs["plan"][1].get() == "Monthly":
             self._set_if_empty("monthly", f"{prem / 12:.2f}")
@@ -246,7 +419,7 @@ class RecordEditor(ctk.CTkToplevel):
             if ftype == "date" and value:
                 d = records.parse_date(value)
                 if not d:
-                    self.error.configure(text=f"Date not recognised: {value} (use YYYY-MM-DD)")
+                    self.error.configure(text=f"Date not recognised: {value} - use the calendar")
                     return
                 value = d.isoformat()
             if ftype == "money" and value:
@@ -408,21 +581,18 @@ class ClientRecordDialog(ctk.CTkToplevel):
 TODO_KIND = {"Reminder": "Reminder", "Renewal": "Renewal", "Quote": "Quote follow-up", "Missing info": "Missing info"}
 
 
-class TrackerWindow(ctk.CTkToplevel):
-    """All clients: what needs doing, every policy, and premium totals."""
+class TrackerView(ctk.CTkFrame):
+    """All clients: what needs doing, every policy, and premium totals.
+    Shown inside the main window (Clients | Tracker switch), not as a separate window."""
 
-    def __init__(self, app):
-        super().__init__(app)
+    def __init__(self, parent, app):
+        super().__init__(parent, fg_color="transparent")
         self.app = app
         ui = self.ui = _ui(app)
         style_tables(ui)
-        self.title("Tracker")
-        self.geometry("1220x760")
-        self.minsize(960, 600)
-        self.configure(fg_color=ui.BG)
 
         head = ctk.CTkFrame(self, fg_color="transparent")
-        head.pack(fill="x", padx=20, pady=(18, 0))
+        head.pack(fill="x", padx=0, pady=(0, 0))
         ctk.CTkLabel(head, text="Tracker", font=ui.font(24, "bold"), text_color=ui.TEXT).pack(side="left")
         self.status = ctk.CTkLabel(head, text="Loading…", font=ui.font(13), text_color=ui.MUTED)
         self.status.pack(side="left", padx=16, pady=(6, 0))
@@ -431,7 +601,7 @@ class TrackerWindow(ctk.CTkToplevel):
         # Counters double as filters for the To do list
         self.view = "all"
         row = ctk.CTkFrame(self, fg_color="transparent")
-        row.pack(fill="x", padx=20, pady=(12, 0))
+        row.pack(fill="x", padx=0, pady=(12, 0))
         self.counters = {}
         for key, label, color in (("now", "Due now", ui.DANGER), ("soon", "Next 14 days", WARN),
                                   ("Renewal", "Renewals", ui.TEXT), ("Quote", "Quotes waiting", ui.TEXT),
@@ -446,7 +616,7 @@ class TrackerWindow(ctk.CTkToplevel):
                                    segmented_button_unselected_color=ui.SURFACE_ALT,
                                    segmented_button_unselected_hover_color=ui.BORDER,
                                    text_color=ui.TEXT, corner_radius=12)
-        self.tabs.pack(fill="both", expand=True, padx=20, pady=(14, 20))
+        self.tabs.pack(fill="both", expand=True, padx=0, pady=(14, 0))
         self.tabs._segmented_button.configure(font=ui.font(13), height=34)
 
         # --- To do (grouped: due now / next 14 days / later)
@@ -488,7 +658,6 @@ class TrackerWindow(ctk.CTkToplevel):
         self.pol.bind("<Double-1>", lambda e: self.open_client(self.pol, "Policies"))
 
         self.items, self.todo_rows = [], []
-        self.bind("<Escape>", lambda e: self.destroy())
         self.load()
 
     # ----- data
