@@ -159,6 +159,7 @@ client's `tracking.json`, so everyone sees it).
 | Ownership | `ownership`, `registration` or `permit` | `Ownership - NAME.pdf` |
 | Bill of sale (N/A possible) | `bill of sale` | `Bill of Sale - NAME.pdf` |
 | Winter tire photo (N/A possible) | `winter`, `tire` or `tyre` | `Winter Tires - NAME.jpg` |
+| Void cheque (N/A possible - only for pre-authorized monthly payments) | `void`, `cheque`, `direct deposit` or `PAD form` | `Void Cheque - NAME.jpg` |
 | Financing / lease (N/A possible) | `financ`, `lease` (as a word), `loan`, `lienholder` | `Financing Papers - NAME.pdf` |
 
 ## Privacy

@@ -61,6 +61,7 @@ AUTO_DOCUMENTS = [
     ("Ownership", ["*ownership*", "*registration*", "*permit*"], "Ownership", False),
     ("Bill of sale", ["*bill of sale*", "*bill_of_sale*", "*billofsale*"], "Bill of Sale", True),
     ("Winter tire photo", ["*winter*", "*tire*", "*tyre*"], "Winter Tires", True),
+    ("Void cheque", ["*void*", "*cheque*", "*direct deposit*", "*pad form*"], "Void Cheque", True),
     ("Financing / lease", ["*financ*", "lease*", "* lease*", "*_lease*", "*-lease*", "*loan*", "*lienholder*"], "Financing Papers", True),
 ]
 DOC_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".tif", ".tiff", ".bmp", ".gif",
@@ -1419,6 +1420,7 @@ class App(ctk.CTk):
     # ---------- column 3: details (built once, then only updated) ----------
     def _build_details(self, parent):
         d = self.details = self.card(parent, row=0, column=2)
+        d.grid_rowconfigure(0, weight=1)
         d.grid_columnconfigure(0, weight=1)
         p = 2.5 * SP
 
@@ -1428,7 +1430,10 @@ class App(ctk.CTk):
         ctk.CTkLabel(self.details_empty, text="Their documents and actions will show here.", font=font(13),
                      text_color=MUTED).pack()
 
-        body = self.details_body = ctk.CTkFrame(d, fg_color="transparent")
+        # scrolls when the window is too short for every document row and action
+        body = self.details_body = ctk.CTkScrollableFrame(d, fg_color="transparent", corner_radius=0,
+                                                          scrollbar_button_color=SURFACE,
+                                                          scrollbar_button_hover_color=BORDER)
         body.grid_columnconfigure(0, weight=1)
         self.details_title = ctk.CTkLabel(body, text="", font=font(18, "bold"), text_color=TEXT, anchor="w")
         self.details_title.grid(row=0, column=0, sticky="ew", padx=p, pady=(p, 0))
@@ -1442,12 +1447,12 @@ class App(ctk.CTk):
         auto = {label: (name, optional) for label, _, name, optional in AUTO_DOCUMENTS}
         for i, (label, _) in enumerate(doc_list("Auto")):
             row = ctk.CTkFrame(lst, fg_color=SURFACE_ALT, corner_radius=8, border_width=1, border_color=BORDER)
-            row.grid(row=i, column=0, sticky="ew", pady=2)
+            row.grid(row=i, column=0, sticky="ew", pady=1)
             row.grid_columnconfigure(2, weight=1)   # the file name gives way, never the label
             dot = ctk.CTkFrame(row, width=10, height=10, corner_radius=5, fg_color=BORDER)
             dot.grid(row=0, column=0, padx=(1.5 * SP, SP))
             ctk.CTkLabel(row, text=label, font=font(13, "bold"), text_color=TEXT, anchor="w", height=20) \
-                .grid(row=0, column=1, sticky="w", pady=SP * 0.75)
+                .grid(row=0, column=1, sticky="w", pady=SP * 0.6)
             status = ctk.CTkLabel(row, text="", font=font(12), anchor="e", height=18)
             status.grid(row=0, column=2, sticky="e", padx=(SP, SP))
             r = {"frame": row, "dot": dot, "status": status, "state": None, "auto": label in auto}
