@@ -145,6 +145,18 @@ template, the MVR request recipients (To / CC), or light/dark mode. Settings are
 | Quote | contains `Quote` (e.g. `Quote Information.pdf`) |
 | MVR | contains `MVR` |
 
+**Auto clients** also need these (photos or PDFs). **Add…** on each row copies the file into the
+client folder with the standard name; **N/A** marks one as not needed for this client (saved in the
+client's `tracking.json`, so everyone sees it).
+
+| Document | File name contains | Added as |
+|---|---|---|
+| Driver's licence | `licence` / `license` | `Driver Licence - NAME.jpg` |
+| Ownership | `ownership`, `registration` or `permit` | `Ownership - NAME.pdf` |
+| Bill of sale (N/A possible) | `bill of sale` | `Bill of Sale - NAME.pdf` |
+| Winter tire photo (N/A possible) | `winter`, `tire` or `tyre` | `Winter Tires - NAME.jpg` |
+| Financing / lease papers (N/A possible) | `financ`, `lease` (as a word), `loan`, `lienholder` | `Financing Papers - NAME.pdf` |
+
 ## Privacy
 
 This repo holds code and the blank consent template only. Client files stay in

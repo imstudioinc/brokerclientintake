@@ -179,6 +179,23 @@ def save_item(folder, kind, item):
     return item
 
 
+def docs_not_needed(folder):
+    """Document labels marked "not needed" for this client (e.g. no financing, no winter tires)."""
+    try:
+        data = json.loads((Path(folder) / FILE).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return set()
+    return set(data.get("docs_not_needed", []))
+
+
+def set_doc_needed(folder, label, needed):
+    data = load(folder)  # re-read: someone else may have saved meanwhile
+    labels = set(data.get("docs_not_needed", []))
+    (labels.discard if needed else labels.add)(label)
+    data["docs_not_needed"] = sorted(labels)
+    _write(folder, data)
+
+
 def delete_item(folder, kind, item_id):
     data = load(folder)
     data[kind] = [x for x in data[kind] if x.get("id") != item_id]

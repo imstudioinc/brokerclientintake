@@ -21,6 +21,7 @@ import dash_import
 import emails
 import mvr_email
 import mvr_watch
+import records
 import rules_ui
 import eligibility_ui
 import tracker_ui
@@ -53,6 +54,15 @@ DOCUMENTS = [
     ("Quote (ARS)", ["*Quote*.pdf", "*quote*.pdf"]),
     ("MVR", ["*MVR*.pdf", "*mvr*.pdf"]),
 ]
+# Also needed for Auto clients: (label, file name patterns, name given by Add…, can be "not needed")
+AUTO_DOCUMENTS = [
+    ("Driver's licence", ["*licen[cs]e*"], "Driver Licence", False),
+    ("Ownership", ["*ownership*", "*registration*", "*permit*"], "Ownership", False),
+    ("Bill of sale", ["*bill of sale*", "*bill_of_sale*", "*billofsale*"], "Bill of Sale", True),
+    ("Winter tire photo", ["*winter*", "*tire*", "*tyre*"], "Winter Tires", True),
+    ("Financing / lease papers", ["*financ*", "lease*", "* lease*", "*_lease*", "*-lease*", "*loan*", "*lienholder*"], "Financing Papers", True),
+]
+DOC_FILES = "*.pdf *.jpg *.jpeg *.png *.heic *.webp *.tif *.tiff *.bmp *.gif *.doc *.docx"
 
 
 def clean_name(name):
@@ -61,11 +71,20 @@ def clean_name(name):
     return name.upper()
 
 
-def find_docs(folder):
+def doc_list(kind):
+    """[(label, patterns)] tracked for a client of this type."""
+    return DOCUMENTS + ([(label, pats) for label, pats, _, _ in AUTO_DOCUMENTS] if kind == "Auto" else [])
+
+
+def find_docs(folder, kind=""):
     """Return {label: [files]} for the tracked documents in a client folder."""
-    found = {}
-    for label, patterns in DOCUMENTS:
-        files = {p for pat in patterns for p in folder.glob(pat)}
+    found, base = {}, set()
+    for label, patterns in doc_list(kind):
+        files = {p for pat in patterns for p in folder.glob(pat) if p.is_file()}
+        if label in dict(DOCUMENTS):
+            base |= files
+        else:
+            files -= base            # e.g. "Client Consent" is not a lienholder paper
         found[label] = sorted(files, key=lambda p: p.stat().st_mtime)
     return found
 
@@ -1287,10 +1306,13 @@ class App(ctk.CTk):
         row.name.configure(fg=self._c(TEXT))
         row.sub.configure(fg=self._c(MUTED))
 
-    def _doc_count(self, folder, mtime):
+    def _doc_count(self, folder, mtime, kind=""):
+        """(found, needed) documents for the list row."""
         cached = self._docs_cache.get(folder)
-        if not cached or cached[0] != mtime:  # re-check files only when the folder changed
-            cached = (mtime, sum(1 for v in find_docs(folder).values() if v))
+        if not cached or cached[0] != (mtime, kind):  # re-check files only when the folder changed
+            skip = records.docs_not_needed(folder) if kind == "Auto" else set()
+            docs = {k: v for k, v in find_docs(folder, kind).items() if k not in skip}
+            cached = ((mtime, kind), (sum(1 for v in docs.values() if v), len(docs)))
             self._docs_cache[folder] = cached
         return cached[1]
 
@@ -1359,7 +1381,8 @@ class App(ctk.CTk):
         for i, (folder, ftype, mtime) in enumerate(page):
             row = self.rows.get(folder) or self._make_row(folder)
             when = datetime.datetime.fromtimestamp(mtime).strftime("%b %d, %Y")
-            sub = f"{ftype}  ·  {when}  ·  {self._doc_count(folder, mtime)} of {len(DOCUMENTS)} docs"
+            have, need = self._doc_count(folder, mtime, ftype)
+            sub = f"{ftype}  ·  {when}  ·  {have} of {need} docs"
             if row.sub_text != sub:
                 row.sub.configure(text=sub)
                 row.sub_text = sub
@@ -1411,20 +1434,33 @@ class App(ctk.CTk):
         lst = ctk.CTkFrame(body, fg_color="transparent")
         lst.grid(row=2, column=0, sticky="ew", padx=p)
         lst.grid_columnconfigure(0, weight=1)
-        self.doc_rows = []
-        for i, (label, _) in enumerate(DOCUMENTS):
+        self.doc_rows = {}
+        auto = {label: (name, optional) for label, _, name, optional in AUTO_DOCUMENTS}
+        for i, (label, _) in enumerate(doc_list("Auto")):
             row = ctk.CTkFrame(lst, fg_color=SURFACE_ALT, corner_radius=8, border_width=1, border_color=BORDER)
-            row.grid(row=i, column=0, sticky="ew", pady=SP / 2)
-            row.grid_columnconfigure(1, weight=1)
+            row.grid(row=i, column=0, sticky="ew", pady=2)
+            row.grid_columnconfigure(2, weight=1)   # the file name gives way, never the label
             dot = ctk.CTkFrame(row, width=10, height=10, corner_radius=5, fg_color=BORDER)
-            dot.grid(row=0, column=0, rowspan=2, padx=(1.5 * SP, SP))
-            ctk.CTkLabel(row, text=label, font=font(14, "bold"), text_color=TEXT, anchor="w", height=20) \
-                .grid(row=0, column=1, sticky="w", pady=(SP, 0))
-            status = ctk.CTkLabel(row, text="", font=font(12), anchor="w", height=18)
-            status.grid(row=1, column=1, sticky="w", pady=(0, SP))
-            open_btn = self.secondary_button(row, "Open", None, width=72)
-            open_btn.grid(row=0, column=2, rowspan=2, padx=1.5 * SP)
-            self.doc_rows.append({"dot": dot, "status": status, "open": open_btn, "state": None})
+            dot.grid(row=0, column=0, padx=(1.5 * SP, SP))
+            ctk.CTkLabel(row, text=label, font=font(13, "bold"), text_color=TEXT, anchor="w", height=20) \
+                .grid(row=0, column=1, sticky="w", pady=SP * 0.75)
+            status = ctk.CTkLabel(row, text="", font=font(12), anchor="e", height=18)
+            status.grid(row=0, column=2, sticky="e", padx=(SP, SP))
+            r = {"frame": row, "dot": dot, "status": status, "state": None, "auto": label in auto}
+            if label in auto:
+                name, optional = auto[label]
+                if optional:
+                    r["na"] = ctk.CTkButton(row, text="N/A", width=40, height=26, font=font(11), fg_color="transparent",
+                                            border_width=1, border_color=BORDER, text_color=MUTED,
+                                            hover_color=SURFACE, command=lambda l=label: self.toggle_doc_needed(l))
+                    r["na"].grid(row=0, column=3, padx=(0, SP / 2))
+                ctk.CTkButton(row, text="Add…", width=52, height=26, font=font(12), fg_color="transparent",
+                              border_width=1, border_color=BORDER, text_color=TEXT, hover_color=SURFACE,
+                              command=lambda l=label, n=name: self.add_doc(l, n)).grid(row=0, column=4, padx=(0, SP / 2))
+            r["open"] = ctk.CTkButton(row, text="Open", width=56, height=26, font=font(12), fg_color="transparent",
+                                      border_width=1, border_color=BORDER, text_color=TEXT, hover_color=SURFACE)
+            r["open"].grid(row=0, column=5, padx=(0, SP))
+            self.doc_rows[label] = r
 
         ctk.CTkLabel(body, text="Actions", font=font(12, "bold"), text_color=MUTED) \
             .grid(row=3, column=0, sticky="w", padx=p, pady=(3 * SP, SP))
@@ -1464,23 +1500,73 @@ class App(ctk.CTk):
 
         kind = self.client_type_of.get(folder, "")
         self.details_title.configure(text=shorten(folder.name, 40) + (f"   ·   {kind}" if kind else ""))
-        docs = find_docs(folder)
-        for (label, _), r in zip(DOCUMENTS, self.doc_rows):
+        docs = find_docs(folder, kind)
+        skip = records.docs_not_needed(folder) if kind == "Auto" else set()
+        for label, r in self.doc_rows.items():
+            if label not in docs:            # auto documents on a non-auto client
+                r["frame"].grid_remove()
+                continue
+            r["frame"].grid()
             files = docs[label]
             if files:
-                status = shorten(files[-1].name, 44) if len(files) == 1 else f"{len(files)} files"
+                status, color, dot = (f"{len(files)} files" if len(files) > 1 else
+                                       "Received" if label not in dict(DOCUMENTS) else shorten(files[-1].name, 26)), MUTED, SUCCESS
+            elif label in skip:
+                status, color, dot = "Not needed", MUTED, BORDER
             else:
-                status = "Missing"
-            state = (status, bool(files))
+                status, color, dot = "Missing", DANGER, BORDER
+            state = (status, bool(files), label in skip)
             if r["state"] != state:  # only touch widgets whose content changed
-                r["dot"].configure(fg_color=SUCCESS if files else BORDER)
-                r["status"].configure(text=status, text_color=MUTED if files else DANGER)
+                r["dot"].configure(fg_color=dot)
+                r["status"].configure(text=status, text_color=color)
                 r["open"].configure(state="normal" if files else "disabled")
+                if "na" in r:
+                    r["na"].configure(text="Needed" if label in skip else "N/A", width=58 if label in skip else 40)
                 r["state"] = state
             r["open"].configure(command=lambda fs=files: [os.startfile(f) for f in fs])
         self.refill_btn.configure(state="normal" if docs["DASH report"] else "disabled")
         note = self.note[1:] if self.note and self.note[0] == folder else ("", SUCCESS)
         self.detail_msg.configure(text=note[0], text_color=note[1])
+
+    def add_doc(self, label, name):
+        """Copy the chosen photos / PDFs into the client folder under a name the app recognises."""
+        folder = self.selected
+        if not folder:
+            return
+        paths = filedialog.askopenfilenames(parent=self, title=f"{label} for {folder.name}",
+                                            initialdir=str(dash_import.downloads_dir()),
+                                            filetypes=[("Photos and documents", DOC_FILES), ("All files", "*.*")])
+        if not paths:
+            return
+        import shutil
+        saved = []
+        for src in map(Path, paths):
+            dest = folder / f"{name} - {folder.name}{src.suffix.lower()}"
+            n = 2
+            while dest.exists():
+                dest = folder / f"{name} - {folder.name} ({n}){src.suffix.lower()}"
+                n += 1
+            try:
+                shutil.copy2(src, dest)
+                saved.append(dest.name)
+            except OSError as e:
+                self.show_note(folder, f"Could not copy {src.name}: {e}", DANGER)
+                return
+        if label in records.docs_not_needed(folder):
+            records.set_doc_needed(folder, label, True)
+        self.refresh_list(keep_scroll=True)
+        self.show_note(folder, f"✓ {label} saved: " + ", ".join(saved), SUCCESS)
+
+    def toggle_doc_needed(self, label):
+        folder = self.selected
+        if not folder:
+            return
+        try:
+            records.set_doc_needed(folder, label, label in records.docs_not_needed(folder))
+        except OSError as e:
+            self.show_note(folder, f"Could not save: {e}", DANGER)
+            return
+        self.refresh_list(keep_scroll=True)
 
     def refill(self, folder, prefix=""):
         try:
