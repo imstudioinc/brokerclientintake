@@ -1,7 +1,7 @@
 """Review window: the quote checked against the MVR and DASH, and eligibility by market.
 
-Reads the client's DASH report, MVR and Applied Rating quote (any of them may be missing),
-lists what doesn't match or breaks a rule, and shows which markets fit by the rules file.
+Reads the client's DASH report, MVR and Applied Rating quote (any of them may be missing).
+Shows one verdict at the top, then what to fix, refer and check, then the markets.
 """
 import os
 import shutil
@@ -25,7 +25,11 @@ GOOD_BG = ("#E8F5EC", "#16291D")
 BAD_BG = ("#FDECEC", "#3A1D1D")
 NONE = "(none)"
 DOC_LABELS = {"dash": "DASH report", "mvr": "MVR", "quote": "Quote (Applied Rating)"}
-CHECK_ORDER = ["bad", "refer", "warn", "info", "ok"]
+
+# check status -> (section title, open by default)
+SECTIONS = [("bad", "Fix in the quote", True), ("refer", "Refer / get approval", True),
+            ("warn", "Check with the client", True), ("todo", "Carrier to-dos", False),
+            ("info", "Notes", False), ("ok", "Matches", False)]
 
 
 class EligibilityDialog(ctk.CTkToplevel):
@@ -34,81 +38,82 @@ class EligibilityDialog(ctk.CTkToplevel):
         self.app, self.folder = app, Path(folder)
         ui = self.ui = sys.modules[type(app).__module__]
         self.title(f"Review quote & eligibility - {self.folder.name}")
-        self.geometry("1240x820")
-        self.minsize(1000, 640)
+        self.geometry("1180x840")
+        self.minsize(980, 640)
         self.configure(fg_color=ui.BG)
         self.transient(app)
-        kind = app.client_type_of.get(self.folder, "")
-        self.line = kind if kind in ("Auto", "Commercial") else None
+        self.folder_type = app.client_type_of.get(self.folder, "")
         self.data = None
+        self.open_sections = {key: is_open for key, _, is_open in SECTIONS}
+        self.open_markets = set()
         self.colors = {"Proceed": (ui.SUCCESS, GOOD_BG), "Caution": (CAUTION, CAUTION_BG),
                        "Refer to underwriter": (WARN, WARN_BG), "Not eligible": (ui.DANGER, BAD_BG)}
-        self.check_style = {"bad": ("✗", ui.DANGER), "refer": ("↗", WARN), "warn": ("!", WARN),
-                            "info": ("i", ui.MUTED), "ok": ("✓", ui.SUCCESS)}
+        self.status_color = {"bad": ui.DANGER, "refer": WARN, "warn": CAUTION, "todo": ui.TEXT,
+                             "info": ui.MUTED, "ok": ui.SUCCESS}
 
-        self.grid_columnconfigure(0, weight=2, uniform="c")
-        self.grid_columnconfigure(1, weight=3, uniform="c")
+        self.grid_columnconfigure(0, weight=0, minsize=330)
+        self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # ---------- left: documents and facts ----------
+        # ---------- left: documents, client summary, facts ----------
         left = ctk.CTkScrollableFrame(self, fg_color=ui.SURFACE, corner_radius=12, border_width=1,
-                                      border_color=ui.BORDER)
+                                      border_color=ui.BORDER, width=300)
         left.grid(row=0, column=0, sticky="nsew", padx=(16, 8), pady=(16, 0))
         left.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(left, text="Documents", font=ui.font(16, "bold"), text_color=ui.TEXT) \
-            .grid(row=0, column=0, columnspan=2, sticky="w", padx=16, pady=(16, 4))
+        self.left = left
+        ctk.CTkLabel(left, text="Documents", font=ui.font(15, "bold"), text_color=ui.TEXT) \
+            .grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(14, 2))
         self.docs = review.find_docs(self.folder)
         self.doc_vars = {}
         r = 1
         for kind, label in DOC_LABELS.items():
             ctk.CTkLabel(left, text=label, font=ui.font(12), text_color=ui.MUTED, anchor="w") \
-                .grid(row=r, column=0, columnspan=2, sticky="w", padx=16, pady=(6, 0))
+                .grid(row=r, column=0, columnspan=2, sticky="w", padx=14, pady=(6, 0))
             names = [p.name for p in self.docs[kind]] + [NONE]
             var = self.doc_vars[kind] = tk.StringVar(value=names[0])
             ctk.CTkOptionMenu(left, values=names, variable=var, height=30, font=ui.font(12),
                               fg_color=ui.SURFACE_ALT, button_color=ui.PRIMARY, button_hover_color=ui.PRIMARY_HOVER,
                               text_color=ui.TEXT, dynamic_resizing=False, command=lambda _: self.load()) \
-                .grid(row=r + 1, column=0, columnspan=2, sticky="ew", padx=16)
+                .grid(row=r + 1, column=0, columnspan=2, sticky="ew", padx=14)
             r += 2
         self.status = ctk.CTkLabel(left, text="", font=ui.font(12), text_color=ui.MUTED, anchor="w")
-        self.status.grid(row=r, column=0, columnspan=2, sticky="w", padx=16, pady=(6, 0))
+        self.status.grid(row=r, column=0, columnspan=2, sticky="w", padx=14, pady=(4, 0))
         r += 1
 
+        ctk.CTkLabel(left, text="Client", font=ui.font(15, "bold"), text_color=ui.TEXT) \
+            .grid(row=r, column=0, columnspan=2, sticky="w", padx=14, pady=(14, 2))
+        self.summary = ctk.CTkLabel(left, text="", font=ui.font(13), text_color=ui.TEXT, justify="left",
+                                    anchor="w", wraplength=280)
+        self.summary.grid(row=r + 1, column=0, columnspan=2, sticky="w", padx=14)
         ctk.CTkLabel(left, text="Licence class (MVR)", font=ui.font(13), text_color=ui.TEXT, anchor="w") \
-            .grid(row=r, column=0, sticky="w", padx=(16, 8), pady=(10, 3))
-        self.class_entry = ctk.CTkEntry(left, width=70, height=30, font=ui.font(13), justify="center")
-        self.class_entry.grid(row=r, column=1, sticky="e", padx=(0, 16), pady=(10, 3))
+            .grid(row=r + 2, column=0, sticky="w", padx=(14, 8), pady=(10, 0))
+        self.class_entry = ctk.CTkEntry(left, width=64, height=30, font=ui.font(13), justify="center")
+        self.class_entry.grid(row=r + 2, column=1, sticky="e", padx=(0, 14), pady=(10, 0))
         self.class_entry.bind("<KeyRelease>", lambda ev: self.show_results())
-        r += 1
+        self.facts_btn = app.secondary_button(left, "Edit facts ▾", self.toggle_facts)
+        self.facts_btn.grid(row=r + 3, column=0, columnspan=2, sticky="ew", padx=14, pady=(12, 4))
+        r += 4
 
-        ctk.CTkLabel(left, text="Client facts", font=ui.font(16, "bold"), text_color=ui.TEXT) \
-            .grid(row=r, column=0, columnspan=2, sticky="w", padx=16, pady=(16, 0))
-        ctk.CTkLabel(left, text="Read from the documents - correct anything that looks wrong.",
-                     font=ui.font(12), text_color=ui.MUTED).grid(row=r + 1, column=0, columnspan=2, sticky="w", padx=16)
-        r += 2
+        self.facts_frame = ctk.CTkFrame(left, fg_color="transparent")
+        self.facts_frame.grid_columnconfigure(0, weight=1)
+        self.facts_row = r
         self.entries = {}
+        fr = 0
         for key, label in eligibility.FACTS.items():
             if key == eligibility.MANUAL[0]:
-                ctk.CTkLabel(left, text="Convictions (from the MVR)", font=ui.font(13, "bold"), text_color=ui.TEXT) \
-                    .grid(row=r, column=0, columnspan=2, sticky="w", padx=16, pady=(14, 2))
-                r += 1
-            ctk.CTkLabel(left, text=label, font=ui.font(13), text_color=ui.TEXT, anchor="w") \
-                .grid(row=r, column=0, sticky="w", padx=(16, 8), pady=3)
-            e = ctk.CTkEntry(left, width=70, height=30, font=ui.font(13), justify="center",
-                             border_color=ui.PRIMARY if key in eligibility.MANUAL else ui.BORDER)
-            e.grid(row=r, column=1, sticky="e", padx=(0, 16), pady=3)
+                ctk.CTkLabel(self.facts_frame, text="Convictions (from the MVR)", font=ui.font(13, "bold"),
+                             text_color=ui.TEXT).grid(row=fr, column=0, columnspan=2, sticky="w", pady=(10, 2))
+                fr += 1
+            ctk.CTkLabel(self.facts_frame, text=label.strip(), font=ui.font(12), text_color=ui.TEXT, anchor="w",
+                         wraplength=210, justify="left").grid(row=fr, column=0, sticky="w", pady=2)
+            e = ctk.CTkEntry(self.facts_frame, width=60, height=28, font=ui.font(12), justify="center")
+            e.grid(row=fr, column=1, sticky="e", pady=2)
             e.bind("<KeyRelease>", lambda ev: self.show_results(checks=False))
             self.entries[key] = e
-            r += 1
-        ctk.CTkLabel(left, text="Worth a look", font=ui.font(13, "bold"), text_color=ui.TEXT) \
-            .grid(row=r, column=0, columnspan=2, sticky="w", padx=16, pady=(14, 2))
-        self.notes = ctk.CTkLabel(left, text="", font=ui.font(12), text_color=WARN, justify="left",
-                                  anchor="w", wraplength=380)
-        self.notes.grid(row=r + 1, column=0, columnspan=2, sticky="w", padx=16, pady=(0, 16))
+            fr += 1
 
-        # ---------- right: quote review, checks, markets ----------
-        self.results = ctk.CTkScrollableFrame(self, fg_color=ui.SURFACE, corner_radius=12, border_width=1,
-                                              border_color=ui.BORDER)
+        # ---------- right: verdict, sections, markets ----------
+        self.results = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.results.grid(row=0, column=1, sticky="nsew", padx=(8, 16), pady=(16, 0))
         self.results.grid_columnconfigure(0, weight=1)
         self.checks_box = ctk.CTkFrame(self.results, fg_color="transparent")
@@ -118,15 +123,13 @@ class EligibilityDialog(ctk.CTkToplevel):
         self.markets_box.grid(row=1, column=0, sticky="ew")
         self.markets_box.grid_columnconfigure(0, weight=1)
 
-        # ---------- bottom: rules file ----------
+        # ---------- bottom ----------
         bottom = ctk.CTkFrame(self, fg_color="transparent")
         bottom.grid(row=1, column=0, columnspan=2, sticky="ew", padx=16, pady=12)
-        self.rules_label = ctk.CTkLabel(bottom, text="", font=ui.font(12), text_color=ui.MUTED, anchor="w")
+        self.rules_label = ctk.CTkLabel(bottom, text="", font=ui.font(11), text_color=ui.MUTED, anchor="w")
         self.rules_label.pack(side="left")
         app.secondary_button(bottom, "Close", self.destroy, width=90).pack(side="right")
-        app.secondary_button(bottom, "Open rules file", self.open_rules, width=130).pack(side="right", padx=8)
-        app.secondary_button(bottom, "Choose rules file…", self.choose_rules, width=150).pack(side="right")
-        app.secondary_button(bottom, "Create my rules file…", self.create_rules, width=170).pack(side="right", padx=8)
+        app.secondary_button(bottom, "Rules file…", self.rules_menu, width=110).pack(side="right", padx=8)
         self.bind("<Escape>", lambda e: self.destroy())
 
         self.load_rules()
@@ -136,10 +139,15 @@ class EligibilityDialog(ctk.CTkToplevel):
     def load_rules(self):
         self.rules, self.rules_path = eligibility.load_rules(self.app.cfg.get("rules_file"))
         builtin = self.rules_path == eligibility.BUILTIN_RULES
-        self.rules_label.configure(
-            text=("Rules: built in - Intact, Jevco, Echelon and WellCare rules from the underwriting notes (Oct 2026)"
-                  if builtin else f"Rules: {self.rules_path}"),
-            text_color=self.ui.MUTED)
+        self.rules_label.configure(text="Rules: built in (Intact, Jevco, Echelon, WellCare - Oct 2026)" if builtin
+                                   else f"Rules: {self.rules_path}")
+
+    def rules_menu(self):
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Open rules file", command=lambda: os.startfile(self.rules_path))
+        menu.add_command(label="Choose rules file…", command=self.choose_rules)
+        menu.add_command(label="Create my rules file (editable copy)…", command=self.create_rules)
+        menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
 
     def create_rules(self):
         p = filedialog.asksaveasfilename(parent=self, title="Save your rules file (put it on the shared drive)",
@@ -159,16 +167,13 @@ class EligibilityDialog(ctk.CTkToplevel):
             self.load_rules()
             self.show_results(checks=False)
 
-    def open_rules(self):
-        os.startfile(self.rules_path)
-
     # ---------- documents ----------
     def _path(self, kind):
         return next((p for p in self.docs[kind] if p.name == self.doc_vars[kind].get()), None)
 
     def load(self):
-        """Read the chosen documents in the background (the MVR needs OCR, about a second)."""
-        self.status.configure(text="Reading documents…", text_color=self.ui.MUTED)
+        """Read the chosen documents in the background (the MVR may need OCR, about a second)."""
+        self.status.configure(text="Reading documents…")
         paths = {k: self._path(k) for k in DOC_LABELS}
         result = {}
 
@@ -191,7 +196,7 @@ class EligibilityDialog(ctk.CTkToplevel):
         wait()
 
     def fill_facts(self):
-        facts, _, notes = review.facts_from(self.data)
+        facts, _, self.notes = review.facts_from(self.data)
         for key, e in self.entries.items():
             e.delete(0, "end")
             if facts.get(key) is not None:
@@ -200,9 +205,14 @@ class EligibilityDialog(ctk.CTkToplevel):
         self.class_entry.delete(0, "end")
         if m and m.get("class"):
             self.class_entry.insert(0, m["class"])
-        if not m:
-            notes.append("No MVR: type the convictions in from the MVR, or add the MVR to the folder.")
-        self.notes.configure(text="\n\n".join("• " + n for n in notes) or "Nothing unusual found.")
+
+    def toggle_facts(self):
+        if self.facts_frame.winfo_ismapped():
+            self.facts_frame.grid_remove()
+            self.facts_btn.configure(text="Edit facts ▾")
+        else:
+            self.facts_frame.grid(row=self.facts_row, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 14))
+            self.facts_btn.configure(text="Hide facts ▴")
 
     def facts(self):
         out = {}
@@ -214,111 +224,157 @@ class EligibilityDialog(ctk.CTkToplevel):
                 out[key] = None
         return out
 
+    def _summary(self, f):
+        """A few plain lines about the client, from the facts."""
+        def n(key):
+            v = f.get(key)
+            return None if v is None else (int(v) if float(v).is_integer() else v)
+        cls = self.class_entry.get().strip()
+        lines = []
+        if n("years_licensed") is not None:
+            lines.append(f"Licensed {n('years_licensed')} yrs" + (f" ({cls})" if cls else ""))
+        if n("years_insured") is not None:
+            lines.append(f"Insured {n('years_insured')} yrs" if n("years_insured") else "No insurance history")
+        if n("age") is not None:
+            lines.append(f"Age {n('age')}")
+        conv = [f"{n(k)} {w}" for k, w in (("minor_convictions_3y", "minor"), ("major_convictions_3y", "major"),
+                                            ("serious_convictions_3y", "serious")) if n(k)]
+        lines.append("Convictions: " + (", ".join(conv) if conv else "none") if self.data["mvr"] else
+                     "Convictions: no MVR")
+        lines.append(f"At-fault claims (6 yrs): {n('at_fault_claims_6y') or 0}")
+        if n("nonpay_cancellations_3y"):
+            lines.append(f"Non-pay cancellations (3 yrs): {n('nonpay_cancellations_3y')}")
+        if n("gap_last_12m"):
+            lines.append("Gap in the last 12 months")
+        return "\n".join(lines)
+
     # ---------- results ----------
     def _clear(self, frame):
         for w in frame.winfo_children():
             w.destroy()
 
-    def _card(self, parent, row, title, badge=None, colors=None):
+    def _text(self, parent, row, text, color, size=13, bold=False, pad=(2, 0), padx=18, wrap=640):
+        ctk.CTkLabel(parent, text=text, font=self.ui.font(size, "bold" if bold else "normal"), text_color=color,
+                     anchor="w", justify="left", wraplength=wrap).grid(row=row, column=0, columnspan=2, sticky="w",
+                                                                       padx=padx, pady=pad)
+
+    def _section(self, row, key, title, items):
+        """A card with a clickable header; its lines show when it is open."""
         ui = self.ui
-        card = ctk.CTkFrame(parent, fg_color=ui.SURFACE_ALT, corner_radius=10, border_width=1, border_color=ui.BORDER)
-        card.grid(row=row, column=0, sticky="ew", padx=16, pady=6)
+        color = self.status_color[key]
+        card = ctk.CTkFrame(self.checks_box, fg_color=ui.SURFACE, corner_radius=10, border_width=1,
+                            border_color=ui.BORDER)
+        card.grid(row=row, column=0, sticky="ew", pady=5)
         card.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(card, text=title, font=ui.font(14, "bold"), text_color=ui.TEXT, anchor="w") \
-            .grid(row=0, column=0, sticky="w", padx=14, pady=(12, 0))
-        if badge:
-            ctk.CTkLabel(card, text=f"  {badge}  ", font=ui.font(13, "bold"), text_color=colors[0],
-                         fg_color=colors[1], corner_radius=6).grid(row=0, column=1, sticky="e", padx=14, pady=(12, 0))
-        return card
+        is_open = self.open_sections[key]
+        head = ctk.CTkButton(card, text=f"{'▾' if is_open else '▸'}  {title}  ({len(items)})", anchor="w",
+                             font=ui.font(14, "bold"), text_color=color, fg_color="transparent",
+                             hover_color=ui.SURFACE_ALT, height=36, command=lambda: self._toggle(key))
+        head.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 6 if not is_open else 0))
+        if is_open:
+            for i, text in enumerate(items):
+                self._text(card, i + 1, "•  " + text, ui.TEXT if key not in ("info", "ok") else ui.MUTED,
+                           pad=(1, 6 if i == len(items) - 1 else 1))
 
-    def _line(self, card, row, text, color, size=12):
-        ctk.CTkLabel(card, text=text, font=self.ui.font(size), text_color=color, anchor="w", justify="left",
-                     wraplength=600).grid(row=row, column=0, columnspan=2, sticky="w", padx=14, pady=(2, 0))
+    def _toggle(self, key):
+        self.open_sections[key] = not self.open_sections[key]
+        self.show_results(checks=True, keep=True)
 
-    def show_results(self, checks=True):
+    def show_results(self, checks=True, keep=False):
         if self.data is None:
             return
         ui = self.ui
-        results = eligibility.evaluate(self.facts(), self.rules, self.line)
-        if checks:
-            self._clear(self.checks_box)
-            row = 0
-            q = self.data["quote"]
-            quoted, fits = review.recommend(results, q)
-            # quote summary and recommendation
-            if q:
-                card = self._card(self.checks_box, row, "Quote")
-                row += 1
-                n = 1
-                eff = f" - effective {q['effective']}" if q.get("effective") else ""
-                self._line(card, n, f"{len(q['drivers'])} driver(s), {len(q['vehicles'])} vehicle(s){eff}", ui.MUTED)
-                n += 1
-                for c in quoted:
-                    verdict = c["verdict"] or "no rules for this carrier in the rules file - check its manual"
-                    color = self.colors.get(c["verdict"], (ui.TEXT,))[0]
-                    msgs = f", {c['messages']} message(s) below" if c["messages"] else ""
-                    prem = f"${c['premium']:,.0f}" if c["premium"] else "not rated"
-                    self._line(card, n, f"{c['carrier']}: {prem} - {verdict}{msgs}", color, 13)
-                    n += 1
-                ctk.CTkLabel(card, text="").grid(row=n, column=0, pady=2)
-            if fits:
-                card = self._card(self.checks_box, row, "Markets that fit by the rules")
-                row += 1
-                for n, r in enumerate(fits, 1):
-                    self._line(card, n, f"{r['market']}: {r['verdict']}" +
-                               (f" - {r['reasons'][0][1]}" if r["reasons"] else ""), self.colors[r["verdict"]][0], 13)
-                quoted_names = [c["carrier"].lower() for c in quoted]
-                missing = [r["market"] for r in fits if not any(r["market"].split()[0].lower() in qn
-                                                                 for qn in quoted_names)]
-                if q and missing:
-                    self._line(card, len(fits) + 1, "Not on this quote: " + ", ".join(missing) +
-                               " - consider quoting it.", ui.TEXT)
-                ctk.CTkLabel(card, text="").grid(row=len(fits) + 2, column=0, pady=2)
-            elif results:
-                card = self._card(self.checks_box, row, "Markets that fit by the rules", "None",
-                                  self.colors["Not eligible"])
-                row += 1
-                self._line(card, 1, "No market in the rules file fits - check other carriers' manuals or the "
-                                    "Facility Association.", ui.TEXT)
-                ctk.CTkLabel(card, text="").grid(row=2, column=0, pady=2)
-            # checks
-            items = sorted(review.checks(self.data, self.class_entry.get().strip() or None),
-                           key=lambda c: CHECK_ORDER.index(c[0]))
-            problems = len([c for c in items if c[0] in ("bad", "refer")])
-            warnings = len([c for c in items if c[0] == "warn"])
-            if problems:
-                badge, look = f"{problems} to fix / refer", (ui.DANGER, BAD_BG)
-            elif warnings:
-                badge, look = f"{warnings} to check", (WARN, WARN_BG)
-            else:
-                badge, look = "All good", (ui.SUCCESS, GOOD_BG)
-            card = self._card(self.checks_box, row, "Checks: quote vs MVR and DASH", badge, look)
-            for n, (status, text) in enumerate(items, 1):
-                icon, color = self.check_style[status]
-                self._line(card, n, f"{icon}  {'Refer: ' if status == 'refer' else ''}{text}",
-                           ui.MUTED if status == "ok" else color)
-            ctk.CTkLabel(card, text="").grid(row=len(items) + 1, column=0, pady=2)
+        facts = self.facts()
+        self.summary.configure(text=self._summary(facts))
+        line = review.line_of(self.data, self.folder_type)
+        results = eligibility.evaluate(facts, self.rules, line)
+        q = self.data["quote"]
+        quoted, fits = review.recommend(results, q)
+        if checks or keep:
+            self.items = review.checks(self.data, self.class_entry.get().strip() or None)
+            self.items += [("info", n) for n in getattr(self, "notes", [])
+                           if not n.startswith(("At-fault claim", "Claim ", "Coverage gap", "No DASH"))]
+        self._clear(self.checks_box)
+        groups = {key: [t for s, t in self.items if s == key] for key, _, _ in SECTIONS}
 
-        # markets
+        # ---------- verdict ----------
+        if groups["bad"]:
+            head, color, bg = "Fix the quote before sending", ui.DANGER, BAD_BG
+        elif groups["refer"]:
+            head, color, bg = "Refer before binding", WARN, WARN_BG
+        elif groups["warn"]:
+            head, color, bg = "Check a few things with the client", CAUTION, CAUTION_BG
+        else:
+            head, color, bg = "Looks good", ui.SUCCESS, GOOD_BG
+        card = ctk.CTkFrame(self.checks_box, fg_color=bg, corner_radius=12)
+        card.grid(row=0, column=0, sticky="ew", pady=(0, 5))
+        card.grid_columnconfigure(0, weight=1)
+        self._text(card, 0, head, color, 18, True, pad=(14, 2))
+        counts = [f"{len(groups[k])} {w}" for k, w in (("bad", "to fix"), ("refer", "to refer"),
+                                                         ("warn", "to check")) if groups[k]]
+        if counts:
+            self._text(card, 1, " · ".join(counts), ui.TEXT, 13)
+        r = 2
+        for c in quoted:
+            prem = f"${c['premium']:,.0f}" if c["premium"] else "not rated"
+            self._text(card, r, f"Quoted: {c['carrier']} {prem}", ui.TEXT, 14, True, pad=(8, 0))
+            r += 1
+        if fits:
+            names = ", ".join(f"{f['market'].split(' (')[0]}" + ("" if f["verdict"] == "Proceed"
+                                                                 else f" ({f['verdict'].lower()})") for f in fits)
+            quoted_names = " ".join(c["carrier"].lower() for c in quoted)
+            missing = [f["market"].split(" (")[0] for f in fits if f["market"].split()[0].lower() not in quoted_names]
+            self._text(card, r, f"Fits the rules: {names}" + (f" - not quoted yet" if q and missing else ""),
+                       ui.TEXT, 13)
+        elif results:
+            self._text(card, r, "No market in the rules fits - try other carriers or the Facility Association.",
+                       ui.TEXT, 13)
+        ctk.CTkLabel(card, text="").grid(row=r + 1, column=0, pady=2)
+
+        # ---------- sections ----------
+        row = 1
+        for key, title, _ in SECTIONS:
+            if groups[key]:
+                self._section(row, key, title, groups[key])
+                row += 1
+
+        # ---------- markets ----------
         self._clear(self.markets_box)
-        ctk.CTkLabel(self.markets_box, text="Result by market", font=ui.font(16, "bold"), text_color=ui.TEXT) \
-            .grid(row=0, column=0, sticky="w", padx=16, pady=(12, 4))
-        for i, res in enumerate(results):
+        card = ctk.CTkFrame(self.markets_box, fg_color=ui.SURFACE, corner_radius=10, border_width=1,
+                            border_color=ui.BORDER)
+        card.grid(row=0, column=0, sticky="ew", pady=(5, 5))
+        card.grid_columnconfigure(0, weight=1)
+        self._text(card, 0, "Markets", ui.TEXT, 14, True, pad=(12, 4))
+        r = 1
+        for res in results:
+            name = res["market"]
+            fg, bg = self.colors[res["verdict"]]
             badge = res["verdict"] + (" so far" if res["incomplete"] and res["verdict"] != "Not eligible" else "")
-            card = self._card(self.markets_box, i + 1, res["market"], badge, self.colors[res["verdict"]])
-            lines = list(res["reasons"]) or [("Proceed", "No rule in the rules file is broken.", "")]
-            if res["incomplete"] and res["verdict"] != "Not eligible":
-                lines.append(("", "Not fully checked - enter: " + ", ".join(res["unknown"]), ""))
-            for j, (sev, text, src) in enumerate(lines):
-                self._line(card, j + 1, f"• {text}" + (f"   ({src})" if src else ""),
-                           self.colors.get(sev, (ui.MUTED, None))[0])
-            if res.get("note"):
-                ctk.CTkLabel(card, text=res["note"], font=ui.font(11), text_color=ui.MUTED, anchor="w",
-                             justify="left", wraplength=600) \
-                    .grid(row=len(lines) + 1, column=0, columnspan=2, sticky="w", padx=14)
-            ctk.CTkLabel(card, text="").grid(row=len(lines) + 2, column=0, pady=2)
-        ctk.CTkLabel(self.markets_box, text="Guidance only - based on the rules file and the reports. Confirm anything "
-                                            "amber or outside your binding authority with the underwriter or your "
-                                            "principal broker before binding.",
-                     font=ui.font(11), text_color=ui.MUTED, justify="left", wraplength=560) \
-            .grid(row=99, column=0, sticky="w", padx=16, pady=(8, 16))
+            rowf = ctk.CTkFrame(card, fg_color="transparent")
+            rowf.grid(row=r, column=0, sticky="ew", padx=10, pady=2)
+            rowf.grid_columnconfigure(1, weight=1)
+            ctk.CTkLabel(rowf, text=f"  {badge}  ", font=ui.font(12, "bold"), text_color=fg, fg_color=bg,
+                         corner_radius=6, width=150).grid(row=0, column=0, sticky="w")
+            is_open = name in self.open_markets
+            first = res["reasons"][0][1] if res["reasons"] else "No rule broken"
+            ctk.CTkButton(rowf, text=f"{name.split(' (')[0]} - {first}" if not is_open else name, anchor="w",
+                          font=ui.font(13), text_color=ui.TEXT, fg_color="transparent", hover_color=ui.SURFACE_ALT,
+                          height=30, command=lambda n=name: self._toggle_market(n)) \
+                .grid(row=0, column=1, sticky="ew", padx=(8, 0))
+            r += 1
+            if is_open:
+                lines = [t for _, t, _ in res["reasons"]] or ["No rule in the rules file is broken."]
+                if res["incomplete"] and res["verdict"] != "Not eligible":
+                    lines.append("Not fully checked - enter: " + ", ".join(res["unknown"]))
+                for t in lines:
+                    self._text(card, r, "•  " + t, ui.TEXT, 12, padx=40, wrap=600)
+                    r += 1
+                if res.get("note"):
+                    self._text(card, r, res["note"], ui.MUTED, 11, padx=40, wrap=600)
+                    r += 1
+        self._text(card, r, "Click a market for all its reasons. Guidance only - confirm with the underwriter "
+                            "before binding.", ui.MUTED, 11, pad=(8, 12))
+
+    def _toggle_market(self, name):
+        self.open_markets ^= {name}
+        self.show_results(checks=False, keep=True)

@@ -58,7 +58,10 @@ Windows desktop app for setting up a new insurance client.
 - **Review quote & eligibility…** (on each client): reads the **DASH report**, the **MVR** and the
   Applied Rating **Quote Information** PDF in the client folder (pick another file, or "(none)").
   Any of them can be missing: no DASH = no insurance history (treated as a new driver).
-- **Checks: quote vs MVR and DASH** - licence number, birth date, class; G1 / G2 / G dates (when the
+- The window opens with one verdict (Fix the quote / Refer before binding / Check with the client /
+  Looks good), then the items grouped under **Fix in the quote**, **Refer / get approval** and
+  **Check with the client**; carrier to-dos, notes and what matches are folded away (click to open).
+- **What is checked** - licence number, birth date, class; G1 / G2 / G dates (when the
   MVR expiry is on the birthday, the issue date is G1, +1 year G2, +1 year G - only for the class
   held); MVR convictions missing from the quote (conviction date, not offence date); DASH claims
   missing or charged wrongly; DASH gaps not shown as lapses; date first insured; postal codes;

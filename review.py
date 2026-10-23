@@ -1,8 +1,8 @@
 """Review a client file: quote vs MVR vs DASH, WellCare's quote rules, and eligibility by market.
 
 load() reads the PDFs (slow: OCR); analyze() does the checks (fast, re-run after edits).
-Check statuses: "ok", "info", "warn" (check / caution), "bad" (wrong or missing - fix the quote),
-"refer" (needs an underwriter).
+Check statuses: "bad" (fix the quote), "refer" (underwriter / approval), "warn" (check with the
+client), "todo" (carrier to-do), "info" (note), "ok" (matches).
 """
 import datetime
 from pathlib import Path
@@ -102,8 +102,32 @@ def _principal(q, m):
     return q["drivers"][0]
 
 
+def line_of(data, folder_type=""):
+    """Auto / Commercial from the client folder, else from the quote's vehicles."""
+    if folder_type in ("Auto", "Commercial"):
+        return folder_type
+    types = [v["type"].lower() for v in (data["quote"] or {}).get("vehicles", [])]
+    if types:
+        return "Commercial" if any("commercial" in t for t in types) else "Auto"
+    return None
+
+
+def carrier_message(text):
+    """Status for one carrier message: refer, todo, or None (noise like the quote number)."""
+    t = text.lower()
+    if t.startswith("quote successfully rated") or "http" in t or "quote number" in t or t.startswith("review "):
+        return None
+    if "refer" in t or "approval required" in t or "decline" in t or "underwriter" in t:
+        return "refer"
+    return "todo"
+
+
 def checks(data, mvr_class=None):
-    """[(status, text)] - quote vs MVR vs DASH, and WellCare's quote rules."""
+    """[(status, text)] - quote vs MVR vs DASH, and WellCare's quote rules.
+
+    Status: bad = fix the quote, refer = underwriter / approval, warn = check with the client,
+    todo = carrier to-do, info = note, ok = matches.
+    """
     out = []
     add = lambda status, text: out.append((status, text))  # noqa: E731
     q, m, today = data["quote"], data["mvr"], data["today"]
@@ -111,45 +135,35 @@ def checks(data, mvr_class=None):
     for e in data["errors"]:
         add("bad", e)
     if not data["dash"]:
-        add("info", "No DASH report - treated as no insurance history. If the client was insured in Canada or the "
-                    "US before, pull the DASH (the quote would then need the claims and dates insured).")
+        add("info", "No DASH report - treated as no insurance history.")
     if not m:
-        add("warn", "No MVR - convictions, licence class and licence dates are not checked.")
-    if not q:
-        add("info", "No quote - only eligibility by market is checked.")
+        add("warn", "No MVR - convictions and licence dates not checked.")
     d = _principal(q, m)
+    cls = ((mvr_class or (m or {}).get("class") or "")).upper()
+
     if m:
         for p in m["problems"]:
             add("warn", p)
         if m.get("status") and m["status"] != "LICENCED":
-            add("bad", f"MVR licence status is {m['status']} - not licensed.")
-        if m.get("demerits"):
-            add("info", f"{m['demerits']} demerit point(s) on the MVR.")
+            add("bad", f"MVR status: {m['status']} - not licensed.")
         for a in m.get("actions", []):
-            add("warn", f"MVR action {a['date']}: {a['description']} - check for a suspension.")
-        cls = (mvr_class or m.get("class") or "").upper()
-        if cls and cls != "G":
-            add("info", f"MVR class {cls} - not a full G licence" +
-                (f", although the licence was issued {m['issue']} - ask about the licence history (an expired G2 "
-                 "means starting over)." if m.get("issue") and (today - m["issue"]).days > 5 * 365 else "."))
+            add("warn", f"MVR action {a['date']}: {a['description']}")
+        if m.get("demerits"):
+            add("info", f"{m['demerits']} demerit points on the MVR.")
+        if cls and cls != "G" and m.get("issue") and (today - m["issue"]).days > 5 * 365:
+            add("warn", f"Holds a {cls} but the licence was issued {m['issue']:%Y} - ask about the licence history.")
+        if m["dates"].get("note") and "birthday" in m["dates"]["note"]:
+            add("warn", "MVR can't give the G1 date (expiry isn't on the birthday) - get the licence history.")
         if not q:
-            if m["dates"].get("note"):
-                add("warn", m["dates"]["note"] + (f" DASH says {dash_facts['years_licensed']} year(s) licensed."
-                                                  if dash_facts.get("years_licensed") is not None else ""))
             for c in m["convictions"]:
-                add("info", f"MVR conviction {c['date']} {c['description']} ({c['category']}"
-                            f"{', alcohol' if c['alcohol'] else ''})")
+                add("info", f"Conviction {c['date']}: {c['description'].capitalize()} ({c['category']})")
     if q and len(q["drivers"]) > 1:
-        add("info", f"The quote has {len(q['drivers'])} drivers - these checks use {d['name']}'s MVR / DASH. "
-                    "Check the other drivers' reports too.")
+        add("info", f"{len(q['drivers'])} drivers on the quote - only {d['name'].title()} is checked here.")
 
     # ---------- identity ----------
     if d and m and m.get("licence"):
         add("ok" if _norm(d["licence"]) == _norm(m["licence"]) else "bad",
             f"Licence number: quote {d['licence'] or '-'}, MVR {m['licence']}")
-    if d and details.get("dln") and not m:
-        add("ok" if _norm(d["licence"]) == _norm(details["dln"]) else "bad",
-            f"Licence number: quote {d['licence'] or '-'}, DASH {details['dln']}")
     births = {"quote": d["birth"] if d else None, "MVR": m.get("birth") if m else None,
               "DASH": eligibility._date(details.get("dob")) if details.get("dob") else None}
     known = {k: v for k, v in births.items() if v}
@@ -159,29 +173,26 @@ def checks(data, mvr_class=None):
 
     # ---------- licence class and dates ----------
     if d and m:
-        cls = (mvr_class or m.get("class") or "").upper()
         if cls:
-            add("ok" if cls == d.get("class") else "bad", f"Licence class: quote {d.get('class') or '-'}, MVR {cls}")
+            add("ok" if cls == d.get("class") else "bad",
+                f"Licence class: quote {d.get('class') or '-'}, MVR {cls}" if cls != d.get("class")
+                else f"Licence class {cls}")
         dates = mvr.licence_dates(m, cls) if cls else m["dates"]
-        if dates.get("note"):
-            add("info", dates["note"])
         for key, label in (("g1", "G1"), ("g2", "G2"), ("g", "G")):
             mine, theirs = dates.get(key), d.get(key)
-            if mine and theirs:
-                if mine == theirs:
-                    add("ok", f"{label} date: quote {theirs} matches the MVR")
-                else:
-                    how = {"g1": "the MVR issue date", "g2": "G1 + 1 year", "g": "G2 + 1 year"}[key]
-                    add("bad" if key != "g" else "warn",
-                        f"{label} date: quote {theirs}, MVR gives {mine} ({how}) - correct the quote or confirm with "
-                        "the licence history (an earlier date can lower the rate).")
+            if mine and theirs and mine == theirs:
+                add("ok", f"{label} date {theirs}")
+            elif mine and theirs:
+                add("bad" if key != "g" else "warn", f"{label} date: quote {theirs}, MVR {mine}")
             elif mine and not theirs:
-                add("bad", f"{label} date missing on the quote - MVR gives {mine}.")
-            elif theirs and not mine and dates.get("g1") and key != "g1":
-                add("warn", f"Quote has a {label} date ({theirs}) but the MVR class is {cls} - check.")
+                add("bad", f"{label} date missing on the quote - MVR gives {mine}")
+        held = {"G1": ["g1"], "G2": ["g1", "g2"]}.get(cls)
+        if held:
+            for key, label in (("g2", "G2"), ("g", "G")):
+                if key not in held and d.get(key):
+                    add("bad", f"Quote has a {label} date ({d[key]}) but the MVR class is {cls} - remove it.")
         if d.get("training"):
-            add("info", f"Driver training on the quote ({d.get('training_date') or 'no date'}) - the certificate "
-                        "copy is required (Intact honours it for 3 years).")
+            add("info", f"Driver training {d.get('training_date') or ''} - certificate copy needed.")
 
     # ---------- convictions ----------
     if d and m:
@@ -189,17 +200,16 @@ def checks(data, mvr_class=None):
         for c in recent:
             hit = any(_close(qc["date"], c["date"], 3) or _close(qc["date"], c.get("offence_date"), 3)
                       for qc in d["convictions"])
-            tag = c["category"] + (", alcohol" if c["alcohol"] else "")
-            add("ok" if hit else "bad", f"MVR conviction {c['date']} {c['description']} ({tag})" +
-                ("" if hit else " is not on the quote - add it."))
+            what = f"{c['date']} {c['description'].capitalize()} ({c['category']}{', alcohol' if c['alcohol'] else ''})"
+            add("ok" if hit else "bad", f"Conviction {what}" if hit else f"Add conviction {what}")
         for qc in d["convictions"]:
             if not any(_close(qc["date"], c["date"], 3) or _close(qc["date"], c.get("offence_date"), 3)
                        for c in m["convictions"]):
-                add("warn", f"Quote conviction {qc['date']} {qc['description']} is not on the MVR - check.")
+                add("warn", f"Quote conviction {qc['date']} {qc['description']} isn't on the MVR")
         if recent and q and any("conviction free" in x.lower() for c in q["carriers"] for x in c["discounts"]):
-            add("bad", "Quote gives a 'Conviction Free' discount, but the MVR has convictions in the last 3 years.")
+            add("bad", "Remove the 'Conviction Free' discount - the MVR has convictions.")
         if not m["convictions"] and not d["convictions"]:
-            add("ok", "Convictions: none on the MVR or the quote")
+            add("ok", "No convictions")
 
     # ---------- claims ----------
     if d and data["dash"]:
@@ -208,54 +218,58 @@ def checks(data, mvr_class=None):
                 continue
             match = next((qc for qc in d["claims"] if _close(qc["date"], c["date"], 3)), None)
             at_fault = c["fault"] > 25 and c["at_wheel"] is not False
-            label = f"DASH claim {c['date']} {c['insurer']} ({c['fault']}% at fault, {c['coverage'] or '?'})"
+            what = f"{c['date']} {c['insurer'].split()[0]} {c['coverage'] or ''}, {c['fault']}% at fault"
             if c["at_wheel"] is False:
-                add("info", f"{label}: {c['driver'].title()} was driving - not this driver's claim.")
+                add("info", f"Claim {what} - {c['driver'].title()} was driving")
             elif not match:
-                add("bad" if at_fault else "warn", f"{label} is not on the quote - add it" +
-                    (" as at-fault." if at_fault else " (not at fault)."))
+                unnamed = " - DASH names no driver, ask" if c["at_wheel"] is None and at_fault else ""
+                add("bad" if at_fault else "warn", f"Add claim {what}" + (" (chargeable)" if at_fault else "") + unnamed)
             elif match["charged"] != at_fault:
-                add("bad" if at_fault else "warn", f"{label}: the quote has it as " +
-                    ("chargeable" if match["charged"] else "not chargeable") + " - check.")
+                add("bad" if at_fault else "warn", f"Claim {what}: quote has it as " +
+                    ("chargeable" if match["charged"] else "not chargeable"))
             else:
-                add("ok", f"{label} is on the quote")
+                add("ok", f"Claim {what}")
         for qc in d["claims"]:
             if not any(_close(qc["date"], c["date"], 3) for c in details["claims"]):
-                add("warn", f"Quote claim {qc['date']} {qc['description']} is not on the DASH report - check.")
+                add("warn", f"Quote claim {qc['date']} {qc['description']} isn't on the DASH")
 
     # ---------- lapses and dates insured ----------
     if d and data["dash"]:
         for g in details.get("gaps", []):
             hit = any(_close(l["from"], g["from"], 31) or _close(l["to"], g["to"], 31) for l in d["lapses"])
-            add("ok" if hit else "bad", f"DASH gap {g['from']} to {g['to']}" +
-                (" is on the quote as a lapse" if hit else " is not on the quote - add the lapse and its reason."))
+            add("ok" if hit else "bad", f"Lapse {g['from']} to {g['to']}" if hit
+                else f"Add lapse {g['from']} to {g['to']} (gap on DASH) with the reason")
+        for l in d["lapses"]:
+            if not any(_close(l["from"], g["from"], 31) or _close(l["to"], g["to"], 31) for g in details.get("gaps", [])):
+                add("warn", f"Quote lapse {l['from']} to {l['to']} ({l['description']}) isn't a gap on the DASH")
         starts = [p["start"] for p in details["policies"] if p["start"]]
         if starts and d.get("date_insured"):
             first = min(starts)
             add("ok" if _close(first, d["date_insured"], 31) else "warn",
-                f"Date first insured: quote {d['date_insured']}, DASH {first}")
+                f"First insured {first}" if _close(first, d["date_insured"], 31)
+                else f"First insured: quote {d['date_insured']}, DASH {first}")
     if data["dash"]:
-        active = [p for p in details["policies"] if "active" in p["rest"].lower()]
-        for p in active:
-            add("info", f"Insured now: {p['rest'].replace(' Active', '')} until {p['end']} (DASH).")
+        for p in details["policies"]:
+            if "active" in p["rest"].lower():
+                add("info", f"Insured now with {p['rest'].replace(' Active', '').replace('*OVERLAP*', '').strip()} "
+                            f"until {p['end']}")
     if d and d.get("date_insured") and not data["dash"]:
-        add("warn", f"The quote says insured since {d['date_insured']}, but there is no DASH report to prove it.")
+        add("warn", f"Quote says insured since {d['date_insured']} - no DASH to prove it.")
 
     # ---------- address ----------
-    codes = {"quote": (q or {}).get("postal") or (q["vehicles"][0]["postal"] if q and q["vehicles"] else ""),
+    codes = {"quote": (q["vehicles"][0]["postal"] if q and q["vehicles"] else "") or (q or {}).get("postal", ""),
              "MVR": (m or {}).get("postal", ""), "DASH": details.get("postal", "")}
     codes = {k: _norm(v) for k, v in codes.items() if v}
     if len(set(codes.values())) > 1:
-        add("warn", "Postal codes differ: " + ", ".join(f"{k} {v}" for k, v in codes.items()) +
-            " - confirm where the car is garaged (it sets the territory). An MVR address change is due within 6 days of moving.")
+        add("warn", "Address: " + ", ".join(f"{k} {v}" for k, v in codes.items()) + " - confirm where the car is kept")
 
     # ---------- the quote itself ----------
     if q:
         for c in q["carriers"]:
             for msg in c["messages"]:
-                if msg.lower().startswith("quote successfully rated"):
-                    continue
-                add("refer" if msg.lower().startswith("refer") else "warn", f"{c['name']} message: {msg}")
+                status = carrier_message(msg)
+                if status:
+                    add(status, f"{c['name']}: {msg}")
         for v in q["vehicles"]:
             add_vehicle_checks(v, today, add)
     return out
@@ -264,40 +278,36 @@ def checks(data, mvr_class=None):
 def add_vehicle_checks(v, today, add):
     """WellCare in-house quote rules (note 01) for one vehicle."""
     cov = {k.lower(): val for k, val in v["coverages"].items()}
-    name = v["description"]
 
     def ded(key):
-        val = cov.get(key)
         try:
-            return int(str(val).replace(",", ""))
+            return int(str(cov.get(key)).replace(",", ""))
         except (TypeError, ValueError):
             return None
     phys = [k for k in ("all perils", "collision", "comprehensive", "specified perils") if k in cov]
     if v.get("annual_km") is not None and v["annual_km"] <= 8000:
-        add("refer", f"{name}: annual km {v['annual_km']} (8,000 or less) - refer to the in-house underwriter.")
+        add("refer", f"Annual km {v['annual_km']:,} (8,000 or less) - WellCare refer")
     if any((ded(k) or 0) > 1000 for k in phys):
-        add("refer", f"{name}: deductible over $1,000 - refer in-house (unless the insurer requires it).")
+        add("refer", "Deductible over $1,000 - WellCare refer")
     if any(k.startswith("#28") for k in cov):
-        add("refer", f"{name}: OPCF 28/28A on the quote - refer to the insurer's and the in-house underwriter.")
+        add("refer", "OPCF 28/28A - refer to the insurer and WellCare")
     if (v.get("list_price") or 0) >= 150000:
-        add("refer", f"{name}: list price ${v['list_price']:,} ($150,000+) - refer in-house.")
+        add("refer", f"Vehicle ${v['list_price']:,} ($150,000+) - WellCare refer")
     if ("all perils" in cov or "collision" in cov) and not any(k.startswith("#20") for k in cov):
-        add("warn", f"{name}: physical damage without OPCF 20 (loss of use, min $1,500) - offer it.")
+        add("warn", "Offer OPCF 20 (loss of use, min $1,500)")
     if "accident waiver" not in cov:
-        add("warn", f"{name}: no accident waiver / OPCF 39 - offer it.")
+        add("warn", "Offer the accident waiver (OPCF 39)")
     if (ded("direct compensation") or 0) > 0:
-        add("warn", f"{name}: DCPD deductible isn't $0.")
+        add("warn", "DCPD deductible isn't $0")
     age = today.year - v["year"] if v.get("year") else None
     if age is not None and age < 2 and not any(k.startswith("#43") for k in cov):
-        add("warn", f"{name}: under 2 years old without OPCF 43 (waiver of depreciation) - offer it.")
+        add("warn", "Offer OPCF 43 (vehicle under 2 years old)")
     if age is not None and age < 3 and not phys:
-        add("warn", f"{name}: under 3 years old with liability only - confirm the client declined physical damage.")
+        add("warn", "New vehicle with liability only - confirm the client declined collision / comprehensive")
     if any(k.startswith("#23") for k in cov):
-        add("info", f"{name}: OPCF 23A lienholder on the quote - get the lender's name and address and the "
-                    "financing papers.")
+        add("info", "Lienholder (OPCF 23A) - get the lender's details and financing papers")
     if v.get("purchase_price") and v.get("list_price") and v["purchase_price"] > v["list_price"] * 1.1:
-        add("warn", f"{name}: purchase price ${v['purchase_price']:,} is above the list price new "
-                    f"${v['list_price']:,} - check both.")
+        add("warn", f"Purchase price ${v['purchase_price']:,} is above the list price new ${v['list_price']:,}")
 
 
 def recommend(results, q):
@@ -307,7 +317,7 @@ def recommend(results, q):
     for c in (q or {}).get("carriers", []):
         r = next((r for key, r in by_name.items() if key in c["name"].lower()), None)
         quoted.append({"carrier": c["name"], "premium": c["premium"], "verdict": r["verdict"] if r else None,
-                       "messages": len([m for m in c["messages"] if not m.lower().startswith("quote successfully")])})
+                       "messages": len([m for m in c["messages"] if carrier_message(m)])})
     # standard markets first; non-standard only when no standard market fits
     # (a market that only needs a referral still counts - e.g. a new driver at Intact)
     for ok in (("Proceed", "Caution"), ("Refer to underwriter",)):
