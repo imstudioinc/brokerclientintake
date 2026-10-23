@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 import ocr
 
 DATE = r"(\d{2}/\d{2}/\d{4})"
+VALID_CLASS = r"(?:A|B|C|D|E|F|G|G1|G2|M|M1|M2)(?:Z|M|M1|M2)?"   # Ontario licence classes
 
 # Conviction categories, from the Intact / Jevco manuals (notes 05 and 08). First match wins.
 SERIOUS = ["CARELESS", "DANGEROUS", "IMPAIRED", "OVER 80", "80 MG", "BREATH", "BLOOD", "ALCOHOL", "RACING",
@@ -120,17 +121,24 @@ def read_class(img, label_box):
 def read(pdf_path):
     """Everything useful on the MVR. Returns dict; "problems" lists anything that could not be read."""
     lines = ocr.text_lines(pdf_path)
-    cls, cls_sure, used_ocr = "", False, False
+    cls, cls_sure, used_ocr, votes = "", False, False, []
     if not any("Licence" in l or "Birth" in l for l in lines):
         used_ocr = True
         lines = []
         for img in ocr.page_images(pdf_path):
             ws = ocr.words(img)
             lines += ocr.rows(ws)
-            if not cls:
-                label = next(((x, y, w, h) for x, y, w, h, t in ws if t.startswith("Class")), None)
-                if label:
-                    cls, cls_sure = read_class(img, label)
+            label = next(((x, y, w, h) for x, y, w, h, t in ws if t.startswith("Class")), None)
+            if label:
+                found, sure = read_class(img, label)
+                if re.fullmatch(VALID_CLASS, found or ""):
+                    votes.append(found)
+        if votes:     # a photo is read several ways: take the class most readings agree on
+            cls = max(set(votes), key=votes.count)
+            longer = [v for v in votes if len(v) > len(cls) and v.startswith(cls)]
+            if longer:     # a second character (G2) can fail to read in one pass, but is never invented
+                cls = max(set(longer), key=longer.count)
+            cls_sure = votes.count(cls) >= 2 or (len(votes) == 1 and not ocr.is_image(pdf_path))
     text = "\n".join(lines)
     flat = re.sub(r"\s+", " ", text)
     squeezed = re.sub(r"(?<=[A-Za-z]) (?=[a-z])", "", flat)   # OCR splits words: "Li cence", "Sta tus"
@@ -146,9 +154,11 @@ def read(pdf_path):
         (lic.group(1) + lic.group(2) + lic.group(3) + lic.group(4)) if lic else "")
     name = re.search(r"Name\s*:\s*([A-Z][A-Z' ,-]+?)\s*(?:Birth|Gender|,?\s*$)", squeezed)
     out["name"] = re.sub(r"\s*,\s*", ", ", name.group(1)).strip(" ,") if name else ""
-    out["birth"] = _d(grab(r"Birth\s*Date"))
-    out["expiry"] = _d(grab(r"Expiry\s*Date"))
-    out["issue"] = _d(grab(r"Issue\s*Date"))
+    # OCR of photos sometimes drops or garbles "Date": try the exact label, then a looser one
+    out["birth"] = _d(grab(r"Birth\s*Date") or grab(r"Bir\w*\s*(?:Da\w{1,3})?"))
+    out["expiry"] = _d(grab(r"Expiry\s*Date") or grab(r"Exp\w*\s*(?:Da\w{1,3})?"))
+    out["issue"] = _d(grab(r"Issue\s*Date") or grab(r"I\W?s\W?s\w*\s*(?:Da\w{1,3})?")
+                      or grab(r"LICENCED\W{0,3}(?:\S{1,8}\s*){0,2}?"))   # the issue date shares the status row
     status = re.search(r"Status\s*:\s*([A-Z]+)", squeezed)
     out["status"] = status.group(1) if status else ""
     pts = re.search(r"Demerit\s*Points\s*:\s*([0-9Oo]{1,2})", squeezed)
@@ -172,7 +182,8 @@ def read(pdf_path):
         if not in_list:
             continue
         if "SEARCH SUCC" in u or "END OF RE" in u or "ABSTRACT FOUND" in u:
-            break
+            in_list, current = False, None    # a photo is read several times: look for the next copy
+            continue
         m = re.match(r"^" + DATE + r"\s+(.+)$", u)
         off = re.search(r"OFFENCE\s*DATE\W*(\d{4}/\d{2}/\d{2})", u)
         if m:
@@ -182,6 +193,12 @@ def read(pdf_path):
             current["offence_date"] = _d(off.group(1), "%Y/%m/%d")
         elif current and u and not re.match(r"^[-,.]+$", u):
             current["description"] += " " + u
+    unique = {}
+    for c in convictions:                     # the same conviction read from several copies of a photo
+        key = (c["date"], c.get("offence_date") or c["description"][:4])   # OCR typos differ between passes
+        if key not in unique or len(c["description"]) > len(unique[key]["description"]):
+            unique[key] = c
+    convictions = sorted(unique.values(), key=lambda c: c["date"] or datetime.date.min)
     for c in convictions:
         c["category"], c["alcohol"] = classify(c["description"])
     out["convictions"], out["actions"] = convictions, actions
@@ -194,6 +211,14 @@ def read(pdf_path):
                        ("licence", "licence number")):
         if not out[key]:
             out["problems"].append(f"Could not read the {label} from the MVR.")
+    if ocr.is_image(pdf_path):
+        from PIL import Image
+        with Image.open(pdf_path) as im:
+            small = im.width < 1100
+        if small:
+            out["problems"].insert(0, "The MVR picture is too small to read reliably - the dates and class below "
+                                      "may be wrong. Zoom the page in (150%+) before the screenshot, or save the "
+                                      "MVR as a PDF.")
     if used_ocr and out["class"] and not out["class_sure"]:
         out["problems"].append(f"Licence class read as {out['class']} - check it on the MVR (correct it if needed).")
     out["dates"] = licence_dates(out)

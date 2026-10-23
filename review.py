@@ -11,8 +11,11 @@ import eligibility
 import mvr
 import quote
 
-DOC_PATTERNS = {"dash": ["DASH Report*.pdf", "*DASH*.pdf"], "mvr": ["*MVR*.pdf", "*mvr*.pdf"],
-                "quote": ["*Quote*.pdf", "*quote*.pdf"]}
+IMAGES = (".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp")
+# the MVR can be a photo / screenshot (read with OCR); DASH and quote are read from their PDF text
+DOC_PATTERNS = {"dash": ["DASH Report*.pdf", "*DASH*.pdf"],
+                "mvr": ["*MVR*.pdf"] + [f"*MVR*{e}" for e in IMAGES],
+                "quote": ["*Quote*.pdf"]}
 
 
 def find_docs(folder):

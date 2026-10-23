@@ -48,11 +48,12 @@ DLN_HELP = "Ontario licence #. Copied to your clipboard for DASH."
 SP = 8  # spacing unit
 
 # Documents tracked per client: (label, glob patterns)
+# (any extension in DOC_EXTS: a signed consent or an MVR can come back as a photo)
 DOCUMENTS = [
-    ("Client consent", ["*Client Consent*.pdf"]),
-    ("DASH report", ["DASH Report*.pdf"]),
-    ("Quote (ARS)", ["*Quote*.pdf", "*quote*.pdf"]),
-    ("MVR", ["*MVR*.pdf", "*mvr*.pdf"]),
+    ("Client consent", ["*Client Consent*"]),
+    ("DASH report", ["DASH Report*"]),
+    ("Quote (ARS)", ["*Quote*"]),
+    ("MVR", ["*MVR*"]),
 ]
 # Also needed for Auto clients: (label, file name patterns, name given by Add…, can be "not needed")
 AUTO_DOCUMENTS = [
@@ -60,9 +61,11 @@ AUTO_DOCUMENTS = [
     ("Ownership", ["*ownership*", "*registration*", "*permit*"], "Ownership", False),
     ("Bill of sale", ["*bill of sale*", "*bill_of_sale*", "*billofsale*"], "Bill of Sale", True),
     ("Winter tire photo", ["*winter*", "*tire*", "*tyre*"], "Winter Tires", True),
-    ("Financing / lease papers", ["*financ*", "lease*", "* lease*", "*_lease*", "*-lease*", "*loan*", "*lienholder*"], "Financing Papers", True),
+    ("Financing / lease", ["*financ*", "lease*", "* lease*", "*_lease*", "*-lease*", "*loan*", "*lienholder*"], "Financing Papers", True),
 ]
-DOC_FILES = "*.pdf *.jpg *.jpeg *.png *.heic *.webp *.tif *.tiff *.bmp *.gif *.doc *.docx"
+DOC_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".tif", ".tiff", ".bmp", ".gif",
+            ".doc", ".docx"}
+DOC_FILES = " ".join("*" + e for e in sorted(DOC_EXTS))
 
 
 def clean_name(name):
@@ -80,7 +83,7 @@ def find_docs(folder, kind=""):
     """Return {label: [files]} for the tracked documents in a client folder."""
     found, base = {}, set()
     for label, patterns in doc_list(kind):
-        files = {p for pat in patterns for p in folder.glob(pat) if p.is_file()}
+        files = {p for pat in patterns for p in folder.glob(pat) if p.suffix.lower() in DOC_EXTS and p.is_file()}
         if label in dict(DOCUMENTS):
             base |= files
         else:
@@ -317,8 +320,9 @@ class MvrDialog(ctk.CTkToplevel):
         docs = find_docs(folder)
         # Prefill from: saved client details -> consent form -> DASH report -> folder name
         sources = [(info.get("name", ""), info.get("dln", ""))]
-        sources += [read_consent(f) for f in reversed(docs["Client consent"])]
-        sources += [read_dash(f) for f in docs["DASH report"][:1]]
+        pdfs = lambda files: [f for f in files if f.suffix.lower() == ".pdf"]  # photos can't be read  # noqa: E731
+        sources += [read_consent(f) for f in reversed(pdfs(docs["Client consent"]))]
+        sources += [read_dash(f) for f in pdfs(docs["DASH report"])[:1]]
         sources = [s for s in sources if s]
         name = next((n for n, _ in sources if n), folder.name).upper()
         dln = next((d for _, d in sources if d), "")
@@ -1524,7 +1528,8 @@ class App(ctk.CTk):
                     r["na"].configure(text="Needed" if label in skip else "N/A", width=58 if label in skip else 40)
                 r["state"] = state
             r["open"].configure(command=lambda fs=files: [os.startfile(f) for f in fs])
-        self.refill_btn.configure(state="normal" if docs["DASH report"] else "disabled")
+        self.refill_btn.configure(state="normal" if any(f.suffix.lower() == ".pdf" for f in docs["DASH report"])
+                                  else "disabled")
         note = self.note[1:] if self.note and self.note[0] == folder else ("", SUCCESS)
         self.detail_msg.configure(text=note[0], text_color=note[1])
 

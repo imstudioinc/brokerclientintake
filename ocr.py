@@ -14,8 +14,17 @@ class OcrUnavailable(Exception):
     pass
 
 
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp"}
+
+
+def is_image(path):
+    return str(path).lower().endswith(tuple(IMAGE_EXTS))
+
+
 def text_lines(pdf_path):
-    """Lines of the PDF's text layer, or [] for a scanned / image-only PDF."""
+    """Lines of the PDF's text layer, or [] for a scanned / image-only PDF (or a photo)."""
+    if is_image(pdf_path):
+        return []
     with pdfplumber.open(pdf_path) as pdf:
         text = "\n".join((p.extract_text() or "") for p in pdf.pages)
     return [l for l in text.splitlines() if l.strip()]
@@ -40,7 +49,20 @@ async def _recognize(png_bytes):
 
 
 def page_images(pdf_path, scale=4):
-    """Each page as a black-on-white image (light coloured backgrounds, e.g. highlights, removed)."""
+    """Each page as a black-on-white image (light coloured backgrounds, e.g. highlights, removed).
+
+    A photo or screenshot comes back three times, prepared differently (smooth, black-and-white,
+    bigger): small screen text reads differently each way, so the caller combines what each finds."""
+    if is_image(pdf_path):
+        from PIL import Image, ImageOps
+        img = ImageOps.exif_transpose(Image.open(pdf_path)).convert("L")
+        k = max(1, 3 if img.width < 1600 else 2 if img.width < 2400 else 1)
+        big = img.resize((img.width * k, img.height * k), Image.LANCZOS)
+        yield big
+        yield big.point(lambda v: 0 if v < 200 else 255)
+        k2 = 2400 / img.width if img.width < 2400 else 1
+        yield img.resize((int(img.width * k2), int(img.height * k2))).point(lambda v: 0 if v < 200 else 255)
+        return
     doc = pdfium.PdfDocument(str(pdf_path))
     try:
         for page in doc:

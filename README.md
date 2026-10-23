@@ -145,6 +145,10 @@ template, the MVR request recipients (To / CC), or light/dark mode. Settings are
 | Quote | contains `Quote` (e.g. `Quote Information.pdf`) |
 | MVR | contains `MVR` |
 
+Consent, DASH, quote and MVR count as received whether they are a PDF or a photo (jpg, png, heic…).
+The review reads an MVR photo / screenshot with OCR (zoom the page in before the screenshot); DASH and
+quote are read from their PDFs.
+
 **Auto clients** also need these (photos or PDFs). **Add…** on each row copies the file into the
 client folder with the standard name; **N/A** marks one as not needed for this client (saved in the
 client's `tracking.json`, so everyone sees it).
@@ -155,7 +159,7 @@ client's `tracking.json`, so everyone sees it).
 | Ownership | `ownership`, `registration` or `permit` | `Ownership - NAME.pdf` |
 | Bill of sale (N/A possible) | `bill of sale` | `Bill of Sale - NAME.pdf` |
 | Winter tire photo (N/A possible) | `winter`, `tire` or `tyre` | `Winter Tires - NAME.jpg` |
-| Financing / lease papers (N/A possible) | `financ`, `lease` (as a word), `loan`, `lienholder` | `Financing Papers - NAME.pdf` |
+| Financing / lease (N/A possible) | `financ`, `lease` (as a word), `loan`, `lienholder` | `Financing Papers - NAME.pdf` |
 
 ## Privacy
 
