@@ -185,7 +185,7 @@ def read(pdf_path):
     for c in convictions:
         c["category"], c["alcohol"] = classify(c["description"])
     out["convictions"], out["actions"] = convictions, actions
-    n = re.search(r"Number of Convictions\s*:\s*([0-9Oo]+)", squeezed)
+    n = re.search(r"Number\s*of\s*Convictions\s*:\s*([0-9Oo]+)", flat)
     out["conviction_count"] = int(n.group(1).replace("O", "0").replace("o", "0")) if n else None
     if out["conviction_count"] and out["conviction_count"] != len(convictions):
         out["problems"].append(f"The MVR says {out['conviction_count']} conviction(s) but {len(convictions)} could "

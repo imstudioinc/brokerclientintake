@@ -127,6 +127,18 @@ def checks(data, mvr_class=None):
             add("info", f"{m['demerits']} demerit point(s) on the MVR.")
         for a in m.get("actions", []):
             add("warn", f"MVR action {a['date']}: {a['description']} - check for a suspension.")
+        cls = (mvr_class or m.get("class") or "").upper()
+        if cls and cls != "G":
+            add("info", f"MVR class {cls} - not a full G licence" +
+                (f", although the licence was issued {m['issue']} - ask about the licence history (an expired G2 "
+                 "means starting over)." if m.get("issue") and (today - m["issue"]).days > 5 * 365 else "."))
+        if not q:
+            if m["dates"].get("note"):
+                add("warn", m["dates"]["note"] + (f" DASH says {dash_facts['years_licensed']} year(s) licensed."
+                                                  if dash_facts.get("years_licensed") is not None else ""))
+            for c in m["convictions"]:
+                add("info", f"MVR conviction {c['date']} {c['description']} ({c['category']}"
+                            f"{', alcohol' if c['alcohol'] else ''})")
     if q and len(q["drivers"]) > 1:
         add("info", f"The quote has {len(q['drivers'])} drivers - these checks use {d['name']}'s MVR / DASH. "
                     "Check the other drivers' reports too.")

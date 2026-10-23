@@ -285,9 +285,14 @@ class EligibilityDialog(ctk.CTkToplevel):
             items = sorted(review.checks(self.data, self.class_entry.get().strip() or None),
                            key=lambda c: CHECK_ORDER.index(c[0]))
             problems = len([c for c in items if c[0] in ("bad", "refer")])
-            badge = ("All good" if not problems else f"{problems} to fix / refer")
-            card = self._card(self.checks_box, row, "Checks: quote vs MVR and DASH", badge,
-                              (ui.SUCCESS, GOOD_BG) if not problems else (ui.DANGER, BAD_BG))
+            warnings = len([c for c in items if c[0] == "warn"])
+            if problems:
+                badge, look = f"{problems} to fix / refer", (ui.DANGER, BAD_BG)
+            elif warnings:
+                badge, look = f"{warnings} to check", (WARN, WARN_BG)
+            else:
+                badge, look = "All good", (ui.SUCCESS, GOOD_BG)
+            card = self._card(self.checks_box, row, "Checks: quote vs MVR and DASH", badge, look)
             for n, (status, text) in enumerate(items, 1):
                 icon, color = self.check_style[status]
                 self._line(card, n, f"{icon}  {'Refer: ' if status == 'refer' else ''}{text}",
