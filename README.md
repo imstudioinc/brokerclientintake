@@ -53,19 +53,26 @@ Windows desktop app for setting up a new insurance client.
   carrier's notes first; common words have synonyms (ticket → conviction, bike → motorcycle).
 - Notes are a summary: check the carrier manual before quoting exact rates or binding.
 
-## Check eligibility
+## Review quote & eligibility
 
-- **Check eligibility…** (on each client): reads the client's DASH report and checks it against
-  the built-in rules for **Intact**, **Jevco**, **Echelon** (commercial) and **WellCare's in-house
-  rules**, taken from the underwriting notes. Each market shows Proceed / Caution / Refer to
-  underwriter / Not eligible, with the reason and the note it comes from.
-- At-fault claims count only when this driver was at the wheel (DASH's own rule). Claims driven by
-  someone else, or with no driver named, are listed under **Worth a look**: ask the client and
-  correct the number if needed.
-- Type the convictions in from the MVR (minor / major / serious / alcohol-related). Until then a
-  market shows "... so far" and lists what is missing.
-- Driving-record rules only: vehicle, use, value and coverage rules still need the manual.
-  **Create my rules file…** copies the rules to a file you can edit (and share on the shared drive).
+- **Review quote & eligibility…** (on each client): reads the **DASH report**, the **MVR** and the
+  Applied Rating **Quote Information** PDF in the client folder (pick another file, or "(none)").
+  Any of them can be missing: no DASH = no insurance history (treated as a new driver).
+- **Checks: quote vs MVR and DASH** - licence number, birth date, class; G1 / G2 / G dates (when the
+  MVR expiry is on the birthday, the issue date is G1, +1 year G2, +1 year G - only for the class
+  held); MVR convictions missing from the quote (conviction date, not offence date); DASH claims
+  missing or charged wrongly; DASH gaps not shown as lapses; date first insured; postal codes;
+  every carrier message on the quote (Refer ones first); WellCare's quote rules (km, deductibles,
+  OPCF 20 / 28 / 39 / 43, high value, liability only on a new car, lienholder papers).
+- **Markets that fit by the rules** - standard markets first (Intact), then non-standard (Jevco),
+  and which of them aren't on the quote yet. **Result by market** shows each market's reasons.
+- The MVR is read with Windows' built-in OCR (no internet). Convictions are classed minor / major /
+  serious from the Intact / Jevco lists and fill in the conviction counts; the licence class is
+  shown so you can correct it.
+- At-fault claims count only when this driver was at the wheel (DASH's own rule); others are
+  listed under **Worth a look**.
+- Driving-record rules only: vehicle and use rules still need the manual. **Create my rules file…**
+  copies the rules to a file you can edit (and share on the shared drive).
 
 ## Install on a computer without Python (work / remote desktop)
 

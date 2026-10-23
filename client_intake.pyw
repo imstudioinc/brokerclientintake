@@ -1440,7 +1440,7 @@ class App(ctk.CTk):
             self.secondary_button(acts, "Import DASH", sel(lambda f: ImportDashDialog(self, f))),
             self.refill_btn,
             self.secondary_button(acts, "Client record…", sel(lambda f: tracker_ui.ClientRecordDialog(self, f))),
-            self.secondary_button(acts, "Check eligibility…", sel(lambda f: eligibility_ui.EligibilityDialog(self, f))),
+            self.secondary_button(acts, "Review quote & eligibility…", sel(lambda f: eligibility_ui.EligibilityDialog(self, f))),
             self.secondary_button(acts, "Open folder", sel(os.startfile)),
         ]
         for i, b in enumerate(buttons):

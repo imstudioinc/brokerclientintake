@@ -30,6 +30,7 @@ FACTS = {
     "nonpay_cancellations_3y": "Non-payment cancellations (3 yrs)",
     "nonpay_cancellations_5y": "Non-payment cancellations (5 yrs)",
     "possible_gaps": "Possible gaps in coverage",
+    "gap_last_12m": "Gap in the last 12 months / uninsured now",
     "minor_convictions_3y": "Minor convictions (3 yrs)",
     "major_convictions_3y": "Major convictions (3 yrs)",
     "serious_convictions_3y": "Serious / criminal convictions (3 yrs)",
@@ -161,14 +162,32 @@ def read_dash_facts(pdf_path, today=None, at_fault_over=25):
                      f"at the wheel show {facts['at_fault_claims_6y']} - check with the insurer / underwriter.")
 
     # Policies list: "#2 2025-10-21 to 2026-02-05 Coachman Insurance Company Cancelled - non-payment"
-    policies = []
-    for m in re.finditer(r"^#\d+\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})\s+(.+)$",
-                         policy_list, re.M):
-        policies.append({"start": _date(m.group(1)), "end": _date(m.group(2)), "rest": m.group(3).strip()})
+    # newest first; a "*POSSIBLE GAP*" line sits between the two policies it separates
+    policies, gaps, gap_pending = [], [], False
+    for line in policy_list.splitlines():
+        m = re.match(r"#\d+\s+(\d{4}-\d{2}-\d{2})\s+to\s+(\d{4}-\d{2}-\d{2})\s+(.+)$", line.strip())
+        if m:
+            p = {"start": _date(m.group(1)), "end": _date(m.group(2)), "rest": m.group(3).strip()}
+            if gap_pending and policies:
+                gaps.append({"from": p["end"], "to": policies[-1]["start"]})   # older policy's end -> newer's start
+            gap_pending = False
+            policies.append(p)
+        elif "POSSIBLE GAP" in line:
+            gap_pending = True
     nonpay = [p for p in policies if re.search(r"non-?payment", p["rest"], re.I) and p["end"]]
     facts["nonpay_cancellations_3y"] = len([p for p in nonpay if _years_ago(p["end"], today, 3)])
     facts["nonpay_cancellations_5y"] = len([p for p in nonpay if _years_ago(p["end"], today, 5)])
     facts["possible_gaps"] = len(re.findall(r"POSSIBLE GAP", policy_list))
+    recent = [g for g in gaps if g["to"] and (today - g["to"]).days <= 365]
+    uninsured = bool(policies) and not any("active" in p["rest"].lower() or (p["end"] and p["end"] >= today)
+                                           for p in policies)
+    facts["gap_last_12m"] = len(recent) + (1 if uninsured else 0)
+    for g in gaps:
+        months = round(((g["to"] - g["from"]).days if g["to"] and g["from"] else 0) / 30.4)
+        notes.append(f"Coverage gap {g['from']} to {g['to']} (about {months} months) - make sure the quote shows "
+                     "it as a lapse with the reason.")
+    if uninsured:
+        notes.append("No active policy on the DASH report - the client is not insured right now.")
     starts = [p["start"] for p in policies if p["start"]]
     facts["years_insured"] = round((today - min(starts)).days / 365.25, 1) if starts else 0
     if not starts:
@@ -186,7 +205,9 @@ def read_dash_facts(pdf_path, today=None, at_fault_over=25):
     if len(recent_inq) >= 3:
         notes.append(f"{len(recent_inq)} other DASH inquiries in the last 30 days - the client is shopping around.")
 
-    details = {"claims": claims, "policies": policies}
+    details = {"claims": claims, "policies": policies, "gaps": gaps, "driver": driver, "dob": dob.group(1) if dob else "",
+               "dln": (re.search(r"DLN:\s*([A-Z0-9-]+)", first) or [None, ""])[1],
+               "postal": (re.search(r"Address:.*?([A-Z]\d[A-Z]\s?\d[A-Z]\d)\b", first) or [None, ""])[1]}
     return facts, details, notes
 
 
@@ -216,7 +237,7 @@ def _check(facts, conds):
     return missing or True
 
 
-def evaluate(facts, rules):
+def evaluate(facts, rules, line=None):
     """Return [{market, verdict, reasons:[(severity, text, source)], unknown:[labels], incomplete, note}].
 
     Rule forms in the rules file:
@@ -226,7 +247,10 @@ def evaluate(facts, rules):
     """
     results = []
     always = [m for m in rules.get("markets", []) if m.get("applies_to_all")]
-    for market in [m for m in rules.get("markets", []) if not m.get("applies_to_all")]:
+    markets = [m for m in rules.get("markets", []) if not m.get("applies_to_all")]
+    if line and any(line in m.get("lines", []) for m in markets):
+        markets = [m for m in markets if not m.get("lines") or line in m["lines"]]   # only this client's line
+    for market in markets:
         reasons, unknown = [], set()
         for rule_set in [market] + always:
             for r in rule_set.get("rules", []):
@@ -260,5 +284,6 @@ def evaluate(facts, rules):
         reasons = sorted(best.values(), key=lambda x: -VERDICTS.index(x[0]) if x[0] in VERDICTS else 0)
         worst = max([VERDICTS.index(s) for s, _, _ in reasons if s in VERDICTS] or [0])
         results.append({"market": market.get("name", "?"), "verdict": VERDICTS[worst], "reasons": reasons,
-                        "unknown": sorted(unknown), "incomplete": bool(unknown), "note": market.get("note", "")})
+                        "unknown": sorted(unknown), "incomplete": bool(unknown), "note": market.get("note", ""),
+                        "tier": market.get("tier", "")})
     return results

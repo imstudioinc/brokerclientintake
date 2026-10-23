@@ -3,12 +3,13 @@
     "Built-in rules from the Underwriting Knowledge notes (Oct 2026): Intact ON auto manual 07-02-2026, Jevco ON auto manual 14-07-2026, Intact/Jevco reference chart Jan 2020, Echelon commercial guidelines May 2020, WellCare UW guidelines 2025-07-01.",
     "They cover the driving-record rules only (claims, convictions, cancellations, licence years). Vehicle, use, value and coverage rules still need the manual.",
     "A rule: {\"if\": {fact: {\"min\": n, \"max\": n}}, \"when\": {...}, \"then\": verdict, \"text\": ..., \"source\": ...}. It applies when every condition is met; min and max include the number itself.",
-    "Verdicts: Caution, Refer to underwriter, Not eligible. A market with \"applies_to_all\": true is checked together with every insurer.",
-    "Facts: years_licensed, years_insured, years_continuous_insurance, age, at_fault_claims_6y, at_fault_claims_3y, claims_6y, claims_3y, ab_claims_6y, ab_over_10k_6y, ab_claims_10y, open_claims, nonpay_cancellations_3y, nonpay_cancellations_5y, possible_gaps, minor_convictions_3y, major_convictions_3y, serious_convictions_3y, alcohol_convictions_3y, major_serious_3y (major + serious), all_convictions_3y (minor + major + serious)."
+    "Verdicts: Caution, Refer to underwriter, Not eligible. A market with \"applies_to_all\": true is checked together with every insurer. \"lines\": the client folders it is for (Auto, Commercial); \"tier\": standard, non-standard or commercial (standard markets are recommended first).",
+    "Facts: years_licensed, years_insured, years_continuous_insurance, age, at_fault_claims_6y, at_fault_claims_3y, claims_6y, claims_3y, ab_claims_6y, ab_over_10k_6y, ab_claims_10y, open_claims, nonpay_cancellations_3y, nonpay_cancellations_5y, possible_gaps, gap_last_12m, minor_convictions_3y, major_convictions_3y, serious_convictions_3y, alcohol_convictions_3y, major_serious_3y (major + serious), all_convictions_3y (minor + major + serious)."
   ],
   "markets": [
     {
       "name": "Intact (standard auto)",
+      "tier": "standard", "lines": ["Auto"],
       "note": "Counts are for the principal operator. Also declined by Intact: 6+ minor convictions across all drivers, value $250K+, right-hand drive, lapse while driving.",
       "rules": [
         {"when": {"years_licensed": {"max": 4.99}}, "if": {"at_fault_claims_6y": {"min": 1}}, "then": "Not eligible", "text": "Licensed under 5 years with an at-fault claim in 6 years", "source": "Intact manual - decline rules (note 08)"},
@@ -25,12 +26,14 @@
         {"when": {"years_licensed": {"max": 4.99}}, "if": {"nonpay_cancellations_3y": {"min": 2}}, "then": "Not eligible", "text": "Licensed under 5 years with 2+ non-payment cancellations", "source": "Intact manual - decline rules (note 08)"},
         {"when": {"years_licensed": {"min": 5}}, "if": {"nonpay_cancellations_3y": {"min": 3}}, "then": "Not eligible", "text": "3+ non-payment cancellations", "source": "Intact manual - decline rules (note 08)"},
         {"if": {"nonpay_cancellations_3y": {"min": 1}}, "then": "Refer to underwriter", "text": "Cancelled by an insurer in the last 3 years - Intact requires a referral", "source": "Intact manual - binding authority (note 08)"},
-        {"if": {"possible_gaps": {"min": 1}}, "then": "Refer to underwriter", "text": "Possible coverage gap - Intact declines if there was no compulsory coverage in the last 12 months; driving during a lapse = Facility Association", "source": "Intact manual - decline rules (note 08)"},
+        {"if": {"gap_last_12m": {"min": 1}}, "then": "Refer to underwriter", "text": "Coverage gap in the last 12 months (or uninsured now) - Intact declines with no compulsory coverage in the last 12 months; driving during a lapse = Facility Association", "source": "Intact manual - decline rules (note 08)"},
+        {"if": {"possible_gaps": {"min": 1}, "gap_last_12m": {"max": 0}}, "then": "Caution", "text": "Older coverage gap on DASH - show it as a lapse with the reason in the quote", "source": "Intact manual - lapses (note 08)"},
         {"if": {"years_insured": {"max": 0.99}}, "then": "Caution", "text": "No prior insurance - rated as driving record 0", "source": "Intact manual - driving records (note 08)"}
       ]
     },
     {
       "name": "Jevco (non-standard auto)",
+      "tier": "non-standard", "lines": ["Auto"],
       "note": "Max liability $2M, max vehicle value $100,000. A risk Intact would accept is not written by Jevco.",
       "rules": [
         {"when": {"years_licensed": {"max": 4.99}}, "if": {"at_fault_claims_6y": {"max": 0}, "minor_convictions_3y": {"max": 2}, "major_serious_3y": {"max": 0}, "nonpay_cancellations_3y": {"max": 0}}, "then": "Caution", "text": "Clean enough for Intact (standard) - Jevco refuses risks Intact would take", "source": "Jevco manual - eligibility (*) rules (note 05)"},
@@ -59,6 +62,7 @@
     },
     {
       "name": "Echelon (commercial auto, class 36)",
+      "tier": "commercial", "lines": ["Commercial"],
       "note": "Only for commercial vehicles. Brokers bind class 36 only, up to $2M liability and $125K value; refer anyone with no previous commercial auto insurance.",
       "rules": [
         {"when": {"age": {"min": 25}, "years_licensed": {"min": 4}}, "if": {"at_fault_claims_6y": {"min": 3}}, "then": "Not eligible", "text": "3+ at-fault claims in 6 years", "source": "Echelon guidelines - decline rules (note 10)"},
