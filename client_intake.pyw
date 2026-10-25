@@ -21,6 +21,8 @@ import dash_import
 import emails
 import mvr_email
 import mvr_watch
+import panel
+from panel import Panel
 import checklist
 import client_edit
 import records
@@ -135,7 +137,9 @@ def font(size=14, weight="normal"):
     return ctk.CTkFont(family=FONT, size=size, weight=weight)
 
 
-class SettingsDialog(ctk.CTkToplevel):
+class SettingsDialog(Panel):
+    FORM = True  # short page: scrolls inside the window when needed
+
     def __init__(self, app):
         super().__init__(app)
         self.app = app
@@ -249,8 +253,9 @@ class SettingsDialog(ctk.CTkToplevel):
         self.destroy()
 
 
-class SignatureDialog(ctk.CTkToplevel):
+class SignatureDialog(Panel):
     """Per-computer email signature details (logo, website and notice come from templates/)."""
+
 
     FIELDS = [("name", "Your name", "e.g. Ilkin Mammadzada"),
               ("title", "Title", "e.g. Insurance Broker"),
@@ -303,8 +308,9 @@ class SignatureDialog(ctk.CTkToplevel):
         self.destroy()
 
 
-class MvrDialog(ctk.CTkToplevel):
+class MvrDialog(Panel):
     """Collects the MVR request details and opens a Classic Outlook draft."""
+
 
     ATTACHABLE = ["DASH report", "Client consent", "Quote (ARS)"]
 
@@ -480,7 +486,7 @@ class MvrDialog(ctk.CTkToplevel):
         return mail
 
 
-class EmailDialog(ctk.CTkToplevel):
+class EmailDialog(Panel):
     """Pick a client email template, fill the blanks, attach files, open an Outlook draft."""
 
     ATTACHABLE = {".pdf", ".jpg", ".jpeg", ".png", ".heic", ".doc", ".docx", ".xlsx"}
@@ -692,8 +698,9 @@ class EmailDialog(ctk.CTkToplevel):
         self.app.show_note(self.folder, f"✓ Draft opened: {self.template.name}", SUCCESS)
 
 
-class ImportDashDialog(ctk.CTkToplevel):
+class ImportDashDialog(Panel):
     """Pick DASH reports from Downloads and move them into the client folder."""
+
 
     def __init__(self, app, folder):
         super().__init__(app)
@@ -775,12 +782,14 @@ class ImportDashDialog(ctk.CTkToplevel):
         self.app.refill(self.folder, prefix=f"✓ Imported {n} DASH report{'s' if n > 1 else ''}.\n")
 
 
-class ClientDialog(ctk.CTkToplevel):
+class ClientDialog(Panel):
     """New client, or edit one (folder given): type, name, licence #, phone, email.
 
     Editing shows what else changes before saving: the folder is renamed / moved, files named
     after the client can be renamed, and the consent form can be refilled with the new name.
     """
+    FORM = True  # short page: scrolls inside the window when needed
+
 
     def __init__(self, app, folder=None):
         super().__init__(app)
@@ -1172,8 +1181,10 @@ class App(ctk.CTk):
         self.view_var.set("Tracker")
         self.show_view("Tracker")
 
-    def show_view(self, name):
+    def show_view(self, name, _from_panel=False):
         """Switch between the Clients, Tracker and Rules views inside this window."""
+        if not _from_panel:
+            panel.close_all(self)        # an open page (New client, Review quote, ...) closes first
         for view in (self.clients_view, self.tracker_win, self.rules_view):
             if view:
                 view.pack_forget()

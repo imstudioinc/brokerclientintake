@@ -14,6 +14,7 @@ from tkinter import filedialog
 import customtkinter as ctk
 
 import config
+from panel import Panel
 import eligibility
 import review
 
@@ -32,7 +33,7 @@ SECTIONS = [("bad", "Fix in the quote", True), ("refer", "Refer / get approval",
             ("info", "Notes", False), ("ok", "Matches", False)]
 
 
-class EligibilityDialog(ctk.CTkToplevel):
+class EligibilityDialog(Panel):
     def __init__(self, app, folder):
         super().__init__(app)
         self.app, self.folder = app, Path(folder)

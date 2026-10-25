@@ -31,6 +31,9 @@ Windows desktop app for setting up a new insurance client.
 
 ## Clients screen
 
+Everything opens inside the one window: New client, Edit, Request MVR, Email, Import DASH, Review
+quote, Client record and Settings show as a page with **← Back** (or Escape) to return.
+
 - Left: the client list (search, type filter) and **+ New client** (Ctrl+N), which opens a small
   window: type, name, licence #, phone, email.
 - Right: the selected client - name, type, phone / email / licence (click to edit), documents with a

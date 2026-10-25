@@ -10,6 +10,7 @@ from tkinter import messagebox, ttk
 import customtkinter as ctk
 
 import records
+from panel import Panel
 
 # Meaning colours for statuses and due dates (light, dark)
 GOOD = ("#15803D", "#4ADE80")
@@ -312,8 +313,9 @@ class Counter(ctk.CTkFrame):
 
 
 # ====================================================================== editor
-class RecordEditor(ctk.CTkToplevel):
+class RecordEditor(Panel):
     """Add / edit one record; the form is generated from records.KINDS."""
+
 
     def __init__(self, parent, app, folder, kind, item=None, on_saved=None):
         super().__init__(parent)
@@ -448,7 +450,7 @@ SHORT = {"by": "Added by", "insurer": "Insurer", "policy_number": "Policy #", "e
 
 
 # ============================================================== client record
-class ClientRecordDialog(ctk.CTkToplevel):
+class ClientRecordDialog(Panel):
     """Everything about one client: policies, vehicles, property, business, notes, reminders."""
 
     def __init__(self, app, folder, tab="Policies"):

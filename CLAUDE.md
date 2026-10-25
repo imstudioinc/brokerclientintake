@@ -80,6 +80,7 @@ decision changes (edit the section, don't append contradictions).
 | File | What it does |
 |---|---|
 | `client_intake.pyw` | Main window: client list (paged, cached) on the left with **+ New client**; selected client on the right (header with contact details + Edit, documents grouped with a progress bar, 3 main actions + small ones); dialogs (`ClientDialog` for new / edit, Settings, Signature, MVR request, Email, Import DASH); top bar Clients / Tracker / Rules views; design tokens |
+| `panel.py` | `Panel`: a page inside the main window that replaces `CTkToplevel` for every dialog (Back bar, title, stacking, window-only calls ignored, forms centred / scrollable) |
 | `checklist.py` | Auto process checklist (12 steps from the owner): auto-ticks from folder / `client.json` (licence #, `mvr_requested`), manual ticks and N/A saved in `tracking.json` under `checklist`; `status()` / `summary()` feed the client panel and the list line |
 | `client_edit.py` | Edit client: plan / apply a name or type change (move the folder first - if Windows refuses nothing has changed; then rename files containing the old name; save `client.json`) |
 | `fill_consent.py` | Fills WellCare's consent form (`templates/WellCare Consent Form.pdf`): client's name first, then other DASH drivers (up to 4); **no DASH needed**; built-in form is filled then **flattened** (fields removed); a custom template with `Driver License n` fields keeps the old behaviour. Ontario licence # format `A1234-12345-12345` |
@@ -104,8 +105,11 @@ decision changes (edit the section, don't append contradictions).
   (`BG, SURFACE, SURFACE_ALT, BORDER, TEXT, MUTED, PRIMARY (WellCare red #C8102E), SUCCESS, DANGER`).
   `font(size, weight)` uses Segoe UI; spacing unit `SP = 8`; helpers `app.card()`,
   `app.secondary_button()`. Other modules get these via `sys.modules[type(app).__module__]`.
-- One main window with three views (Clients / Tracker / Rules) switched by `App.show_view`; views
-  are built on first use. Dialogs are `CTkToplevel` with `transient(app)`.
+- **Everything in one window (owner's request): no separate windows.** Three views (Clients /
+  Tracker / Rules) switched by `App.show_view`; every "dialog" subclasses `panel.Panel` (not
+  `CTkToplevel`) and opens as a page over the view with a ← Back bar; pages stack; switching views
+  closes them. Short forms set `FORM = True` (centred, scroll when the window is short); pages with
+  their own scrolling must not. Only the tiny date picker (`CalendarPopup`) is still a popup.
 - Background threads must not touch widgets: use `app.ui(func, *args)` (a queue drained every
   200 ms) or `after()` polling. Slow work (OCR, PDF reading) runs in a thread.
 - The main window must stay fast: the client list caches document counts by folder mtime and only
