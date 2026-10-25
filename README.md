@@ -41,6 +41,27 @@ Windows desktop app for setting up a new insurance client.
   the client can be renamed (e.g. `Ownership - OLD NAME.jpg`), and the consent form can be refilled
   with the new name. Reports from outside (DASH, MVR, quote) are never changed inside.
 
+## Checklist (Auto clients)
+
+The selected Auto client shows the process step by step, with the next step highlighted:
+
+1. Client profile (name, licence #; phone / email can follow - shown in red until added)
+2. DASH report (N/A for a client with no insurance history)
+3. First quote in ARS
+4. MVR request sent (the branch manager's email is set in Settings)
+5. MVR received
+6. Quote corrected and re-run (Review quote shows what's wrong)
+7. Documents from the client: ownership, void cheque, winter tire photos, bill of sale, financing papers
+8. Client approved; quote exported to PowerBroker
+9. Policy set up in PowerBroker
+10. Application created in PowerBroker (REMARKS from UW-Compass pasted in)
+11. Application filled and submitted on UW-Compass
+12. Referred to head office / insurer if UW-Compass shows a refer message (N/A otherwise)
+
+Steps 1-5 and 7 tick themselves from the folder and the client's details; the others you tick.
+Ticks are saved in the client's `tracking.json` (everyone on the shared folder sees them), and the
+client list shows each client's step (`Step 5/12`) and any missing phone / email.
+
 ## Client records & Tracker
 
 - **Client record…** (on each client): tabs for **Policies** (line, status, insurer, policy #,

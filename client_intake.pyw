@@ -21,6 +21,7 @@ import dash_import
 import emails
 import mvr_email
 import mvr_watch
+import checklist
 import client_edit
 import records
 import rules_ui
@@ -1398,12 +1399,23 @@ class App(ctk.CTk):
         row.sub.configure(fg=self._c(MUTED))
 
     def _doc_count(self, folder, mtime, kind=""):
-        """(found, needed) documents for the list row."""
+        """(docs found, docs needed, checklist "5/12" or "", contact missing) for the list row."""
+        def stamp(name):
+            try:
+                return (folder / name).stat().st_mtime
+            except OSError:
+                return 0
+        key = (mtime, stamp("client.json"), stamp(records.FILE), kind)   # client.json is edited in place
         cached = self._docs_cache.get(folder)
-        if not cached or cached[0] != (mtime, kind):  # re-check files only when the folder changed
+        if not cached or cached[0] != key:   # re-check files only when something changed
             skip = records.docs_not_needed(folder) if kind == "Auto" else set()
-            docs = {k: v for k, v in find_docs(folder, kind).items() if k not in skip}
-            cached = ((mtime, kind), (sum(1 for v in docs.values() if v), len(docs)))
+            found = find_docs(folder, kind)
+            docs = {k: v for k, v in found.items() if k not in skip}
+            info = mvr_email.load_client(folder)
+            rows = checklist.status(folder, kind, found, info, skip)
+            steps = "{}/{}".format(*checklist.summary(rows)[:2]) if rows else ""
+            missing = [w for w in ("phone", "email") if not info.get(w)] if kind == "Auto" else []
+            cached = (key, (sum(1 for v in docs.values() if v), len(docs), steps, missing))
             self._docs_cache[folder] = cached
         return cached[1]
 
@@ -1472,8 +1484,10 @@ class App(ctk.CTk):
         for i, (folder, ftype, mtime) in enumerate(page):
             row = self.rows.get(folder) or self._make_row(folder)
             when = datetime.datetime.fromtimestamp(mtime).strftime("%b %d, %Y")
-            have, need = self._doc_count(folder, mtime, ftype)
-            sub = f"{ftype}  ·  {when}  ·  {have} of {need} docs"
+            have, need, steps, missing = self._doc_count(folder, mtime, ftype)
+            sub = f"{ftype}  ·  {when}  ·  " + (f"Step {steps}  ·  " if steps else "") + f"{have}/{need} docs"
+            if missing:
+                sub += "  ·  no " + " / ".join(missing)
             if row.sub_text != sub:
                 row.sub.configure(text=sub)
                 row.sub_text = sub
@@ -1551,8 +1565,10 @@ class App(ctk.CTk):
             self.contact_labels[key] = value
 
         # ---- documents ----
+        self._build_checklist(body, row=1, padx=p, sel=sel)
+
         docs_head = ctk.CTkFrame(body, fg_color="transparent")
-        docs_head.grid(row=1, column=0, sticky="ew", padx=p, pady=(3 * SP, SP))
+        docs_head.grid(row=2, column=0, sticky="ew", padx=p, pady=(3 * SP, SP))
         docs_head.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(docs_head, text="Documents", font=font(15, "bold"), text_color=TEXT).grid(row=0, column=0, sticky="w")
         self.docs_count = ctk.CTkLabel(docs_head, text="", font=font(12), text_color=MUTED)
@@ -1563,7 +1579,7 @@ class App(ctk.CTk):
         self.doc_rows = {}
         auto = {label: (name, optional) for label, _, name, optional in AUTO_DOCUMENTS}
         groups = [("For every client", [l for l, _ in DOCUMENTS]), ("From the client (auto)", list(auto))]
-        r = 2
+        r = 3
         self.auto_group_label = None
         for title_text, labels in groups:
             lbl = ctk.CTkLabel(body, text=title_text.upper(), font=font(11, "bold"), text_color=MUTED)
@@ -1686,6 +1702,7 @@ class App(ctk.CTk):
                     b.grid() if key in show else b.grid_remove()
                 r["state"] = state
             r["buttons"]["open"].configure(command=lambda fs=files: [os.startfile(f) for f in fs])
+        self._show_checklist(folder, kind, docs, info, skip)
         needed = [k for k in docs if k not in skip]
         have = sum(1 for k in needed if docs[k])
         self.docs_count.configure(text=f"{have} of {len(needed)} received")
@@ -1694,6 +1711,108 @@ class App(ctk.CTk):
         self.refill_btn.configure(text="Refill consent" if docs["Client consent"] else "Fill consent")
         note = self.note[1:] if self.note and self.note[0] == folder else ("", SUCCESS)
         self.detail_msg.configure(text=note[0], text_color=note[1])
+
+    # ---------- checklist (Auto clients) ----------
+    def _build_checklist(self, body, row, padx, sel):
+        ck = self.check_frame = ctk.CTkFrame(body, fg_color="transparent")
+        ck.grid(row=row, column=0, sticky="ew", padx=padx, pady=(3 * SP, 0))
+        ck.grid_columnconfigure(0, weight=1)
+        head = ctk.CTkFrame(ck, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew", pady=(0, SP))
+        head.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(head, text="Checklist", font=font(15, "bold"), text_color=TEXT).grid(row=0, column=0, sticky="w")
+        self.check_count = ctk.CTkLabel(head, text="", font=font(12), text_color=MUTED)
+        self.check_count.grid(row=0, column=2, sticky="e")
+        self.check_bar = ctk.CTkProgressBar(head, height=6, progress_color=PRIMARY, fg_color=BORDER)
+        self.check_bar.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(SP, 0))
+        self.check_next = ctk.CTkLabel(head, text="", font=font(13, "bold"), text_color=PRIMARY, anchor="w")
+        self.check_next.grid(row=2, column=0, columnspan=3, sticky="w", pady=(SP, 0))
+        box = ctk.CTkFrame(ck, fg_color=SURFACE_ALT, corner_radius=10, border_width=1, border_color=BORDER)
+        box.grid(row=1, column=0, sticky="ew")
+        box.grid_columnconfigure(0, weight=1)
+        actions = {"edit": ("Edit", sel(lambda f: ClientDialog(self, f))),
+                   "dash": ("Import DASH", sel(lambda f: ImportDashDialog(self, f))),
+                   "mvr": ("Request MVR", sel(lambda f: MvrDialog(self, f))),
+                   "review": ("Review quote", sel(lambda f: eligibility_ui.EligibilityDialog(self, f)))}
+        link = dict(font=font(12), fg_color="transparent", hover_color=SURFACE, height=26)
+        self.check_rows = {}
+        for i, (sid, title, hint, auto, can_na, action) in enumerate(checklist.AUTO_STEPS):
+            if i:
+                ctk.CTkFrame(box, fg_color=BORDER, height=1).grid(row=i * 2 - 1, column=0, sticky="ew", padx=1.5 * SP)
+            rowf = ctk.CTkFrame(box, fg_color="transparent")
+            rowf.grid(row=i * 2, column=0, sticky="ew", padx=SP, pady=SP / 2)
+            rowf.grid_columnconfigure(0, weight=1)
+            var = tk.BooleanVar()
+            cb = ctk.CTkCheckBox(rowf, text=f"{i + 1}.  {title}", variable=var, font=font(13), text_color=TEXT,
+                                 text_color_disabled=MUTED, fg_color=SUCCESS, hover_color=SUCCESS,
+                                 checkbox_width=20, checkbox_height=20,
+                                 command=lambda s=sid: self.toggle_step(s))
+            cb.grid(row=0, column=0, sticky="w")
+            note = ctk.CTkLabel(rowf, text="", font=font(11), text_color=MUTED, anchor="w", justify="left",
+                                wraplength=430, height=16)
+            note.grid(row=1, column=0, sticky="w", padx=(30, 0))
+            btns = {}
+            if action:
+                text, cmd = actions[action]
+                btns["action"] = ctk.CTkButton(rowf, text=text, width=8 * len(text) + 16, text_color=PRIMARY,
+                                               command=cmd, **link)
+            if can_na:
+                btns["na"] = ctk.CTkButton(rowf, text="N/A", width=40, text_color=MUTED,
+                                           command=lambda s=sid: self.set_step(s, "na"), **link)
+                btns["undo"] = ctk.CTkButton(rowf, text="Undo N/A", width=72, text_color=MUTED,
+                                             command=lambda s=sid: self.set_step(s, None), **link)
+            for col, b in enumerate(btns.values(), start=1):
+                b.grid(row=0, column=col, rowspan=2, padx=(SP / 2, 0))
+                b.grid_remove()
+            self.check_rows[sid] = {"var": var, "cb": cb, "note": note, "btns": btns}
+        self._check_state = {}
+
+    def _show_checklist(self, folder, kind, docs, info, skip):
+        rows = checklist.status(folder, kind, docs, info, skip)
+        if not rows:
+            self.check_frame.grid_remove()
+            return
+        self.check_frame.grid()
+        done, total, nxt = checklist.summary(rows)
+        self.check_count.configure(text=f"{done} of {total} done")
+        self.check_bar.set(done / total)
+        self.check_next.configure(text=f"Next:  {nxt}" if nxt else "All steps done")
+        self._check_state = {}
+        next_id = next((st[0] for st, s, _ in rows if s == "todo" and st[0] != "documents"), None)
+        for (sid, title, hint, auto, can_na, action), state, note in rows:
+            r = self.check_rows[sid]
+            self._check_state[sid] = state
+            r["var"].set(state in ("done", "na"))
+            auto_done = bool(auto) and state == "done" and note != ""      # ticked by what's in the folder
+            r["cb"].configure(state="disabled" if auto_done else "normal",
+                              font=font(13, "bold") if sid == next_id else font(13),
+                              text_color=PRIMARY if sid == next_id else TEXT)
+            warn = bool(note) and "issing" in note
+            text = note or ("Not applicable" if state == "na" else hint if sid == next_id else "")
+            r["note"].configure(text=text, text_color=DANGER if warn and state != "na" else MUTED)
+            r["note"].grid() if text else r["note"].grid_remove()
+            show = set()
+            if state == "todo" or (sid == "profile" and warn):
+                show.add("action")
+            if state == "todo":
+                show.add("na")
+            if state == "na":
+                show.add("undo")
+            for key, b in r["btns"].items():
+                b.grid() if key in show else b.grid_remove()
+
+    def toggle_step(self, sid):
+        state = self._check_state.get(sid, "todo")
+        self.set_step(sid, "done" if state == "todo" else None)
+
+    def set_step(self, sid, state):
+        if not self.selected:
+            return
+        try:
+            checklist.set_tick(self.selected, sid, state)
+        except OSError as e:
+            self.show_note(self.selected, f"Could not save the checklist: {e}", DANGER)
+        self.refresh_list(keep_scroll=True)
 
     def add_doc(self, label, name):
         """Copy the chosen photos / PDFs into the client folder under a name the app recognises."""

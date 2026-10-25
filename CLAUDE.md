@@ -80,6 +80,7 @@ decision changes (edit the section, don't append contradictions).
 | File | What it does |
 |---|---|
 | `client_intake.pyw` | Main window: client list (paged, cached) on the left with **+ New client**; selected client on the right (header with contact details + Edit, documents grouped with a progress bar, 3 main actions + small ones); dialogs (`ClientDialog` for new / edit, Settings, Signature, MVR request, Email, Import DASH); top bar Clients / Tracker / Rules views; design tokens |
+| `checklist.py` | Auto process checklist (12 steps from the owner): auto-ticks from folder / `client.json` (licence #, `mvr_requested`), manual ticks and N/A saved in `tracking.json` under `checklist`; `status()` / `summary()` feed the client panel and the list line |
 | `client_edit.py` | Edit client: plan / apply a name or type change (move the folder first - if Windows refuses nothing has changed; then rename files containing the old name; save `client.json`) |
 | `fill_consent.py` | Fills WellCare's consent form (`templates/WellCare Consent Form.pdf`): client's name first, then other DASH drivers (up to 4); **no DASH needed**; built-in form is filled then **flattened** (fields removed); a custom template with `Driver License n` fields keeps the old behaviour. Ontario licence # format `A1234-12345-12345` |
 | `tools/make_consent_template.py` | Rebuilds the consent template from a filled WellCare form: removes the printed name/date text (not just covers it - the repo is public), adds rows and fields. Dev-only (pypdf) |
