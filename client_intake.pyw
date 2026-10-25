@@ -1793,7 +1793,8 @@ class App(ctk.CTk):
         self.show_details(self.selected)
 
     def _show_steps(self, folder, kind, docs, info, skip):
-        rows = checklist.status(folder, kind, docs, info, skip)
+        self._by_hand = set()
+        rows = checklist.status(folder, kind, docs, info, skip, by_hand=self._by_hand)
         auto_client = bool(rows)
         for w in (self.next_card, self.tabs):
             w.grid() if auto_client else w.grid_remove()
@@ -1863,11 +1864,11 @@ class App(ctk.CTk):
                 (st, state, note) = by_id[sid]
                 r = self.check_rows[sid]
                 r["var"].set(state in ("done", "na"))
-                auto_done = bool(st[3]) and state == "done"
+                auto_done = bool(st[3]) and state in ("done", "na") and sid not in self._by_hand
                 r["cb"].configure(state="disabled" if auto_done else "normal",
                                   font=font(13, "bold") if sid == self._next_id else font(13),
                                   text_color=PRIMARY if sid == self._next_id else TEXT)
-                r["tag"].configure(text="auto" if auto_done else "N/A" if state == "na" else "")
+                r["tag"].configure(text="N/A" if state == "na" else "auto" if auto_done else "")
                 warn = note if note and "issing" in note and state != "na" and sid != "documents" else \
                     (note if sid == "documents" and state == "todo" else "")
                 r["note"].configure(text=warn)
@@ -1947,6 +1948,7 @@ class App(ctk.CTk):
         self.detail_msg.grid() if note[0] else self.detail_msg.grid_remove()
 
     def toggle_step(self, sid):
+        """Tick a step, or untick one the broker ticked (or marked N/A)."""
         state = self._check_state.get(sid, "todo")
         self.set_step(sid, "done" if state == "todo" else None)
 

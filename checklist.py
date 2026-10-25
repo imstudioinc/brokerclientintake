@@ -107,11 +107,13 @@ def set_tick(folder, step_id, state):
     records._write(folder, data)
 
 
-def status(folder, kind, docs, info, skip, read_quote=True):
+def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None):
     """[(step, state, note)] - state: "done", "na", "todo"; note explains auto ticks / what's missing.
 
     docs: find_docs() result; info: client.json; skip: documents marked not needed;
-    read_quote: False for the client list (only uses refer messages already read).
+    read_quote: False for the client list (only uses refer messages already read);
+    by_hand: a set to collect the ids whose done / N/A comes from the broker's own tick (those can
+    be unticked; ones the app ticked itself can't).
     """
     data = _load(folder)
     ticks = data.get("checklist", {})
@@ -119,7 +121,7 @@ def status(folder, kind, docs, info, skip, read_quote=True):
     for step in steps_for(kind):
         sid, _, _, auto, _, _ = step
         tick = ticks.get(sid, {}).get("state")
-        state, note = (tick, "") if tick else ("todo", "")
+        state, note = "todo", ""
         if auto == "profile":
             missing = [w for w in ("licence #", "phone", "email")
                        if not info.get({"licence #": "dln"}.get(w, w))]
@@ -159,8 +161,10 @@ def status(folder, kind, docs, info, skip, read_quote=True):
             elif state == "todo":
                 missing = [k for k in wanted if not docs[k]]
                 note = "Missing: " + ", ".join(k.lower() for k in missing)
-        if tick and auto and state != "done" and tick in ("done", "na"):
+        if tick in ("done", "na") and state == "todo":
             state = tick              # ticked by hand (e.g. DASH N/A for a new driver)
+            if by_hand is not None:
+                by_hand.add(sid)
         out.append((step, state, note))
     return out
 
