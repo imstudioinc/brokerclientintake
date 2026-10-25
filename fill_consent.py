@@ -11,6 +11,7 @@ every viewer. A custom template with "Driver License n" fields still gets licenc
 """
 import argparse
 import datetime
+import difflib
 import re
 import sys
 from pathlib import Path
@@ -64,9 +65,28 @@ def read_consent(pdf_path):
     return (name.upper(), format_dln(dln)) if name or dln else None
 
 
-def _same_person(a, b):
-    a, b = set(a.upper().replace(",", " ").split()), set(b.upper().replace(",", " ").split())
-    return bool(a) and bool(b) and (a <= b or b <= a)
+# where name rows 2-4 sit on the built-in form (see tools/make_consent_template.py): underline
+# position from the top of the page, and the name / signature / date columns. Row 1's lines are
+# printed on the form; the others are drawn only when used, at the same weight (0.75 pt as printed).
+EXTRA_ROWS = {2: 568.6, 3: 594.6, 4: 620.6}
+ROW_COLUMNS = [(44.0, 233.1), (243.1, 453.2), (463.2, 558.0)]
+
+
+def _same_person(a, b, dln_a="", dln_b=""):
+    """Same driver: same licence #, or names that match allowing a small spelling difference
+    (the client's name may have been corrected after the DASH report was pulled)."""
+    if dln_a and dln_b:
+        return _raw(dln_a) == _raw(dln_b)
+    ta, tb = a.upper().replace(",", " ").split(), b.upper().replace(",", " ").split()
+    if not ta or not tb:
+        return False
+    if set(ta) <= set(tb) or set(tb) <= set(ta):
+        return True
+    return difflib.SequenceMatcher(None, " ".join(sorted(ta)), " ".join(sorted(tb))).ratio() >= 0.85
+
+
+def _raw(dln):
+    return re.sub(r"[^A-Z0-9]", "", (dln or "").upper())
 
 
 def fill(client_folder, dln=None, template=None):
@@ -88,11 +108,14 @@ def fill(client_folder, dln=None, template=None):
     dash_files = sorted(folder.glob("DASH Report*.pdf"), key=lambda p: p.stat().st_mtime)
     dash = [d for d in (read_dash(p) for p in dash_files) if d]
     # the client first (with the licence # from their DASH if there is one), then the other drivers
-    own = next((d for d in dash if _same_person(d[0], client_name)), None)
+    own = next((d for d in dash if _same_person(d[0], client_name, d[1], dln)), None)
     drivers = [(client_name, own[1] if own else format_dln(dln))]
     for d in dash:
-        if not any(_same_person(d[0], x[0]) for x in drivers):
-            drivers.append(d)
+        if d is own:
+            continue
+        if not any(_same_person(d[0], x[0], d[1], x[1]) for x in drivers):
+            last, _, first = d[0].partition(",")      # DASH writes "LAST, FIRST"
+            drivers.append(((first.strip() + " " + last.strip()).strip() if first else d[0], d[1]))
     drivers = drivers[:slots]
 
     values = {
@@ -109,6 +132,12 @@ def fill(client_folder, dln=None, template=None):
     if template == DEFAULT_TEMPLATE:
         # draw the values into the page and drop the fields: looks the same in every viewer
         writer.update_page_form_field_values(writer.pages[0], values, auto_regenerate=False, flatten=True)
+        lines = "".join(f"{x0} {792 - top} m {x1} {792 - top} l S\n"
+                        for i, top in EXTRA_ROWS.items() if i <= len(drivers) for x0, x1 in ROW_COLUMNS)
+        if lines:   # underline only the extra rows that have a name
+            content = writer.pages[0].get_contents()
+            content.set_data(content.get_data() + f"\nq 0 0 0 RG 0.75 w\n{lines}Q\n".encode())
+            writer.pages[0].replace_contents(content)
         for page in writer.pages:
             if "/Annots" in page:
                 del page["/Annots"]

@@ -3,9 +3,9 @@
     python tools/make_consent_template.py "Consent Form - SOME CLIENT.pdf"
 
 The WellCare form has no fields: the client's name and the date are printed on the page.
-This removes those printed values (the text itself, so no client's name stays in the file),
-draws three more name / signature / date rows, and adds fillable fields that
-fill_consent.py fills and flattens.
+This removes those printed values (the text itself, so no client's name stays in the file)
+and adds fillable fields (client name, date, name rows 1-4) that fill_consent.py fills and
+flattens. Rows 2-4 have no lines until fill_consent.py uses them.
 """
 import re
 import sys
@@ -54,17 +54,14 @@ def main(sample):
     if name in left or date in left:
         sys.exit(f"Could not remove the printed values (removed {removed}) - not writing a template.")
 
-    # three more rows: underlines under name / signature / date (row 1 is already on the form)
-    lines = "q 0 0 0 RG 0.6 w\n" + "".join(f"{x0} {H - y} m {x1} {H - y} l S\n"
-                                         for y in ROW_LINES[1:] for x0, x1 in COLUMNS) + "Q\n"
-    extra = DecodedStreamObject()
-    extra.set_data(lines.encode())
-    page[NameObject("/Contents")] = ArrayObject([
-        writer._add_object(_stream(b"q\n")), writer._add_object(page["/Contents"]) if not hasattr(
-            page["/Contents"], "indirect_reference") or page["/Contents"].indirect_reference is None
-        else page["/Contents"].indirect_reference,
-        writer._add_object(_stream(b"Q\n")), writer._add_object(extra)])
-
+    # the sample flips the coordinates (1 0 0 -1 0 792 cm) and never restores them: wrap its
+    # drawing in q ... Q so filled values and lines drawn later are the right way up
+    original = page["/Contents"]
+    ref = original.indirect_reference if getattr(original, "indirect_reference", None) else writer._add_object(original)
+    page[NameObject("/Contents")] = ArrayObject([writer._add_object(_stream(b"q\n")), ref,
+                                                  writer._add_object(_stream(b"Q\n"))])
+    # rows 2-4 get fields only; fill_consent.py draws their lines when a row is used,
+    # so an unused row stays invisible and the form looks like the original
     font = writer._add_object(DictionaryObject({
         NameObject("/Type"): NameObject("/Font"), NameObject("/Subtype"): NameObject("/Type1"),
         NameObject("/BaseFont"): NameObject("/Times-Roman"), NameObject("/Encoding"): NameObject("/WinAnsiEncoding")}))
