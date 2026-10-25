@@ -6,6 +6,7 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
+import carriers_ui
 import config
 import notes_search
 
@@ -33,6 +34,8 @@ class RulesView(ctk.CTkFrame):
         btns.grid(row=0, column=1, sticky="e", padx=2 * SP, pady=(1.5 * SP, 0))
         app.secondary_button(btns, "Notes folder…", self.choose_notes, width=120).pack(side="right")
         app.secondary_button(btns, "Reload notes", self.reload, width=110).pack(side="right", padx=SP)
+        app.secondary_button(btns, "Carriers & payments", lambda: carriers_ui.CarrierInfoPage(app), width=160) \
+            .pack(side="right")
         self.query = ctk.CTkEntry(head, height=40, font=ui.font(15),
                                   placeholder_text="Type a question or a few words: carrier, situation, rule…")
         self.query.grid(row=1, column=0, columnspan=2, sticky="ew", padx=2 * SP, pady=(SP, SP / 2))

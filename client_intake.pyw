@@ -26,6 +26,7 @@ from panel import Panel
 import checklist
 import client_edit
 import client_facts
+import carriers_ui
 import records
 import rules_ui
 import eligibility_ui
@@ -1449,7 +1450,7 @@ class App(ctk.CTk):
             found = find_docs(folder, kind)
             docs = {k: v for k, v in found.items() if k not in skip}
             info = mvr_email.load_client(folder)
-            rows = checklist.status(folder, kind, found, info, skip)
+            rows = checklist.status(folder, kind, found, info, skip, read_quote=False)
             steps = "{}/{}".format(*checklist.summary(rows)[:2]) if rows else ""
             missing = [w for w in ("phone", "email") if not info.get(w)] if kind == "Auto" else []
             cached = (key, (sum(1 for v in docs.values() if v), len(docs), steps, missing))
@@ -1624,6 +1625,8 @@ class App(ctk.CTk):
         small = dict(font=font(12), fg_color="transparent", hover_color=SURFACE_ALT, text_color=MUTED, height=28)
         self.refill_btn = ctk.CTkButton(more, text="Fill consent", width=96, command=sel(self.refill), **small)
         for text, cmd, w in (("Import DASH", sel(lambda f: ImportDashDialog(self, f)), 96), (None, None, 0),
+                             ("UW call", sel(lambda f: carriers_ui.UwCallPage(self, f)), 70),
+                             ("Carriers", sel(lambda f: carriers_ui.CarrierInfoPage(self, f)), 70),
                              ("Client record", sel(lambda f: tracker_ui.ClientRecordDialog(self, f)), 100),
                              ("Open folder", sel(os.startfile), 90)):
             b = self.refill_btn if text is None else ctk.CTkButton(more, text=text, width=w, command=cmd, **small)
@@ -1737,6 +1740,9 @@ class App(ctk.CTk):
             "dash": ctk.CTkButton(btns, text="Import DASH", command=sel(lambda f: ImportDashDialog(self, f))),
             "mvr": ctk.CTkButton(btns, text="Request MVR", command=sel(lambda f: MvrDialog(self, f))),
             "review": ctk.CTkButton(btns, text="Review quote", command=sel(lambda f: eligibility_ui.EligibilityDialog(self, f))),
+            "uwcall": ctk.CTkButton(btns, text="Log UW call", command=sel(lambda f: carriers_ui.UwCallPage(self, f))),
+            "payments": ctk.CTkButton(btns, text="Payment terms",
+                                      command=sel(lambda f: carriers_ui.CarrierInfoPage(self, f))),
             "docs": ctk.CTkButton(btns, text="See documents", command=lambda: (self.tab_var.set("Documents"),
                                                                                self.show_details(self.selected))),
         }
@@ -1819,7 +1825,8 @@ class App(ctk.CTk):
             self.next_kicker.configure(text=f"NEXT STEP  ·  {done} of {total} done", text_color=PRIMARY)
             self.next_title.configure(text=title)
             text = ((note + ".  ") if note else "") + hint
-            self.next_hint.configure(text=text, text_color=DANGER if note and "issing" in note else MUTED)
+            self.next_hint.configure(text=text, text_color=DANGER if note and ("issing" in note or note.startswith(("Refer", "Waiting")))
+                                     else MUTED)
             self.next_hint.grid() if text else self.next_hint.grid_remove()
             if action:
                 self.next_buttons[action].pack(side="left", padx=(0, SP))

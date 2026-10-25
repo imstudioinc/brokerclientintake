@@ -10,7 +10,9 @@ import datetime
 import json
 from pathlib import Path
 
+import quote
 import records
+import review
 
 # (id, title, hint, auto, can_be_na, action)
 #   auto: key of an automatic check below, or None (ticked by hand)
@@ -21,6 +23,9 @@ AUTO_STEPS = [
     ("dash", "DASH report", "Pull the DASH report if the client has insurance history.", "dash", True, "dash"),
     ("quote", "First quote in ARS", "Quote in Applied Rating and save the Quote Information PDF in the folder.",
      "quote", False, None),
+    ("uw_call", "Refer messages confirmed with the underwriter", "The quote has refer messages: call the "
+     "underwriter, confirm the client is eligible, and log the call (who, when, why, result).", "uw_call", True,
+     "uwcall"),
     ("mvr_request", "MVR request sent", "Email the branch manager for the MVR (address set in Settings).",
      "mvr_request", False, "mvr"),
     ("mvr", "MVR received", "Saved to the folder automatically when you download it from Outlook.", "mvr", False, None),
@@ -28,7 +33,8 @@ AUTO_STEPS = [
      "then quote again.", None, False, "review"),
     ("documents", "Documents from the client", "Ownership, void cheque (most clients pay monthly), winter tire "
      "photos, bill of sale, financing papers - ask while you quote.", "documents", False, None),
-    ("approved", "Client approved; quote exported to PowerBroker", "", None, False, None),
+    ("approved", "Client approved; quote exported to PowerBroker", "Agree how the client pays: the carrier's "
+     "payment terms and WellCare's payment options are on the Carriers page.", None, False, "payments"),
     ("pb_policy", "Policy set up in PowerBroker", "", None, False, None),
     ("pb_app", "Application created in PowerBroker", "Paste the REMARKS text from UW-Compass into the application.",
      None, False, None),
@@ -39,7 +45,7 @@ AUTO_STEPS = [
 
 
 # the steps in three stages; a finished stage folds into one line in the app
-PHASES = [("Intake", ["profile", "dash", "quote", "mvr_request", "mvr"]),
+PHASES = [("Intake", ["profile", "dash", "quote", "uw_call", "mvr_request", "mvr"]),
           ("Quote", ["requote", "documents"]),
           ("Bind", ["approved", "pb_policy", "pb_app", "uwc", "referred"])]
 
@@ -48,12 +54,45 @@ def steps_for(kind):
     return AUTO_STEPS if kind == "Auto" else []
 
 
-def _load_ticks(folder):
+def _load(folder):
     try:
-        data = json.loads((Path(folder) / records.FILE).read_text(encoding="utf-8-sig"))
+        return json.loads((Path(folder) / records.FILE).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return {}
-    return data.get("checklist", {})
+
+
+def quote_refers(folder, docs, data=None, read=True):
+    """{carrier: [refer messages]} on the newest quote, or None (no quote / not read yet).
+
+    Reading a quote takes a moment, so the result is kept in tracking.json ("quote_refers", keyed
+    on the file's name + time); the client list only uses the kept result (read=False).
+    """
+    quotes = docs.get("Quote (ARS)") or []
+    if not quotes:
+        return None
+    q = quotes[-1]
+    try:
+        key = f"{q.name}|{int(q.stat().st_mtime)}"
+    except OSError:
+        return None
+    data = _load(folder) if data is None else data
+    kept = data.get("quote_refers") or {}
+    if kept.get("key") == key:
+        return kept.get("carriers", {})
+    if not read:
+        return None
+    try:
+        carriers = {c["name"]: [m for m in c["messages"] if review.carrier_message(m) == "refer"]
+                    for c in quote.read(str(q)).get("carriers", [])}
+    except Exception:
+        return None
+    fresh = records.load(folder)
+    fresh["quote_refers"] = {"key": key, "carriers": carriers}
+    records._write(folder, fresh)
+    return carriers
+
+
+RESULTS = ("Approved", "Approved with conditions", "Declined", "Call back")
 
 
 def set_tick(folder, step_id, state):
@@ -68,12 +107,14 @@ def set_tick(folder, step_id, state):
     records._write(folder, data)
 
 
-def status(folder, kind, docs, info, skip):
+def status(folder, kind, docs, info, skip, read_quote=True):
     """[(step, state, note)] - state: "done", "na", "todo"; note explains auto ticks / what's missing.
 
-    docs: find_docs() result; info: client.json; skip: documents marked not needed.
+    docs: find_docs() result; info: client.json; skip: documents marked not needed;
+    read_quote: False for the client list (only uses refer messages already read).
     """
-    ticks = _load_ticks(folder)
+    data = _load(folder)
+    ticks = data.get("checklist", {})
     out = []
     for step in steps_for(kind):
         sid, _, _, auto, _, _ = step
@@ -90,6 +131,20 @@ def status(folder, kind, docs, info, skip):
             state, note = "done", "In the folder"
         elif auto == "quote" and docs.get("Quote (ARS)"):
             state, note = "done", "In the folder"
+        elif auto == "uw_call":
+            calls = sorted(data.get("uw_calls", []), key=lambda c: c.get("at", ""))
+            refers = quote_refers(folder, docs, data, read_quote) if docs.get("Quote (ARS)") else None
+            if calls:
+                last = calls[-1]
+                if last.get("result") == "Call back":
+                    note = f"Waiting for {last.get('carrier', 'the underwriter')} to call back"
+                else:
+                    state = "done"
+                    note = f"{last.get('carrier', '')}: {last.get('result', '')}".strip(": ") +                         (f" - {last['underwriter']}" if last.get("underwriter") else "")
+            elif refers is not None and not any(refers.values()) and not tick:
+                state, note = "na", "No refer messages on the quote"
+            elif refers:
+                note = "Refer: " + ", ".join(c for c, m in refers.items() if m)
         elif auto == "mvr_request" and (info.get("mvr_requested") or docs.get("MVR")):
             state = "done"
             note = f"Sent {info['mvr_requested'][:10]}" if info.get("mvr_requested") else "MVR already received"

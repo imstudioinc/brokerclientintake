@@ -162,6 +162,7 @@ def _write(folder, data):
 def save_item(folder, kind, item):
     """Add or update one record (matched by id). Returns the saved item."""
     data = load(folder)  # re-read: someone else may have saved meanwhile
+    data.setdefault(kind, [])            # kinds outside KINDS too (e.g. "uw_calls")
     item = dict(item)
     now = datetime.datetime.now().isoformat(timespec="minutes")
     if not item.get("id"):
@@ -198,7 +199,7 @@ def set_doc_needed(folder, label, needed):
 
 def delete_item(folder, kind, item_id):
     data = load(folder)
-    data[kind] = [x for x in data[kind] if x.get("id") != item_id]
+    data[kind] = [x for x in data.get(kind, []) if x.get("id") != item_id]
     _write(folder, data)
 
 
