@@ -25,6 +25,7 @@ import panel
 from panel import Panel
 import checklist
 import client_edit
+import client_facts
 import records
 import rules_ui
 import eligibility_ui
@@ -94,6 +95,26 @@ def find_docs(folder, kind=""):
             files -= base            # e.g. "Client Consent" is not a lienholder paper
         found[label] = sorted(files, key=lambda p: p.stat().st_mtime)
     return found
+
+
+def parse_birth(text):
+    """Date of birth typed as YYYY-MM-DD or MM/DD/YYYY -> "YYYY-MM-DD", "" when empty, None when not a date."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"):
+        try:
+            return datetime.datetime.strptime(text, fmt).date().isoformat()
+        except ValueError:
+            pass
+    return None
+
+
+def format_birth(value):
+    try:
+        return datetime.date.fromisoformat(value).strftime("%b %d, %Y")
+    except (TypeError, ValueError):
+        return value or ""
 
 
 def shorten(text, n):
@@ -783,7 +804,7 @@ class ImportDashDialog(Panel):
 
 
 class ClientDialog(Panel):
-    """New client, or edit one (folder given): type, name, licence #, phone, email.
+    """New client, or edit one (folder given): type, name, licence #, date of birth, phone, email.
 
     Editing shows what else changes before saving: the folder is renamed / moved, files named
     after the client can be renamed, and the consent form can be refilled with the new name.
@@ -827,7 +848,9 @@ class ClientDialog(Panel):
         self._label(body, 4, 0, "Client name *")
         self.name = self._entry(body, 5, 0, folder.name if editing else "", "e.g. JOHN SMITH", span=2, upper=True)
         self._label(body, 6, 0, "Driver's licence #" + ("" if editing else " *"))
-        self.dln = self._entry(body, 7, 0, info.get("dln", ""), "A1234-12345-12345", span=2, upper=True)
+        self._label(body, 6, 1, "Date of birth")
+        self.dln = self._entry(body, 7, 0, info.get("dln", ""), "A1234-12345-12345", upper=True)
+        self.birth = self._entry(body, 7, 1, info.get("birth", ""), "YYYY-MM-DD", padx=(SP, p))
         self._label(body, 8, 0, "Phone")
         self._label(body, 8, 1, "Email")
         self.phone = self._entry(body, 9, 0, info.get("phone", ""), "optional")
@@ -857,7 +880,7 @@ class ClientDialog(Panel):
                                       command=self.save)
         self.save_btn.pack(side="right")
         app.secondary_button(btns, "Cancel", self.destroy, width=100).pack(side="right", padx=SP)
-        for e in (self.name, self.dln, self.phone, self.email):
+        for e in (self.name, self.dln, self.birth, self.phone, self.email):
             e.bind("<Return>", lambda ev: self.save())
         self.bind("<Escape>", lambda e: self.destroy())
         self.update_changes()
@@ -898,7 +921,7 @@ class ClientDialog(Panel):
         elif moved:
             lines.append(f"Folder moved from {self.old_type or 'Other'} to {kind}")
         self.renames = client_edit.plan(self.folder, None, self.old_name, name) if name else []
-        self.change_text.configure(text="\n".join(lines) or "Phone, email and licence # are saved with the client.")
+        self.change_text.configure(text="\n".join(lines) or "Phone, email, licence # and date of birth are saved with the client.")
         if self.renames:
             self.rename_box.configure(text=f"Rename {len(self.renames)} file(s) named after the client")
             self.rename_box.grid(row=1, column=0, sticky="w", padx=1.5 * SP, pady=(0, SP / 2))
@@ -921,12 +944,15 @@ class ClientDialog(Panel):
         dln = self.dln.get().strip()
         phone = mvr_email.format_phone(self.phone.get())
         email = self.email.get().strip().lower()
+        birth = parse_birth(self.birth.get())
         if not name:
             return self._fail(self.name, "Enter the client's name.")
         if self.folder is None and not dln:
             return self._fail(self.dln, "Enter the driver's licence #.")
         if dln and not is_valid_dln(dln):
             return self._fail(self.dln, "Licence # must be 1 letter + 14 digits, e.g. A1234-12345-12345.")
+        if birth is None:
+            return self._fail(self.birth, "Date of birth: use YYYY-MM-DD, e.g. 1984-09-04.")
         if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
             return self._fail(self.email, "That email address doesn't look right.")
         kind = self.type_var.get()
@@ -934,10 +960,10 @@ class ClientDialog(Panel):
         self.update_idletasks()
         try:
             if self.folder is None:
-                folder, message, ok = self.app.create_client(name, kind, dln, phone, email)
+                folder, message, ok = self.app.create_client(name, kind, dln, phone, email, birth)
             else:
                 folder, message, ok = self.app.edit_client(
-                    self.folder, name, kind, dln, phone, email,
+                    self.folder, name, kind, dln, phone, email, birth,
                     self.renames if self.rename_var.get() else [],
                     self.refill_var.get() and bool(self.refill_box.winfo_manager()))
         except Exception as e:
@@ -1254,7 +1280,7 @@ class App(ctk.CTk):
         self.show_view("Clients")
         ClientDialog(self)
 
-    def create_client(self, name, client_type, dln, phone, email):
+    def create_client(self, name, client_type, dln, phone, email, birth=""):
         """Make the folder (or reuse an existing one), save the details, fill the consent.
 
         Returns (folder, message, ok). Raises when the Clients folder isn't set.
@@ -1264,7 +1290,7 @@ class App(ctk.CTk):
             raise FileNotFoundError("Clients folder not found. Set it in Settings.")
         folder = type_folder(root, client_type) / name
         details = dict(name=name, type=client_type, dln=format_dln(dln) if dln else None,
-                       phone=phone or None, email=email or None)
+                       phone=phone or None, email=email or None, birth=birth or None)
         if folder.exists():
             info = mvr_email.load_client(folder)
             mvr_email.save_client(folder, **{k: v for k, v in details.items() if v and not info.get(k)})
@@ -1304,7 +1330,7 @@ class App(ctk.CTk):
         os.startfile(folder)
         return folder, "\n".join(lines), ok
 
-    def edit_client(self, folder, name, client_type, dln, phone, email, renames, refill_consent):
+    def edit_client(self, folder, name, client_type, dln, phone, email, birth, renames, refill_consent):
         """Save edited details; rename / move the folder and files if the name or type changed."""
         root = self.clients_root
         old_type = self.client_type_of.get(folder, "")
@@ -1314,7 +1340,7 @@ class App(ctk.CTk):
         new_folder, renamed_files = client_edit.apply(
             folder, new_folder, renames,
             dict(name=name, type=client_type if moved or old_type else None, dln=format_dln(dln) if dln else "",
-                 phone=phone, email=email))
+                 phone=phone, email=email, birth=birth))
         lines = ["✓ Client saved"]
         if new_folder != folder:
             lines.append(f"Folder: {new_folder.parent.name} \\ {new_folder.name}")
@@ -1567,7 +1593,7 @@ class App(ctk.CTk):
         self.contact = ctk.CTkFrame(head, fg_color="transparent")
         self.contact.grid(row=1, column=0, columnspan=2, sticky="w", pady=(SP / 2, 0))
         self.contact_labels = {}
-        for key, label in (("phone", "Phone"), ("email", "Email"), ("dln", "Licence")):
+        for key, label in (("phone", "Phone"), ("email", "Email"), ("dln", "Licence"), ("birth", "Born")):
             cell = ctk.CTkFrame(self.contact, fg_color="transparent")
             cell.pack(side="left", padx=(0, 3 * SP))
             ctk.CTkLabel(cell, text=label, font=font(11), text_color=MUTED, height=16).pack(anchor="w")
@@ -1575,6 +1601,12 @@ class App(ctk.CTk):
             value.pack(anchor="w")
             value.bind("<Button-1>", lambda e: self.selected and ClientDialog(self, self.selected))
             self.contact_labels[key] = value
+        # details on the quote / DASH that don't match the profile
+        self.facts_warn = ctk.CTkLabel(head, text="", font=font(12), text_color=DANGER, fg_color=WARN_BG,
+                                       corner_radius=8, justify="left", anchor="w", wraplength=520, cursor="hand2")
+        self.facts_warn.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(SP, 0), ipadx=SP, ipady=SP / 2)
+        self.facts_warn.bind("<Button-1>", lambda e: self.selected and ClientDialog(self, self.selected))
+        self.facts_warn.grid_remove()
 
         # ---- toolbar: the main actions, then smaller ones ----
         bar = ctk.CTkFrame(body, fg_color="transparent")
@@ -1853,11 +1885,24 @@ class App(ctk.CTk):
         self.details_title.configure(text=shorten(folder.name, 34))
         self.details_type.configure(text=f"  {kind}  " if kind else "")
         info = mvr_email.load_client(folder)
+        docs = find_docs(folder, kind)
+        # fill missing details from the quote / DASH, and flag the ones that don't match
+        try:
+            filled, warnings = client_facts.apply(folder, docs, info, mvr_email.save_client)
+        except Exception:
+            filled, warnings = [], []
+        if filled:
+            self.note = (folder, "✓ Filled from the documents: " + ", ".join(filled), SUCCESS)
+            self.refresh_soon(100)           # the list line ("no phone / email") follows
         for key, label in self.contact_labels.items():
             value = info.get(key) or ""
+            if key == "birth" and value:
+                value = format_birth(value)
             label.configure(text=value or "Add…", text_color=TEXT if value else PRIMARY)
+        self.facts_warn.configure(text="⚠  Doesn't match the documents - click to edit\n"
+                                       + "\n".join("•  " + w for w in warnings))
+        self.facts_warn.grid() if warnings else self.facts_warn.grid_remove()
 
-        docs = find_docs(folder, kind)
         skip = records.docs_not_needed(folder) if kind == "Auto" else set()
         auto = kind == "Auto"
         for w in (self.auto_group_label, self.auto_box):

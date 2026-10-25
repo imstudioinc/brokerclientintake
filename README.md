@@ -35,7 +35,7 @@ Everything opens inside the one window: New client, Edit, Request MVR, Email, Im
 quote, Client record and Settings show as a page with **← Back** (or Escape) to return.
 
 - Left: the client list (search, type filter) and **+ New client** (Ctrl+N), which opens a small
-  window: type, name, licence #, phone, email.
+  page: type, name, licence #, date of birth, phone, email.
 - Right: the selected client - name, type, phone / email / licence (click to edit), documents with a
   progress bar (each row shows only what you can do: Open, Add…, Fill, Import, Request, Not needed),
   and the actions.
@@ -43,6 +43,11 @@ quote, Client record and Settings show as a page with **← Back** (or Escape) t
   or type changes, the window shows what follows: the folder is renamed / moved, files named after
   the client can be renamed (e.g. `Ownership - OLD NAME.jpg`), and the consent form can be refilled
   with the new name. Reports from outside (DASH, MVR, quote) are never changed inside.
+- **Details from the documents:** when a quote or DASH report is in the folder, the app fills any
+  empty details from it - licence # and date of birth (quote or DASH), phone and email (quote).
+  It never overwrites what you typed. If the name, licence #, date of birth, phone or email on the
+  quote / DASH doesn't match the profile (or the quote and DASH disagree), a red box under the
+  client's name says what differs - click it to edit. Checked again each time a document is added.
 
 ## Checklist (Auto clients)
 
