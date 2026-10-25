@@ -38,6 +38,12 @@ AUTO_STEPS = [
 ]
 
 
+# the steps in three stages; a finished stage folds into one line in the app
+PHASES = [("Intake", ["profile", "dash", "quote", "mvr_request", "mvr"]),
+          ("Quote", ["requote", "documents"]),
+          ("Bind", ["approved", "pb_policy", "pb_app", "uwc", "referred"])]
+
+
 def steps_for(kind):
     return AUTO_STEPS if kind == "Auto" else []
 
@@ -74,13 +80,12 @@ def status(folder, kind, docs, info, skip):
         tick = ticks.get(sid, {}).get("state")
         state, note = (tick, "") if tick else ("todo", "")
         if auto == "profile":
-            missing = [w for w, k in (("phone", "phone"), ("email", "email")) if not info.get(k)]
+            missing = [w for w in ("licence #", "phone", "email")
+                       if not info.get({"licence #": "dln"}.get(w, w))]
             if info.get("dln"):
                 state = "done"
-            else:
-                note = "Licence # missing - click Edit"
             if missing:
-                note = f"{' and '.join(missing).capitalize()} still missing"
+                note = f"{', '.join(missing).capitalize()} missing".replace(", " + missing[-1], " and " + missing[-1])                     if len(missing) > 1 else f"{missing[0].capitalize()} missing"
         elif auto == "dash" and docs.get("DASH report"):
             state, note = "done", "In the folder"
         elif auto == "quote" and docs.get("Quote (ARS)"):
