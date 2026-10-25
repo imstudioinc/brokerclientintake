@@ -50,7 +50,7 @@ SP = 8  # spacing unit
 # Documents tracked per client: (label, glob patterns)
 # (any extension in DOC_EXTS: a signed consent or an MVR can come back as a photo)
 DOCUMENTS = [
-    ("Client consent", ["*Client Consent*"]),
+    ("Client consent", ["*Client Consent*", "*Consent Form*"]),
     ("DASH report", ["DASH Report*"]),
     ("Quote (ARS)", ["*Quote*"]),
     ("MVR", ["*MVR*"]),
@@ -1194,10 +1194,25 @@ class App(ctk.CTk):
         client_type = self.type_var.get()
         folder = type_folder(root, client_type) / name
         if folder.exists():
-            self.name_error.configure(text=f"'{name}' already exists in {client_type}. Selected it in the list.")
-            self.name_entry.configure(border_color=DANGER)
             self.clear_entry(self.search_entry)
             self.filter_var.set("All")
+            if not mvr_email.load_client(folder).get("dln"):   # an existing client: keep the details just typed
+                mvr_email.save_client(folder, name=name, type=client_type, dln=format_dln(dln),
+                                      phone=mvr_email.format_phone(self.phone_entry.get()) or None,
+                                      email=self.email_entry.get().strip().lower() or None)
+            if find_docs(folder)["Client consent"]:
+                self.name_error.configure(text=f"'{name}' already exists in {client_type}. Selected it in the list.")
+                self.name_entry.configure(border_color=DANGER)
+                self.refresh_list()
+                self.select(folder)
+                return
+            try:
+                fill(folder, dln, self.cfg["consent_template"])
+                self._show_banner(f"✓ {name} already existed in {client_type}\nIt had no consent form - one was filled")
+            except Exception as e:
+                self._show_banner(f"{name} already exists - consent form not filled: {e}", ok=False)
+            self.clear_entry(self.name_entry)
+            self.clear_entry(self.dln_entry)
             self.refresh_list()
             self.select(folder)
             return
@@ -1533,8 +1548,8 @@ class App(ctk.CTk):
                     r["na"].configure(text="Needed" if label in skip else "N/A", width=58 if label in skip else 40)
                 r["state"] = state
             r["open"].configure(command=lambda fs=files: [os.startfile(f) for f in fs])
-        self.refill_btn.configure(state="normal" if any(f.suffix.lower() == ".pdf" for f in docs["DASH report"])
-                                  else "disabled")
+        # the consent needs only the client's name: fill it any time, DASH or not
+        self.refill_btn.configure(text="Refill consent" if docs["Client consent"] else "Fill consent")
         note = self.note[1:] if self.note and self.note[0] == folder else ("", SUCCESS)
         self.detail_msg.configure(text=note[0], text_color=note[1])
 
@@ -1579,15 +1594,16 @@ class App(ctk.CTk):
         self.refresh_list(keep_scroll=True)
 
     def refill(self, folder, prefix=""):
+        had = bool(find_docs(folder)["Client consent"])
         try:
             _, drivers = fill(folder, template=self.cfg["consent_template"])
         except Exception as e:
-            self.show_note(folder, f"{prefix}Could not refill consent: {e}", DANGER)
+            self.show_note(folder, f"{prefix}Could not fill the consent: {e}", DANGER)
             return
         self.refresh_list(keep_scroll=True)
         self.select(folder)
-        names = "\n".join(f"{n}   {d}" for n, d in drivers)
-        self.show_note(folder, f"{prefix}✓ Consent refilled with:\n{names}", SUCCESS)
+        names = "\n".join(n for n, _ in drivers)
+        self.show_note(folder, f"{prefix}✓ Consent {'refilled' if had else 'filled'} for:\n{names}", SUCCESS)
 
     def show_note(self, folder, text, color):
         """Result message under the actions; survives list refreshes."""

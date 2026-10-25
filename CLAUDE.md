@@ -20,6 +20,8 @@ decision changes (edit the section, don't append contradictions).
 - **Never publish a release on your own.** No `release.py` / `release.bat`, no `version.py` bump,
   unless the owner says to release. Commit and push are fine (and expected) after each finished,
   tested change.
+- Template files must not be named `Client Consent*.pdf` -
+  `.gitignore` blocks that pattern; the consent template is `templates/WellCare Consent Form.pdf`.
 - **Never commit client documents or data.** `.gitignore` covers DASH / consent / MVR / quote PDFs,
   `tracking.json`, `client.json`. Test with copies in the temp/scratch folder, not in the repo.
 - **Both GitHub repos are public**: code `imstudioinc/brokerclientintake`, downloads
@@ -78,7 +80,8 @@ decision changes (edit the section, don't append contradictions).
 | File | What it does |
 |---|---|
 | `client_intake.pyw` | Main window: new client form, client list (paged, cached), details panel (documents + actions), dialogs (Settings, Signature, MVR request, Email, Import DASH), top bar Clients / Tracker / Rules views, design tokens |
-| `fill_consent.py` | Fills the consent PDF template (name, date, up to 3 drivers + licence #) from DASH reports; Ontario licence # format `A1234-12345-12345` |
+| `fill_consent.py` | Fills WellCare's consent form (`templates/WellCare Consent Form.pdf`): client's name first, then other DASH drivers (up to 4); **no DASH needed**; built-in form is filled then **flattened** (fields removed); a custom template with `Driver License n` fields keeps the old behaviour. Ontario licence # format `A1234-12345-12345` |
+| `tools/make_consent_template.py` | Rebuilds the consent template from a filled WellCare form: removes the printed name/date text (not just covers it - the repo is public), adds rows and fields. Dev-only (pypdf) |
 | `dash_import.py` | Finds DASH reports in Downloads and moves them into the client folder |
 | `mvr_email.py`, `mvr_watch.py` | MVR request email (Outlook draft with attachments); watches Downloads and files incoming MVR PDFs into the right client by licence # / name |
 | `emails.py`, `templates/emails/` | Client email templates (quote requests, quote accepted / documents needed, confirmations, pink card) as Outlook drafts with the HTML signature |

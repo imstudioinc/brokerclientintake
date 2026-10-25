@@ -7,7 +7,9 @@ Windows desktop app for setting up a new insurance client.
   created when first needed; names can be changed in **Settings > Client types**)
 - Client list shows every type with **All / Auto / Home / Tenant / Commercial** filters;
   older folders kept directly in Clients show as **Other**
-- Fills the **Client Consent** form (name, date, driver and licence #)
+- Fills WellCare's **Personal Information Client Consent Form** (client's name, date, and the other
+  drivers from the DASH reports if there are any). **No DASH report is needed**: the form is filled as
+  soon as the client is created, and **Fill consent** fills one for any client that has none.
 - Names are saved in CAPITALS; an Ontario licence # is required
 - Copies the licence # to the clipboard, ready to paste into DASH
 - Shows which documents each client already has: Consent, DASH, Quote, MVR
@@ -140,7 +142,7 @@ template, the MVR request recipients (To / CC), or light/dark mode. Settings are
 
 | Document | File name starts with / contains |
 |---|---|
-| Consent | contains `Client Consent` (e.g. `New Client Consent Form.pdf`) |
+| Consent | contains `Client Consent` or `Consent Form` (e.g. `Consent Form - NAME.pdf`) |
 | DASH | `DASH Report…` (the DASH portal's default name) |
 | Quote | contains `Quote` (e.g. `Quote Information.pdf`) |
 | MVR | contains `MVR` |

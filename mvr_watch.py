@@ -19,7 +19,7 @@ from mvr_email import load_client, save_client
 MVR_WORDS = re.compile(r"\bMVR\b|DRIVER'?S?\s+RECORD|DRIVER\s+ABSTRACT|DRIVING\s+RECORD|"
                        r"MINISTRY\s+OF\s+TRANSPORTATION|SERVICEONTARIO", re.I)
 # Our own documents also carry licence numbers - never treat them as an MVR
-SKIP_NAMES = re.compile(r"^(DASH Report|Client Consent|New Client Consent)|quote", re.I)
+SKIP_NAMES = re.compile(r"^(DASH Report|Client Consent|New Client Consent)|consent form|quote", re.I)
 DLN_IN_TEXT = re.compile(r"\b([A-Z])[\s-]?(\d{4})[\s-]?(\d{5})[\s-]?(\d{5})\b")
 
 
@@ -45,7 +45,7 @@ class ClientIndex:
                 info = load_client(folder)
                 dln, name = info.get("dln", ""), info.get("name", "") or folder.name
                 if not dln:  # older clients: the licence # is on the consent form
-                    for consent in folder.glob("*Client Consent*.pdf"):
+                    for consent in [*folder.glob("*Client Consent*.pdf"), *folder.glob("*Consent Form*.pdf")]:
                         found = read_consent(consent)
                         if found and found[1]:
                             dln = found[1]
