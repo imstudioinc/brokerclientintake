@@ -28,12 +28,16 @@ decision changes (edit the section, don't append contradictions).
   `imstudioinc/brokerclientintake-releases`. Don't put confidential material in either:
   - The **Underwriting Knowledge notes** (carrier manuals, WellCare in-house rules, payments,
     contacts) stay **out of the repo**. On this dev PC they are in
-    `Documents\Docs\Insurance\Underwriting Knowledge\` (10 notes + `00 Index.md`); on the remote
+    `Documents\Docs\Insurance\Underwriting Knowledge\` (notes 01-12 + `00 Index.md` + `carriers.json`); on the remote
     desktop the owner copied the folder locally and points the Rules tab at it (Notes folder…).
   - Known issue, owner informed: `templates/rules_ontario.json` (built-in eligibility rules,
     summarised from Intact / Jevco / Echelon manuals and WellCare rules) is in the public repo.
     Offered to move it out (read from a file on the shared drive); not decided yet.
-  - Never copy portal passwords or similar secrets anywhere.
+  - **`carriers.json`** (carrier contacts incl. underwriters' direct lines, payment terms, where to
+    submit, tips, WellCare's trust account / payment options) lives in the notes folder too, never
+    the repo. Built from the owner's *Broker Resources (Branch Offices).xlsx* and *Wellcare - Premium
+    Payment Options.pdf*; edit the JSON by hand when contacts change.
+  - Never copy portal passwords or similar secrets anywhere (the spreadsheet has some - leave them out).
 - **No paid / online AI in the app.** An AI chat tab (Claude API) was built and then removed: the
   API needs prepaid credits the owner didn't want. The replacement is the offline **Rules** search.
   Don't re-add an LLM feature unless asked.
@@ -81,9 +85,11 @@ decision changes (edit the section, don't append contradictions).
 |---|---|
 | `client_intake.pyw` | Main window: client list (paged, cached) on the left with **+ New client**; selected client on the right (header with contact details + Edit, documents grouped with a progress bar, 3 main actions + small ones); dialogs (`ClientDialog` for new / edit, Settings, Signature, MVR request, Email, Import DASH); top bar Clients / Tracker / Rules views; design tokens |
 | `panel.py` | `Panel`: a page inside the main window that replaces `CTkToplevel` for every dialog (Back bar, title, stacking, window-only calls ignored, forms centred / scrollable) |
-| `checklist.py` | Auto process checklist (12 steps from the owner): auto-ticks from folder / `client.json` (licence #, `mvr_requested`), manual ticks and N/A saved in `tracking.json` under `checklist`; `status()` / `summary()` feed the client panel and the list line |
+| `checklist.py` | Auto process checklist (12 steps from the owner): auto-ticks from folder / `client.json` (licence #, `mvr_requested`) and logged UW calls (`uw_call` step: done when a call is logged with a result, N/A by itself when the quote has no refer messages; the quote's refer messages are kept in `tracking.json` `quote_refers` keyed on file name + mtime so the client list never reads PDFs), manual ticks and N/A saved in `tracking.json` under `checklist`; `status()` / `summary()` feed the client panel and the list line |
 | `client_edit.py` | Edit client: plan / apply a name or type change (move the folder first - if Windows refuses nothing has changed; then rename files containing the old name; save `client.json`) |
 | `client_facts.py` | Reads the client's name, licence #, date of birth (quote + DASH), phone and email (quote page 1, the right-hand applicant block - the left block is the brokerage). Fills EMPTY `client.json` fields only (never overwrites; `birth` saved as YYYY-MM-DD) and returns mismatch warnings (profile vs documents, quote vs DASH). Runs in `show_details`, so it re-checks whenever a document lands; PDFs cached by (path, mtime) |
+| `carriers.py` | Loads `carriers.json` from the notes folder (`knowledge_dir`), cached by mtime; `find()` maps a quote's carrier name to an entry (aliases); `contacts()` pulls phones / emails out of contact lines |
+| `carriers_ui.py` | **UW call** page (log the underwriter call: carrier, date / time, underwriter, number called, reason prefilled from the quote's refer messages, result, notes; saved in `tracking.json` `uw_calls`; copied as a PowerBroker note) and **Carriers & payments** page (contacts with Copy / Email, payment terms, where to submit, tips, WellCare payment options with "Copy for the client"). Opened from the client panel links, the next-step card, and the Rules tab |
 | `fill_consent.py` | Fills WellCare's consent form (`templates/WellCare Consent Form.pdf`): client's name first, then other DASH drivers (up to 4); **no DASH needed**; built-in form is filled then **flattened** (fields removed); a custom template with `Driver License n` fields keeps the old behaviour. Ontario licence # format `A1234-12345-12345` |
 | `tools/make_consent_template.py` | Rebuilds the consent template from a filled WellCare form: removes the printed name/date text (not just covers it - the repo is public), adds rows and fields. Dev-only (pypdf) |
 | `dash_import.py` | Finds DASH reports in Downloads and moves them into the client folder |

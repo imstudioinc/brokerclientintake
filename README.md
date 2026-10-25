@@ -70,6 +70,29 @@ Steps 1-5 and 7 tick themselves from the folder and the client's details; the ot
 Ticks are saved in the client's `tracking.json` (everyone on the shared folder sees them), and the
 client list shows each client's step (`Step 5/12`) and any missing phone / email.
 
+## Underwriter calls (refer messages)
+
+When the quote has refer messages ("Refer", "Approval required"), the checklist asks you to call
+the underwriter. **Log UW call** (or the **UW call** link) opens a page with:
+- the carrier's underwriting phone numbers and emails (Copy / Email buttons), speed dial and named
+  underwriters (picking one fills in their direct line);
+- the refer messages from the quote, already put in the reason;
+- date and time (now), underwriter's name, the number you called, the result (Approved / Approved
+  with conditions / Declined / Call back) and notes.
+
+Saved calls are listed on the page, kept with the client, and copied as a note ready to paste into
+PowerBroker. A logged result ticks the step; "Call back" keeps it open. No refer messages on the
+quote = the step marks itself N/A.
+
+## Carriers & payments
+
+The **Carriers** link (client panel) or **Carriers & payments** (Rules tab) shows, per carrier:
+payment terms (full pay, PAC, down payment, NSF, agency bill), where to submit new business /
+changes / cancellations, product tips, and underwriting / accounting / claims contacts.
+"WellCare - how clients pay" lists e-Transfer, BMO deposit, cheque and financing, with a button
+that copies it for an email to the client. The data comes from `carriers.json` in the Rules notes
+folder (not in this public repo); without it the page says where to put it.
+
 ## Client records & Tracker
 
 - **Client record…** (on each client): tabs for **Policies** (line, status, insurer, policy #,
