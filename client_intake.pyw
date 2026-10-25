@@ -21,6 +21,7 @@ import dash_import
 import emails
 import mvr_email
 import mvr_watch
+import client_edit
 import records
 import rules_ui
 import eligibility_ui
@@ -44,7 +45,6 @@ DANGER = ("#B91C1C", "#F87171")
 WARN_BG = ("#F1F3F6", "#252D37")
 
 FONT = "Segoe UI"
-DLN_HELP = "Ontario licence #. Copied to your clipboard for DASH."
 SP = 8  # spacing unit
 
 # Documents tracked per client: (label, glob patterns)
@@ -774,6 +774,170 @@ class ImportDashDialog(ctk.CTkToplevel):
         self.app.refill(self.folder, prefix=f"✓ Imported {n} DASH report{'s' if n > 1 else ''}.\n")
 
 
+class ClientDialog(ctk.CTkToplevel):
+    """New client, or edit one (folder given): type, name, licence #, phone, email.
+
+    Editing shows what else changes before saving: the folder is renamed / moved, files named
+    after the client can be renamed, and the consent form can be refilled with the new name.
+    """
+
+    def __init__(self, app, folder=None):
+        super().__init__(app)
+        self.app, self.folder = app, folder
+        editing = folder is not None
+        info = mvr_email.load_client(folder) if editing else {}
+        self.old_name = folder.name if editing else ""
+        self.old_type = app.client_type_of.get(folder, "") if editing else ""
+        self.title(f"Edit client - {folder.name}" if editing else "New client")
+        self.geometry("480x700" if editing else "480x540")
+        self.resizable(False, True)
+        self.configure(fg_color=BG)
+        self.transient(app)
+        self.grab_set()
+        p = 3 * SP
+
+        body = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=12, border_width=1, border_color=BORDER)
+        body.pack(fill="both", expand=True, padx=2 * SP, pady=(2 * SP, 0))
+        body.grid_columnconfigure((0, 1), weight=1, uniform="cols")
+        ctk.CTkLabel(body, text="Edit client" if editing else "New client", font=font(18, "bold"),
+                     text_color=TEXT).grid(row=0, column=0, columnspan=2, sticky="w", padx=p, pady=(p, 0))
+        ctk.CTkLabel(body, text="Change anything and save - the folder and files follow." if editing else
+                     "Creates the client's folder and fills the consent form.",
+                     font=font(12), text_color=MUTED).grid(row=1, column=0, columnspan=2, sticky="w", padx=p)
+
+        self._label(body, 2, 0, "Type")
+        types = app.client_types + ([self.old_type] if self.old_type and self.old_type not in app.client_types else [])
+        last = app.cfg.get("last_type")
+        self.type_var = tk.StringVar(value=self.old_type or (last if last in types else types[0]))
+        ctk.CTkSegmentedButton(body, values=types, variable=self.type_var, font=font(13), height=34,
+                               selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER,
+                               command=lambda _: self.update_changes()) \
+            .grid(row=3, column=0, columnspan=2, sticky="ew", padx=p)
+
+        self._label(body, 4, 0, "Client name *")
+        self.name = self._entry(body, 5, 0, folder.name if editing else "", "e.g. JOHN SMITH", span=2, upper=True)
+        self._label(body, 6, 0, "Driver's licence #" + ("" if editing else " *"))
+        self.dln = self._entry(body, 7, 0, info.get("dln", ""), "A1234-12345-12345", span=2, upper=True)
+        self._label(body, 8, 0, "Phone")
+        self._label(body, 8, 1, "Email")
+        self.phone = self._entry(body, 9, 0, info.get("phone", ""), "optional")
+        self.email = self._entry(body, 9, 1, info.get("email", ""), "optional", padx=(SP, p))
+        self.error = ctk.CTkLabel(body, text="", font=font(12), text_color=DANGER, justify="left", anchor="w",
+                                  wraplength=400)
+        self.error.grid(row=10, column=0, columnspan=2, sticky="w", padx=p, pady=(SP, 0))
+
+        self.renames, self.rename_var, self.refill_var = [], tk.BooleanVar(value=True), tk.BooleanVar(value=True)
+        if editing:
+            self.changes = ctk.CTkFrame(body, fg_color=SURFACE_ALT, corner_radius=8)
+            self.changes.grid(row=11, column=0, columnspan=2, sticky="ew", padx=p, pady=(SP, 0))
+            self.changes.grid_columnconfigure(0, weight=1)
+            self.change_text = ctk.CTkLabel(self.changes, text="", font=font(12), text_color=TEXT, justify="left",
+                                            anchor="w", wraplength=390)
+            self.change_text.grid(row=0, column=0, sticky="w", padx=1.5 * SP, pady=(1.5 * SP, SP / 2))
+            self.rename_box = ctk.CTkCheckBox(self.changes, text="", variable=self.rename_var, font=font(12),
+                                              text_color=TEXT, fg_color=PRIMARY, hover_color=PRIMARY_HOVER)
+            self.refill_box = ctk.CTkCheckBox(self.changes, text="Refill the consent form with the new name",
+                                              variable=self.refill_var, font=font(12), text_color=TEXT,
+                                              fg_color=PRIMARY, hover_color=PRIMARY_HOVER)
+
+        btns = ctk.CTkFrame(self, fg_color="transparent")
+        btns.pack(fill="x", padx=2 * SP, pady=2 * SP)
+        self.save_btn = ctk.CTkButton(btns, text="Save changes" if editing else "Create client", height=42,
+                                      width=160, font=font(14, "bold"), fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
+                                      command=self.save)
+        self.save_btn.pack(side="right")
+        app.secondary_button(btns, "Cancel", self.destroy, width=100).pack(side="right", padx=SP)
+        for e in (self.name, self.dln, self.phone, self.email):
+            e.bind("<Return>", lambda ev: self.save())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.update_changes()
+        self.after(100, self.name.focus_set)
+
+    def _label(self, parent, row, col, text):
+        ctk.CTkLabel(parent, text=text, font=font(13, "bold"), text_color=TEXT) \
+            .grid(row=row, column=col, sticky="w", padx=(3 * SP, 0) if col == 0 else (SP, 0), pady=(1.5 * SP, SP / 2))
+
+    def _entry(self, parent, row, col, value, placeholder, span=1, upper=False, padx=None):
+        e = ctk.CTkEntry(parent, height=38, font=font(14), border_color=BORDER, placeholder_text=placeholder)
+        e.grid(row=row, column=col, columnspan=span, sticky="ew", padx=padx or ((3 * SP, 3 * SP) if span == 2 else (3 * SP, 0)))
+        if value:
+            e.insert(0, value)
+
+        def typed(ev):
+            if upper and ev.keysym != "Return" and e.get() != e.get().upper():
+                pos = e._entry.index("insert")
+                text = e.get().upper()
+                e.delete(0, "end")
+                e.insert(0, text)
+                e._entry.icursor(pos)
+            e.configure(border_color=BORDER)
+            self.error.configure(text="")
+            self.update_changes()
+        e.bind("<KeyRelease>", typed)
+        return e
+
+    def update_changes(self):
+        """Edit mode: say what else changes when this is saved."""
+        if self.folder is None:
+            return
+        name, kind = clean_name(self.name.get()), self.type_var.get()
+        lines = []
+        moved = kind != self.old_type
+        if name and name != self.old_name:
+            lines.append(f"Folder renamed:  {self.old_name}  ->  {name}" + (f"  (moved to {kind})" if moved else ""))
+        elif moved:
+            lines.append(f"Folder moved from {self.old_type or 'Other'} to {kind}")
+        self.renames = client_edit.plan(self.folder, None, self.old_name, name) if name else []
+        self.change_text.configure(text="\n".join(lines) or "Phone, email and licence # are saved with the client.")
+        if self.renames:
+            self.rename_box.configure(text=f"Rename {len(self.renames)} file(s) named after the client")
+            self.rename_box.grid(row=1, column=0, sticky="w", padx=1.5 * SP, pady=(0, SP / 2))
+        else:
+            self.rename_box.grid_remove()
+        if name and name != self.old_name and find_docs(self.folder)["Client consent"]:
+            self.refill_box.grid(row=2, column=0, sticky="w", padx=1.5 * SP, pady=(0, 1.5 * SP))
+        else:
+            self.refill_box.grid_remove()
+        self.change_text.grid_configure(pady=(1.5 * SP, SP / 2 if (self.renames or self.refill_box.winfo_manager()) else 1.5 * SP))
+
+    def _fail(self, entry, text):
+        if entry is not None:
+            entry.configure(border_color=DANGER)
+            entry.focus_set()
+        self.error.configure(text=text)
+
+    def save(self):
+        name = clean_name(self.name.get())
+        dln = self.dln.get().strip()
+        phone = mvr_email.format_phone(self.phone.get())
+        email = self.email.get().strip().lower()
+        if not name:
+            return self._fail(self.name, "Enter the client's name.")
+        if self.folder is None and not dln:
+            return self._fail(self.dln, "Enter the driver's licence #.")
+        if dln and not is_valid_dln(dln):
+            return self._fail(self.dln, "Licence # must be 1 letter + 14 digits, e.g. A1234-12345-12345.")
+        if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            return self._fail(self.email, "That email address doesn't look right.")
+        kind = self.type_var.get()
+        self.save_btn.configure(state="disabled", text="Saving…")
+        self.update_idletasks()
+        try:
+            if self.folder is None:
+                folder, message, ok = self.app.create_client(name, kind, dln, phone, email)
+            else:
+                folder, message, ok = self.app.edit_client(
+                    self.folder, name, kind, dln, phone, email,
+                    self.renames if self.rename_var.get() else [],
+                    self.refill_var.get() and bool(self.refill_box.winfo_manager()))
+        except Exception as e:
+            self.save_btn.configure(state="normal", text="Save changes" if self.folder else "Create client")
+            return self._fail(None, str(e))
+        self.destroy()
+        self.app.select(folder)
+        self.app.show_note(folder, message, SUCCESS if ok else DANGER)
+
+
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -801,16 +965,14 @@ class App(ctk.CTk):
         self._build_topbar()
         body = self.clients_view = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=3 * SP, pady=(0, 3 * SP))
-        body.grid_columnconfigure(0, minsize=330)
-        body.grid_columnconfigure(1, weight=1, minsize=280)
-        body.grid_columnconfigure(2, weight=2, minsize=320)
+        body.grid_columnconfigure(0, weight=2, minsize=340, uniform="cols")   # client list
+        body.grid_columnconfigure(1, weight=3, minsize=520, uniform="cols")   # selected client
         body.grid_rowconfigure(0, weight=1)
 
-        self._build_new_client(body)
         self._build_client_list(body)
         self._build_details(body)
 
-        self.bind("<Control-n>", lambda e: (self.show_view("Clients"), self.name_entry.focus_set()))
+        self.bind("<Control-n>", lambda e: self.new_client())
         self.bind("<Control-t>", lambda e: self.show_view("Tracker" if self.view_var.get() == "Clients" else "Clients"))
         self.bind("<Control-f>", lambda e: self.search_entry.focus_set())
         self.bind("<F5>", lambda e: self.refresh_list())
@@ -833,7 +995,8 @@ class App(ctk.CTk):
         return c
 
     def secondary_button(self, parent, text, command, **kw):
-        return ctk.CTkButton(parent, text=text, command=command, height=36, font=font(13),
+        kw = {"height": 36, **kw}
+        return ctk.CTkButton(parent, text=text, command=command, font=font(13),
                              fg_color="transparent", border_width=1, border_color=BORDER,
                              text_color=TEXT, hover_color=SURFACE_ALT, **kw)
 
@@ -858,10 +1021,6 @@ class App(ctk.CTk):
         self.on_settings_changed()
 
     def reload_types(self):
-        types = self.client_types
-        self.type_buttons.configure(values=types)
-        if self.type_var.get() not in types:
-            self.type_var.set(types[0])
         self.refresh_list()
 
     def on_settings_changed(self):
@@ -1078,195 +1237,107 @@ class App(ctk.CTk):
         threading.Thread(target=work, daemon=True).start()
 
     # ---------- column 1: new client ----------
-    def _build_new_client(self, parent):
-        c = self.card(parent, row=0, column=0, padx=(0, 2 * SP))
-        c.grid_columnconfigure(0, weight=1)
-        p = 2.5 * SP
+    # ---------- new / edit client ----------
+    def new_client(self):
+        self.show_view("Clients")
+        ClientDialog(self)
 
-        ctk.CTkLabel(c, text="New client", font=font(16, "bold"), text_color=TEXT) \
-            .grid(row=0, column=0, sticky="w", padx=p, pady=(p, 0))
-        top = ctk.CTkFrame(c, fg_color="transparent")
-        top.grid(row=1, column=0, sticky="ew", padx=p)
-        ctk.CTkLabel(top, text="Creates the folder and fills the consent form.", font=font(12),
-                     text_color=MUTED).pack(anchor="w")
-        ctk.CTkLabel(top, text="Type *", font=font(13, "bold"), text_color=TEXT) \
-            .pack(anchor="w", pady=(2 * SP, SP / 2))
-        last = self.cfg.get("last_type")
-        self.type_var = tk.StringVar(value=last if last in self.client_types else self.client_types[0])
-        self.type_buttons = ctk.CTkSegmentedButton(top, values=self.client_types, variable=self.type_var,
-                                                   font=font(13), height=34, selected_color=PRIMARY,
-                                                   selected_hover_color=PRIMARY_HOVER)
-        self.type_buttons.pack(anchor="w", fill="x")
+    def create_client(self, name, client_type, dln, phone, email):
+        """Make the folder (or reuse an existing one), save the details, fill the consent.
 
-        ctk.CTkLabel(c, text="Client name *", font=font(13, "bold"), text_color=TEXT) \
-            .grid(row=2, column=0, sticky="w", padx=p, pady=(1.5 * SP, SP / 2))
-        self.name_entry = ctk.CTkEntry(c, height=40, font=font(14),
-                                       border_color=BORDER, placeholder_text="e.g. JOHN SMITH")
-        self.name_entry.grid(row=3, column=0, sticky="ew", padx=p)
-        self.name_error = ctk.CTkLabel(c, text="", font=font(12), text_color=DANGER, height=18)
-        self.name_error.grid(row=4, column=0, sticky="w", padx=p)
-        self.name_entry.bind("<KeyRelease>", lambda e: self._on_type(e, self.name_entry))
-
-        ctk.CTkLabel(c, text="Driver's licence # *", font=font(13, "bold"), text_color=TEXT) \
-            .grid(row=5, column=0, sticky="w", padx=p, pady=(SP, SP / 2))
-        dln_entry = self.dln_entry = ctk.CTkEntry(c, height=40, font=font(14),
-                                 border_color=BORDER, placeholder_text="A1234-12345-12345")
-        dln_entry.grid(row=6, column=0, sticky="ew", padx=p)
-        self.dln_help = ctk.CTkLabel(c, text=DLN_HELP, font=font(12), text_color=MUTED,
-                                     justify="left", anchor="w")
-        self.dln_help.grid(row=7, column=0, sticky="w", padx=p, pady=(SP / 2, 0))
-        dln_entry.bind("<KeyRelease>", lambda e: self._on_type(e, dln_entry))
-
-        contact = ctk.CTkFrame(c, fg_color="transparent")
-        contact.grid(row=8, column=0, sticky="ew", padx=p, pady=(1.5 * SP, 0))
-        contact.grid_columnconfigure((0, 1), weight=1, uniform="contact")
-        ctk.CTkLabel(contact, text="Phone", font=font(13, "bold"), text_color=TEXT) \
-            .grid(row=0, column=0, sticky="w", pady=(0, SP / 2))
-        ctk.CTkLabel(contact, text="Email", font=font(13, "bold"), text_color=TEXT) \
-            .grid(row=0, column=1, sticky="w", padx=(SP, 0), pady=(0, SP / 2))
-        self.phone_entry = ctk.CTkEntry(contact, height=36, font=font(13), border_color=BORDER,
-                                        placeholder_text="optional")
-        self.phone_entry.grid(row=1, column=0, sticky="ew")
-        self.email_entry = ctk.CTkEntry(contact, height=36, font=font(13), border_color=BORDER,
-                                        placeholder_text="optional")
-        self.email_entry.grid(row=1, column=1, sticky="ew", padx=(SP, 0))
-
-        self.create_btn = ctk.CTkButton(c, text="Create client", height=44, font=font(14, "bold"),
-                                        fg_color=PRIMARY, hover_color=PRIMARY_HOVER, corner_radius=8,
-                                        command=self.create)
-        self.create_btn.grid(row=9, column=0, sticky="ew", padx=p, pady=(2.5 * SP, SP))
-        ctk.CTkLabel(c, text="Enter to create  ·  Ctrl+N new  ·  Ctrl+F search", font=font(11),
-                     text_color=MUTED).grid(row=10, column=0, padx=p)
-
-        self.banner = ctk.CTkFrame(c, fg_color=SUCCESS_BG, corner_radius=8)
-        self.banner_text = ctk.CTkLabel(self.banner, text="", font=font(13), text_color=SUCCESS,
-                                        justify="left", anchor="w", wraplength=260)
-        self.banner_text.pack(fill="x", padx=1.5 * SP, pady=1.5 * SP)
-
-        for w in (self.name_entry, dln_entry, self.phone_entry, self.email_entry):
-            w.bind("<Return>", lambda e: self.create())
-
-    def _on_type(self, event, entry):
-        """Uppercase as you type and clear that field's error."""
-        if event.keysym == "Return":
-            return
-        text = entry.get()
-        if text != text.upper():
-            pos = entry._entry.index("insert")
-            entry.delete(0, "end")
-            entry.insert(0, text.upper())
-            entry._entry.icursor(pos)
-        if entry is self.name_entry:
-            self.name_error.configure(text="")
-            self.name_entry.configure(border_color=BORDER)
-        else:
-            self.dln_help.configure(text=DLN_HELP, text_color=MUTED)
-            self.dln_entry.configure(border_color=BORDER)
-
-    def _field_error(self, entry, label, text):
-        label.configure(text=text, text_color=DANGER)
-        entry.configure(border_color=DANGER)
-        entry.focus_set()
-
-    def _show_banner(self, text, ok=True):
-        self.banner.configure(fg_color=SUCCESS_BG if ok else WARN_BG)
-        self.banner_text.configure(text=text, text_color=SUCCESS if ok else DANGER)
-        self.banner.grid(row=11, column=0, sticky="ew", padx=2.5 * SP, pady=(1.5 * SP, 0))
-
-    def create(self):
-        name = clean_name(self.name_entry.get())
+        Returns (folder, message, ok). Raises when the Clients folder isn't set.
+        """
         root = self.clients_root
-        dln = self.dln_entry.get().strip()
-        if not name:
-            self._field_error(self.name_entry, self.name_error, "Enter the client's name.")
-            return
-        if not dln:
-            self._field_error(self.dln_entry, self.dln_help, "Enter the driver's licence #.")
-            return
-        if not is_valid_dln(dln):
-            self._field_error(self.dln_entry, self.dln_help,
-                              "Licence # must be 1 letter + 14 digits,\ne.g. A1234-12345-12345.")
-            return
         if not root or not root.exists():
-            self._show_banner("Clients folder not found. Set it in Settings.", ok=False)
-            return
-
-        client_type = self.type_var.get()
+            raise FileNotFoundError("Clients folder not found. Set it in Settings.")
         folder = type_folder(root, client_type) / name
+        details = dict(name=name, type=client_type, dln=format_dln(dln) if dln else None,
+                       phone=phone or None, email=email or None)
         if folder.exists():
+            info = mvr_email.load_client(folder)
+            mvr_email.save_client(folder, **{k: v for k, v in details.items() if v and not info.get(k)})
             self.clear_entry(self.search_entry)
             self.filter_var.set("All")
-            if not mvr_email.load_client(folder).get("dln"):   # an existing client: keep the details just typed
-                mvr_email.save_client(folder, name=name, type=client_type, dln=format_dln(dln),
-                                      phone=mvr_email.format_phone(self.phone_entry.get()) or None,
-                                      email=self.email_entry.get().strip().lower() or None)
+            self.refresh_list()
             if find_docs(folder)["Client consent"]:
-                self.name_error.configure(text=f"'{name}' already exists in {client_type}. Selected it in the list.")
-                self.name_entry.configure(border_color=DANGER)
-                self.refresh_list()
-                self.select(folder)
-                return
+                return folder, f"{name} already exists in {client_type} - opened it.", True
             try:
                 fill(folder, dln, self.cfg["consent_template"])
-                self._show_banner(f"✓ {name} already existed in {client_type}\nIt had no consent form - one was filled")
+                return folder, f"✓ {name} already existed in {client_type}.\nIt had no consent form - one was filled.", True
             except Exception as e:
-                self._show_banner(f"{name} already exists - consent form not filled: {e}", ok=False)
-            self.clear_entry(self.name_entry)
-            self.clear_entry(self.dln_entry)
-            self.refresh_list()
-            self.select(folder)
-            return
+                return folder, f"{name} already exists - consent form not filled: {e}", False
         elsewhere = sorted({t for f, t in scan_clients(root, self.client_types)
                             if f.name.upper() == name and t != client_type})
-
-        self.create_btn.configure(state="disabled", text="Creating…")
-        self.update_idletasks()
         folder.mkdir(parents=True)
         if self.cfg.get("last_type") != client_type:
             config.update(self.cfg, last_type=client_type)
-        mvr_email.save_client(folder, name=name, type=client_type, dln=format_dln(dln),
-                              phone=mvr_email.format_phone(self.phone_entry.get()) or None,
-                              email=self.email_entry.get().strip().lower() or None)
-        lines = [f"Created {name} in {client_type}"]
+        mvr_email.save_client(folder, **details)
+        lines, ok = [f"✓ Created {name} in {client_type}"], True
         if elsewhere:
             lines.append(f"(also has a folder in {', '.join(elsewhere)})")
-        ok = True
         try:
             fill(folder, dln, self.cfg["consent_template"])
             lines.append("Consent form filled")
         except Exception as e:
             lines.append(f"Consent form not filled: {e}")
             ok = False
-        self.clipboard_clear()
-        self.clipboard_append(format_dln(dln))
-        lines.append("Licence # copied for DASH")
-        self.create_btn.configure(state="normal", text="Create client")
-
-        self._show_banner(("✓ " if ok else "") + "\n".join(lines), ok=ok)
-        self.clear_entry(self.name_entry)
-        self.clear_entry(self.dln_entry)
-        self.clear_entry(self.phone_entry)
-        self.clear_entry(self.email_entry)
+        if dln:
+            self.clipboard_clear()
+            self.clipboard_append(format_dln(dln))
+            lines.append("Licence # copied for DASH")
         self.clear_entry(self.search_entry)
         if self.filter_var.get() not in ("All", client_type):
             self.filter_var.set("All")
         self.refresh_list()
-        self.select(folder)
-        self.name_entry.focus_set()
         os.startfile(folder)
+        return folder, "\n".join(lines), ok
+
+    def edit_client(self, folder, name, client_type, dln, phone, email, renames, refill_consent):
+        """Save edited details; rename / move the folder and files if the name or type changed."""
+        root = self.clients_root
+        old_type = self.client_type_of.get(folder, "")
+        moved = client_type != old_type and client_type in self.client_types
+        parent = type_folder(root, client_type) if moved else folder.parent
+        new_folder = parent / name
+        new_folder, renamed_files = client_edit.apply(
+            folder, new_folder, renames,
+            dict(name=name, type=client_type if moved or old_type else None, dln=format_dln(dln) if dln else "",
+                 phone=phone, email=email))
+        lines = ["✓ Client saved"]
+        if new_folder != folder:
+            lines.append(f"Folder: {new_folder.parent.name} \\ {new_folder.name}")
+        if renamed_files:
+            lines.append(f"Renamed {len(renamed_files)} file(s)")
+        if len(renamed_files) < len(renames):
+            lines.append(f"{len(renames) - len(renamed_files)} file(s) kept their name (open in another program?)")
+        ok = True
+        if refill_consent:
+            try:
+                fill(new_folder, dln, self.cfg["consent_template"])
+                lines.append("Consent form refilled with the new name")
+            except Exception as e:
+                lines.append(f"Consent form not refilled: {e}")
+                ok = False
+        self.note = None
+        self.selected = new_folder
+        self.refresh_list(keep_scroll=True)
+        self.tracker_changed()
+        return new_folder, "\n".join(lines), ok
 
     # ---------- column 2: client list ----------
     def _build_client_list(self, parent):
-        c = self.card(parent, row=0, column=1, padx=(0, 2 * SP))
+        c = self.card(parent, row=0, column=0, padx=(0, 2 * SP))
         c.grid_columnconfigure(0, weight=1)
         c.grid_rowconfigure(3, weight=1)
         p = 2 * SP
 
         head = ctk.CTkFrame(c, fg_color="transparent")
         head.grid(row=0, column=0, sticky="ew", padx=p, pady=(2.5 * SP, 0))
-        ctk.CTkLabel(head, text="Clients", font=font(16, "bold"), text_color=TEXT).pack(side="left")
+        ctk.CTkLabel(head, text="Clients", font=font(17, "bold"), text_color=TEXT).pack(side="left")
         self.count_label = ctk.CTkLabel(head, text="", font=font(12), text_color=MUTED)
-        self.count_label.pack(side="right")
+        self.count_label.pack(side="left", padx=(SP, 0), pady=(3, 0))
+        ctk.CTkButton(head, text="+  New client", height=34, width=120, font=font(13, "bold"), fg_color=PRIMARY,
+                      hover_color=PRIMARY_HOVER, command=self.new_client).pack(side="right")
 
         self.search_entry = ctk.CTkEntry(c, height=36, font=font(13),
                                          border_color=BORDER, placeholder_text="Search clients")
@@ -1434,80 +1505,139 @@ class App(ctk.CTk):
 
     # ---------- column 3: details (built once, then only updated) ----------
     def _build_details(self, parent):
-        d = self.details = self.card(parent, row=0, column=2)
+        d = self.details = self.card(parent, row=0, column=1)
         d.grid_rowconfigure(0, weight=1)
         d.grid_columnconfigure(0, weight=1)
-        p = 2.5 * SP
+        p = 3 * SP
 
         self.details_empty = ctk.CTkFrame(d, fg_color="transparent")
-        ctk.CTkLabel(self.details_empty, text="Select a client", font=font(16, "bold"), text_color=TEXT) \
-            .pack(pady=(10 * SP, SP))
-        ctk.CTkLabel(self.details_empty, text="Their documents and actions will show here.", font=font(13),
+        ctk.CTkLabel(self.details_empty, text="Select a client", font=font(18, "bold"), text_color=TEXT) \
+            .pack(pady=(12 * SP, SP))
+        ctk.CTkLabel(self.details_empty, text="Their details, documents and actions show here.", font=font(13),
                      text_color=MUTED).pack()
+        ctk.CTkButton(self.details_empty, text="+  New client", height=40, width=170, font=font(14, "bold"),
+                      fg_color=PRIMARY, hover_color=PRIMARY_HOVER, command=self.new_client).pack(pady=3 * SP)
 
-        # scrolls when the window is too short for every document row and action
+        # scrolls when the window is too short for everything
         body = self.details_body = ctk.CTkScrollableFrame(d, fg_color="transparent", corner_radius=0,
                                                           scrollbar_button_color=SURFACE,
                                                           scrollbar_button_hover_color=BORDER)
         body.grid_columnconfigure(0, weight=1)
-        self.details_title = ctk.CTkLabel(body, text="", font=font(18, "bold"), text_color=TEXT, anchor="w")
-        self.details_title.grid(row=0, column=0, sticky="ew", padx=p, pady=(p, 0))
-        ctk.CTkLabel(body, text="Documents", font=font(12, "bold"), text_color=MUTED) \
-            .grid(row=1, column=0, sticky="w", padx=p, pady=(2 * SP, SP))
+        sel = lambda fn: (lambda: self.selected and fn(self.selected))  # noqa: E731
 
-        lst = ctk.CTkFrame(body, fg_color="transparent")
-        lst.grid(row=2, column=0, sticky="ew", padx=p)
-        lst.grid_columnconfigure(0, weight=1)
+        # ---- header: name, type, contact details, Edit ----
+        head = ctk.CTkFrame(body, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew", padx=p, pady=(p, 0))
+        head.grid_columnconfigure(0, weight=1)
+        title = ctk.CTkFrame(head, fg_color="transparent")
+        title.grid(row=0, column=0, sticky="w")
+        self.details_title = ctk.CTkLabel(title, text="", font=font(20, "bold"), text_color=TEXT, anchor="w")
+        self.details_title.pack(side="left")
+        self.details_type = ctk.CTkLabel(title, text="", font=font(12, "bold"), text_color=MUTED,
+                                         fg_color=SURFACE_ALT, corner_radius=6, height=24)
+        self.details_type.pack(side="left", padx=(1.5 * SP, 0))
+        self.secondary_button(head, "Edit", sel(lambda f: ClientDialog(self, f)), width=80) \
+            .grid(row=0, column=1, sticky="e")
+        self.contact = ctk.CTkFrame(head, fg_color="transparent")
+        self.contact.grid(row=1, column=0, columnspan=2, sticky="w", pady=(SP / 2, 0))
+        self.contact_labels = {}
+        for key, label in (("phone", "Phone"), ("email", "Email"), ("dln", "Licence")):
+            cell = ctk.CTkFrame(self.contact, fg_color="transparent")
+            cell.pack(side="left", padx=(0, 3 * SP))
+            ctk.CTkLabel(cell, text=label, font=font(11), text_color=MUTED, height=16).pack(anchor="w")
+            value = ctk.CTkLabel(cell, text="", font=font(13), text_color=TEXT, height=20, cursor="hand2")
+            value.pack(anchor="w")
+            value.bind("<Button-1>", lambda e: self.selected and ClientDialog(self, self.selected))
+            self.contact_labels[key] = value
+
+        # ---- documents ----
+        docs_head = ctk.CTkFrame(body, fg_color="transparent")
+        docs_head.grid(row=1, column=0, sticky="ew", padx=p, pady=(3 * SP, SP))
+        docs_head.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(docs_head, text="Documents", font=font(15, "bold"), text_color=TEXT).grid(row=0, column=0, sticky="w")
+        self.docs_count = ctk.CTkLabel(docs_head, text="", font=font(12), text_color=MUTED)
+        self.docs_count.grid(row=0, column=2, sticky="e")
+        self.docs_bar = ctk.CTkProgressBar(docs_head, height=6, progress_color=SUCCESS, fg_color=BORDER)
+        self.docs_bar.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(SP, 0))
+
         self.doc_rows = {}
         auto = {label: (name, optional) for label, _, name, optional in AUTO_DOCUMENTS}
-        for i, (label, _) in enumerate(doc_list("Auto")):
-            row = ctk.CTkFrame(lst, fg_color=SURFACE_ALT, corner_radius=8, border_width=1, border_color=BORDER)
-            row.grid(row=i, column=0, sticky="ew", pady=1)
-            row.grid_columnconfigure(2, weight=1)   # the file name gives way, never the label
-            dot = ctk.CTkFrame(row, width=10, height=10, corner_radius=5, fg_color=BORDER)
-            dot.grid(row=0, column=0, padx=(1.5 * SP, SP))
-            ctk.CTkLabel(row, text=label, font=font(13, "bold"), text_color=TEXT, anchor="w", height=20) \
-                .grid(row=0, column=1, sticky="w", pady=SP * 0.6)
-            status = ctk.CTkLabel(row, text="", font=font(12), anchor="e", height=18)
-            status.grid(row=0, column=2, sticky="e", padx=(SP, SP))
-            r = {"frame": row, "dot": dot, "status": status, "state": None, "auto": label in auto}
-            if label in auto:
-                name, optional = auto[label]
-                if optional:
-                    r["na"] = ctk.CTkButton(row, text="N/A", width=40, height=26, font=font(11), fg_color="transparent",
-                                            border_width=1, border_color=BORDER, text_color=MUTED,
-                                            hover_color=SURFACE, command=lambda l=label: self.toggle_doc_needed(l))
-                    r["na"].grid(row=0, column=3, padx=(0, SP / 2))
-                ctk.CTkButton(row, text="Add…", width=52, height=26, font=font(12), fg_color="transparent",
-                              border_width=1, border_color=BORDER, text_color=TEXT, hover_color=SURFACE,
-                              command=lambda l=label, n=name: self.add_doc(l, n)).grid(row=0, column=4, padx=(0, SP / 2))
-            r["open"] = ctk.CTkButton(row, text="Open", width=56, height=26, font=font(12), fg_color="transparent",
-                                      border_width=1, border_color=BORDER, text_color=TEXT, hover_color=SURFACE)
-            r["open"].grid(row=0, column=5, padx=(0, SP))
-            self.doc_rows[label] = r
+        groups = [("For every client", [l for l, _ in DOCUMENTS]), ("From the client (auto)", list(auto))]
+        r = 2
+        self.auto_group_label = None
+        for title_text, labels in groups:
+            lbl = ctk.CTkLabel(body, text=title_text.upper(), font=font(11, "bold"), text_color=MUTED)
+            lbl.grid(row=r, column=0, sticky="w", padx=p, pady=(1.5 * SP, SP / 2))
+            if labels and labels[0] in auto:
+                self.auto_group_label = lbl
+            r += 1
+            box = ctk.CTkFrame(body, fg_color=SURFACE_ALT, corner_radius=10, border_width=1, border_color=BORDER)
+            box.grid(row=r, column=0, sticky="ew", padx=p)
+            box.grid_columnconfigure(0, weight=1)
+            if labels and labels[0] in auto:
+                self.auto_box = box
+            r += 1
+            for i, label in enumerate(labels):
+                row = ctk.CTkFrame(box, fg_color="transparent", height=40)
+                row.grid(row=i * 2, column=0, sticky="ew", padx=SP)
+                row.grid_columnconfigure(2, weight=1)
+                if i:
+                    ctk.CTkFrame(box, fg_color=BORDER, height=1).grid(row=i * 2 - 1, column=0, sticky="ew", padx=1.5 * SP)
+                dot = ctk.CTkFrame(row, width=10, height=10, corner_radius=5, fg_color=BORDER)
+                dot.grid(row=0, column=0, padx=(SP, 1.5 * SP))
+                ctk.CTkLabel(row, text=label, font=font(13), text_color=TEXT, anchor="w", height=36) \
+                    .grid(row=0, column=1, sticky="w")
+                status = ctk.CTkLabel(row, text="", font=font(12), anchor="e", height=20)
+                status.grid(row=0, column=2, sticky="e", padx=SP)
+                rr = {"frame": row, "dot": dot, "status": status, "state": None, "buttons": {}}
+                link = dict(font=font(12), fg_color="transparent", hover_color=SURFACE, height=28)
+                # only the buttons that make sense for the row's state are shown (see show_details)
+                buttons = {"open": ("Open", TEXT, None)}
+                if label in auto:
+                    name, optional = auto[label]
+                    buttons["add"] = ("Add…", PRIMARY, lambda l=label, n=name: self.add_doc(l, n))
+                    if optional:
+                        buttons["na"] = ("Not needed", MUTED, lambda l=label: self.toggle_doc_needed(l))
+                        buttons["needed"] = ("Needed", MUTED, lambda l=label: self.toggle_doc_needed(l))
+                else:
+                    shortcut = {"Client consent": ("Fill", sel(self.refill)),
+                                "DASH report": ("Import", sel(lambda f: ImportDashDialog(self, f))),
+                                "MVR": ("Request", sel(lambda f: MvrDialog(self, f)))}.get(label)
+                    if shortcut:
+                        buttons["add"] = (shortcut[0], PRIMARY, shortcut[1])
+                for col, (key, (text, color, cmd)) in enumerate(buttons.items(), start=3):
+                    b = ctk.CTkButton(row, text=text, width=max(52, 8 * len(text) + 12), text_color=color,
+                                      command=cmd, **link)
+                    b.grid(row=0, column=col, padx=(0, SP / 2))
+                    b.grid_remove()
+                    rr["buttons"][key] = b
+                self.doc_rows[label] = rr
 
-        ctk.CTkLabel(body, text="Actions", font=font(12, "bold"), text_color=MUTED) \
-            .grid(row=3, column=0, sticky="w", padx=p, pady=(3 * SP, SP))
-        acts = ctk.CTkFrame(body, fg_color="transparent")  # two equal columns so buttons always fit
-        acts.grid(row=4, column=0, sticky="ew", padx=p)
-        acts.grid_columnconfigure((0, 1), weight=1, uniform="acts")
-        sel = lambda fn: (lambda: self.selected and fn(self.selected))
-        self.refill_btn = self.secondary_button(acts, "Refill consent", sel(self.refill))
-        buttons = [
-            ctk.CTkButton(acts, text="Request MVR", height=36, font=font(13, "bold"), fg_color=PRIMARY,
-                          hover_color=PRIMARY_HOVER, command=sel(lambda f: MvrDialog(self, f))),
-            self.secondary_button(acts, "Email client…", sel(lambda f: EmailDialog(self, f))),
-            self.secondary_button(acts, "Import DASH", sel(lambda f: ImportDashDialog(self, f))),
-            self.refill_btn,
-            self.secondary_button(acts, "Client record…", sel(lambda f: tracker_ui.ClientRecordDialog(self, f))),
-            self.secondary_button(acts, "Review quote & eligibility…", sel(lambda f: eligibility_ui.EligibilityDialog(self, f))),
-            self.secondary_button(acts, "Open folder", sel(os.startfile)),
-        ]
-        for i, b in enumerate(buttons):
-            b.grid(row=i // 2, column=i % 2, sticky="ew", padx=(0, SP) if i % 2 == 0 else 0, pady=(0, SP))
+        # ---- actions ----
+        ctk.CTkLabel(body, text="Actions", font=font(15, "bold"), text_color=TEXT) \
+            .grid(row=r, column=0, sticky="w", padx=p, pady=(3 * SP, SP))
+        main = ctk.CTkFrame(body, fg_color="transparent")
+        main.grid(row=r + 1, column=0, sticky="ew", padx=p)
+        main.grid_columnconfigure((0, 1, 2), weight=1, uniform="main")
+        ctk.CTkButton(main, text="Request MVR", height=40, font=font(13, "bold"), fg_color=PRIMARY,
+                      hover_color=PRIMARY_HOVER, command=sel(lambda f: MvrDialog(self, f))) \
+            .grid(row=0, column=0, sticky="ew", padx=(0, SP))
+        self.secondary_button(main, "Email client…", sel(lambda f: EmailDialog(self, f)), height=40) \
+            .grid(row=0, column=1, sticky="ew", padx=(0, SP))
+        self.secondary_button(main, "Review quote…", sel(lambda f: eligibility_ui.EligibilityDialog(self, f)),
+                              height=40).grid(row=0, column=2, sticky="ew")
+        more = ctk.CTkFrame(body, fg_color="transparent")
+        more.grid(row=r + 2, column=0, sticky="w", padx=p, pady=(SP, 0))
+        small = dict(font=font(12), fg_color="transparent", hover_color=SURFACE_ALT, text_color=TEXT, height=30)
+        self.refill_btn = ctk.CTkButton(more, text="Fill consent", width=100, command=sel(self.refill), **small)
+        for text, cmd, w in (("Import DASH", sel(lambda f: ImportDashDialog(self, f)), 100), (None, None, 0),
+                             ("Client record…", sel(lambda f: tracker_ui.ClientRecordDialog(self, f)), 110),
+                             ("Open folder", sel(os.startfile), 96)):
+            b = self.refill_btn if text is None else ctk.CTkButton(more, text=text, width=w, command=cmd, **small)
+            b.pack(side="left", padx=(0, SP / 2))
         self.detail_msg = ctk.CTkLabel(body, text="", font=font(13), text_color=SUCCESS,
-                                       justify="left", anchor="w", wraplength=380)
-        self.detail_msg.grid(row=6, column=0, sticky="w", padx=p, pady=(1.5 * SP, 0))
+                                       justify="left", anchor="w", wraplength=520)
+        self.detail_msg.grid(row=r + 3, column=0, sticky="w", padx=p, pady=(2 * SP, p))
         self._details_showing = None
 
     def show_details(self, folder):
@@ -1523,31 +1653,43 @@ class App(ctk.CTk):
             self._details_showing = "body"
 
         kind = self.client_type_of.get(folder, "")
-        self.details_title.configure(text=shorten(folder.name, 40) + (f"   ·   {kind}" if kind else ""))
+        self.details_title.configure(text=shorten(folder.name, 34))
+        self.details_type.configure(text=f"  {kind}  " if kind else "")
+        info = mvr_email.load_client(folder)
+        for key, label in self.contact_labels.items():
+            value = info.get(key) or ""
+            label.configure(text=value or "Add…", text_color=TEXT if value else PRIMARY)
+
         docs = find_docs(folder, kind)
         skip = records.docs_not_needed(folder) if kind == "Auto" else set()
+        auto = kind == "Auto"
+        for w in (self.auto_group_label, self.auto_box):
+            w.grid() if auto else w.grid_remove()
         for label, r in self.doc_rows.items():
             if label not in docs:            # auto documents on a non-auto client
-                r["frame"].grid_remove()
                 continue
-            r["frame"].grid()
             files = docs[label]
             if files:
                 status, color, dot = (f"{len(files)} files" if len(files) > 1 else
-                                       "Received" if label not in dict(DOCUMENTS) else shorten(files[-1].name, 26)), MUTED, SUCCESS
+                                      shorten(files[-1].name, 30) if label in dict(DOCUMENTS) else "Received"), \
+                                     MUTED, SUCCESS
             elif label in skip:
                 status, color, dot = "Not needed", MUTED, BORDER
             else:
-                status, color, dot = "Missing", DANGER, BORDER
+                status, color, dot = "Missing", DANGER, DANGER
             state = (status, bool(files), label in skip)
             if r["state"] != state:  # only touch widgets whose content changed
                 r["dot"].configure(fg_color=dot)
                 r["status"].configure(text=status, text_color=color)
-                r["open"].configure(state="normal" if files else "disabled")
-                if "na" in r:
-                    r["na"].configure(text="Needed" if label in skip else "N/A", width=58 if label in skip else 40)
+                show = {"open"} if files else {"needed"} if label in skip else {"add", "na"}
+                for key, b in r["buttons"].items():
+                    b.grid() if key in show else b.grid_remove()
                 r["state"] = state
-            r["open"].configure(command=lambda fs=files: [os.startfile(f) for f in fs])
+            r["buttons"]["open"].configure(command=lambda fs=files: [os.startfile(f) for f in fs])
+        needed = [k for k in docs if k not in skip]
+        have = sum(1 for k in needed if docs[k])
+        self.docs_count.configure(text=f"{have} of {len(needed)} received")
+        self.docs_bar.set(have / len(needed) if needed else 0)
         # the consent needs only the client's name: fill it any time, DASH or not
         self.refill_btn.configure(text="Refill consent" if docs["Client consent"] else "Fill consent")
         note = self.note[1:] if self.note and self.note[0] == folder else ("", SUCCESS)

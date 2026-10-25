@@ -29,6 +29,18 @@ Windows desktop app for setting up a new insurance client.
 - **Request MVR**: opens an Outlook draft to the branch manager with the client's
   details and the DASH, consent and Quote Information PDFs attached. You review and send.
 
+## Clients screen
+
+- Left: the client list (search, type filter) and **+ New client** (Ctrl+N), which opens a small
+  window: type, name, licence #, phone, email.
+- Right: the selected client - name, type, phone / email / licence (click to edit), documents with a
+  progress bar (each row shows only what you can do: Open, Add…, Fill, Import, Request, Not needed),
+  and the actions.
+- **Edit** (or click a contact detail): change the name, type, licence #, phone or email. If the name
+  or type changes, the window shows what follows: the folder is renamed / moved, files named after
+  the client can be renamed (e.g. `Ownership - OLD NAME.jpg`), and the consent form can be refilled
+  with the new name. Reports from outside (DASH, MVR, quote) are never changed inside.
+
 ## Client records & Tracker
 
 - **Client record…** (on each client): tabs for **Policies** (line, status, insurer, policy #,

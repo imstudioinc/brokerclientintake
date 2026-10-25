@@ -39,7 +39,7 @@ decision changes (edit the section, don't append contradictions).
   Don't re-add an LLM feature unless asked.
 - **Don't take screen captures of the owner's desktop while they work** (they may have client
   data open). For GUI checks, run the app off-screen (`geometry("+-4000+0")`) and measure widgets,
-  or screenshot only the app's own window when it is clearly in front.
+  or capture only the app's own window with `PrintWindow` (alpha 0).
 - Ask before anything hard to undo or outward-facing (rewriting git history, deleting files the
   owner made, sending email). Deleting your own generated files is fine.
 
@@ -79,7 +79,8 @@ decision changes (edit the section, don't append contradictions).
 
 | File | What it does |
 |---|---|
-| `client_intake.pyw` | Main window: new client form, client list (paged, cached), details panel (documents + actions), dialogs (Settings, Signature, MVR request, Email, Import DASH), top bar Clients / Tracker / Rules views, design tokens |
+| `client_intake.pyw` | Main window: client list (paged, cached) on the left with **+ New client**; selected client on the right (header with contact details + Edit, documents grouped with a progress bar, 3 main actions + small ones); dialogs (`ClientDialog` for new / edit, Settings, Signature, MVR request, Email, Import DASH); top bar Clients / Tracker / Rules views; design tokens |
+| `client_edit.py` | Edit client: plan / apply a name or type change (move the folder first - if Windows refuses nothing has changed; then rename files containing the old name; save `client.json`) |
 | `fill_consent.py` | Fills WellCare's consent form (`templates/WellCare Consent Form.pdf`): client's name first, then other DASH drivers (up to 4); **no DASH needed**; built-in form is filled then **flattened** (fields removed); a custom template with `Driver License n` fields keeps the old behaviour. Ontario licence # format `A1234-12345-12345` |
 | `tools/make_consent_template.py` | Rebuilds the consent template from a filled WellCare form: removes the printed name/date text (not just covers it - the repo is public), adds rows and fields. Dev-only (pypdf) |
 | `dash_import.py` | Finds DASH reports in Downloads and moves them into the client folder |
@@ -109,6 +110,9 @@ decision changes (edit the section, don't append contradictions).
 - The main window must stay fast: the client list caches document counts by folder mtime and only
   repaints rows that changed. Avoid reading files per row on every refresh.
 - Tk tag fonts in text boxes use **negative sizes (pixels)** to match CTk fonts.
+- Main screen is two columns (list | client). Document rows show only the buttons that fit their state.
+- GUI screenshots for checking layout: capture the app's own window with `PrintWindow` (window set to
+  alpha 0 so nothing appears on the owner's screen) - never grab the screen.
 - Keep screens simple: the owner found a long flat list of checks "too complicated". Pattern that
   works: one verdict line at the top, short grouped items, details folded away (click to open).
 
