@@ -29,6 +29,7 @@ RELEASES_REPO = "imstudioinc/brokerclientintake-releases"
 ASSET_NAME = "ClientIntake-windows.zip"
 LATEST_URL = f"https://api.github.com/repos/{RELEASES_REPO}/releases/latest"
 EXE = "ClientIntake.exe"
+THEME_FILE = "customtkinter/assets/themes/blue.json"  # a file the app can't start without
 
 
 def parse_version(text):
@@ -73,6 +74,10 @@ def check_for_update(timeout=10):
             "notes": release.get("body") or ""}
 
 
+def _count_files(folder):
+    return sum(1 for p in Path(folder).rglob("*") if p.is_file())
+
+
 def _rmtree(path):
     shutil.rmtree(path, ignore_errors=True)
 
@@ -101,10 +106,12 @@ def download_and_install(update, progress=None):
     log(f"downloaded {zip_path.stat().st_size} bytes")
 
     with zipfile.ZipFile(zip_path) as z:
+        expected = sum(1 for i in z.infolist() if not i.is_dir() and "/_internal/" in i.filename)
         z.extractall(work / "new")
     zip_path.unlink(missing_ok=True)
     src = work / "new" / "ClientIntake"
-    if not (src / EXE).exists() or not (src / "_internal").exists():
+    if (not (src / EXE).exists() or not (src / "_internal" / THEME_FILE).exists()
+            or _count_files(src / "_internal") != expected):
         raise RuntimeError("The downloaded update is incomplete.")
     log("extracted; starting the new version to finish")
 
@@ -141,13 +148,20 @@ def finish_update(install, old_pid):
     _wait_for_exit(int(old_pid))
 
     internal, old_internal = install / "_internal", install / "_internal.old"
+    staged = install / "_internal.new"
     exe, old_exe = install / EXE, install / "ClientIntake.old.exe"
     try:
+        # copy the new files next to the old ones first and check them: on a network drive a copy
+        # can stop half way, and the app must never be left with half of its files
+        _rmtree(staged)
+        shutil.copytree(src / "_internal", staged)
+        if _count_files(staged) != _count_files(src / "_internal") or not (staged / THEME_FILE).exists():
+            raise RuntimeError("the new files did not copy completely")
         _rmtree(old_internal)
         old_exe.unlink(missing_ok=True)
         _retry(lambda: internal.rename(old_internal), "move old files", install)
+        _retry(lambda: staged.rename(internal), "put new files in place", install)
         _retry(lambda: exe.rename(old_exe), "move old exe", install)
-        shutil.copytree(src / "_internal", internal)
         shutil.copy2(src / EXE, exe)
         for extra in src.iterdir():  # e.g. READ ME FIRST.txt
             if extra.is_file() and extra.name != EXE:
@@ -155,14 +169,18 @@ def finish_update(install, old_pid):
         log("files replaced", install)
     except Exception as e:
         log(f"FAILED: {e!r} - restoring the previous version", install)
-        if old_internal.exists() and not internal.exists():
-            old_internal.rename(internal)
-        elif old_internal.exists():
-            _rmtree(internal)
-            old_internal.rename(internal)
-        if old_exe.exists():
-            exe.unlink(missing_ok=True)
-            old_exe.rename(exe)
+        try:
+            if old_internal.exists():
+                if internal.exists():
+                    _retry(lambda: internal.rename(install / "_internal.bad"), "set aside new files", install)
+                _retry(lambda: old_internal.rename(internal), "restore old files", install)
+            if old_exe.exists():
+                exe.unlink(missing_ok=True)
+                _retry(lambda: old_exe.rename(exe), "restore old exe", install)
+        except Exception as e2:
+            log(f"RESTORE FAILED: {e2!r}", install)
+        _rmtree(staged)
+        _rmtree(install / "_internal.bad")
         (update_dir(install) / "failed.txt").write_text(str(e), encoding="utf-8")
 
     subprocess.Popen([str(exe)], cwd=str(install), close_fds=True,
