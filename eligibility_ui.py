@@ -28,7 +28,7 @@ NONE = "(none)"
 DOC_LABELS = {"dash": "DASH report", "mvr": "MVR", "quote": "Quote (Applied Rating)"}
 
 # check status -> (section title, open by default)
-SECTIONS = [("bad", "Fix in the quote", True), ("refer", "Refer / get approval", True),
+SECTIONS = [("decline", "Declined by the carrier", True), ("bad", "Fix in the quote", True), ("refer", "Refer / get approval", True),
             ("warn", "Check with the client", True), ("todo", "Carrier to-dos", False),
             ("info", "Notes", False), ("ok", "Matches", False)]
 
@@ -49,7 +49,7 @@ class EligibilityDialog(Panel):
         self.open_markets = set()
         self.colors = {"Proceed": (ui.SUCCESS, GOOD_BG), "Caution": (CAUTION, CAUTION_BG),
                        "Refer to underwriter": (WARN, WARN_BG), "Not eligible": (ui.DANGER, BAD_BG)}
-        self.status_color = {"bad": ui.DANGER, "refer": WARN, "warn": CAUTION, "todo": ui.TEXT,
+        self.status_color = {"decline": ui.DANGER, "bad": ui.DANGER, "refer": WARN, "warn": CAUTION, "todo": ui.TEXT,
                              "info": ui.MUTED, "ok": ui.SUCCESS}
 
         self.grid_columnconfigure(0, weight=0, minsize=330)
@@ -299,7 +299,10 @@ class EligibilityDialog(Panel):
         groups = {key: [t for s, t in self.items if s == key] for key, _, _ in SECTIONS}
 
         # ---------- verdict ----------
-        if groups["bad"]:
+        declined = [c["carrier"] for c in quoted if c.get("declined")]
+        if declined and len(declined) == len(quoted):
+            head, color, bg = f"Declined by {', '.join(declined)} - try another market", ui.DANGER, BAD_BG
+        elif groups["bad"]:
             head, color, bg = "Fix the quote before sending", ui.DANGER, BAD_BG
         elif groups["refer"]:
             head, color, bg = "Refer before binding", WARN, WARN_BG
@@ -311,14 +314,16 @@ class EligibilityDialog(Panel):
         card.grid(row=0, column=0, sticky="ew", pady=(0, 5))
         card.grid_columnconfigure(0, weight=1)
         self._text(card, 0, head, color, 18, True, pad=(14, 2))
-        counts = [f"{len(groups[k])} {w}" for k, w in (("bad", "to fix"), ("refer", "to refer"),
+        counts = [f"{len(groups[k])} {w}" for k, w in (("decline", "declined"), ("bad", "to fix"), ("refer", "to refer"),
                                                          ("warn", "to check")) if groups[k]]
         if counts:
             self._text(card, 1, " · ".join(counts), ui.TEXT, 13)
         r = 2
         for c in quoted:
             prem = f"${c['premium']:,.0f}" if c["premium"] else "not rated"
-            self._text(card, r, f"Quoted: {c['carrier']} {prem}", ui.TEXT, 14, True, pad=(8, 0))
+            self._text(card, r, f"Quoted: {c['carrier']} {prem}" + (" - DECLINED (risk not written)"
+                                                                    if c.get("declined") else ""),
+                       ui.DANGER if c.get("declined") else ui.TEXT, 14, True, pad=(8, 0))
             r += 1
         if fits:
             names = ", ".join(f"{f['market'].split(' (')[0]}" + ("" if f["verdict"] == "Proceed"

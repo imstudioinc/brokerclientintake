@@ -1,7 +1,7 @@
 """Review a client file: quote vs MVR vs DASH, WellCare's quote rules, and eligibility by market.
 
 load() reads the PDFs (slow: OCR); analyze() does the checks (fast, re-run after edits).
-Check statuses: "bad" (fix the quote), "refer" (underwriter / approval), "warn" (check with the
+Check statuses: "decline" (a carrier won't write it), "bad" (fix the quote), "refer" (underwriter / approval), "warn" (check with the
 client), "todo" (carrier to-do), "info" (note), "ok" (matches).
 """
 import datetime
@@ -92,6 +92,11 @@ def facts_from(data):
         for cat in ("minor", "major", "serious"):
             facts[f"{cat}_convictions_3y"] = len([c for c in recent if c["category"] == cat])
         facts["alcohol_convictions_3y"] = len([c for c in recent if c["alcohol"]])
+        unread = (m.get("conviction_count") or 0) - len(m["convictions"])
+        if unread > 0:   # an Ontario MVR lists 3 years of convictions: count the unread ones, at least as minor
+            facts["minor_convictions_3y"] += unread
+            notes.append(f"The MVR lists {m['conviction_count']} convictions but only {len(m['convictions'])} could be "
+                         f"read - the other {unread} are counted as minor. Type the real counts in if they differ.")
     return facts, details, notes
 
 
@@ -115,12 +120,19 @@ def line_of(data, folder_type=""):
     return None
 
 
+DECLINE_WORDS = ("not written", "decline", "not eligible", "ineligible", "unacceptable", "cannot be written",
+                 "not acceptable", "will not write", "cannot be bound", "not bindable")
+
+
 def carrier_message(text):
-    """Status for one carrier message: refer, todo, or None (noise like the quote number)."""
+    """Status for one carrier message: decline, refer, todo, or None (noise like the quote number)."""
     t = text.lower()
-    if t.startswith("quote successfully rated") or "http" in t or "quote number" in t or t.startswith("review "):
+    if (t.startswith("quote successfully rated") or "http" in t or "quote number" in t or t.startswith("review ")
+            or "account was created" in t):
         return None
-    if "refer" in t or "approval required" in t or "decline" in t or "underwriter" in t:
+    if any(w in t for w in DECLINE_WORDS):
+        return "decline"
+    if "refer" in t or "approval required" in t or "underwriter" in t:
         return "refer"
     return "todo"
 
@@ -320,7 +332,8 @@ def recommend(results, q):
     for c in (q or {}).get("carriers", []):
         r = next((r for key, r in by_name.items() if key in c["name"].lower()), None)
         quoted.append({"carrier": c["name"], "premium": c["premium"], "verdict": r["verdict"] if r else None,
-                       "messages": len([m for m in c["messages"] if carrier_message(m)])})
+                       "messages": len([m for m in c["messages"] if carrier_message(m)]),
+                       "declined": any(carrier_message(m) == "decline" for m in c["messages"])})
     # standard markets first; non-standard only when no standard market fits
     # (a market that only needs a referral still counts - e.g. a new driver at Intact)
     for ok in (("Proceed", "Caution"), ("Refer to underwriter",)):
