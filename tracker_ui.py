@@ -497,10 +497,11 @@ class ClientRecordDialog(Panel):
                     for k in spec["columns"]]
             frame, tree = make_table(tab, ui, cols, right=("premium", "revenue"),
                                      widths={"text": 420, "address": 260, "vin": 190, "lienholder": 220})
-            frame.pack(fill="both", expand=True, padx=6, pady=(6, 0))
             tree.bind("<Double-1>", lambda e, k=kind: self.edit(k))
+            # the buttons are packed before the table so a short window shrinks the table, not them
             bar = ctk.CTkFrame(tab, fg_color="transparent")
-            bar.pack(fill="x", padx=6, pady=10)
+            bar.pack(side="bottom", fill="x", padx=6, pady=10)
+            frame.pack(fill="both", expand=True, padx=6, pady=(6, 0))
             ctk.CTkButton(bar, text=f"Add {spec['singular']}", height=36, font=ui.font(13, "bold"),
                           fg_color=ui.PRIMARY, hover_color=ui.PRIMARY_HOVER,
                           command=lambda k=kind: self.add(k)).pack(side="left")
@@ -626,11 +627,11 @@ class TrackerView(ctk.CTkFrame):
         frame, self.todo = make_table(t, ui, [("when", "When"), ("client", "Client"), ("kind", "Type"), ("what", "What to do")],
                                       widths={"when": 150, "client": 200, "kind": 130, "what": 600}, height=14,
                                       tree_col=True)
-        frame.pack(fill="both", expand=True, padx=6, pady=6)
         self.todo.bind("<Double-1>", lambda e: self.open_client(self.todo, "Reminders"))
         ctk.CTkLabel(t, text="Renewals appear 45 days before expiry. Quotes get a follow-up after 7 days. "
                              "Double-click a row to open the client.",
-                     font=ui.font(12), text_color=ui.MUTED).pack(anchor="w", padx=8, pady=(0, 8))
+                     font=ui.font(12), text_color=ui.MUTED).pack(side="bottom", anchor="w", padx=8, pady=(0, 8))
+        frame.pack(fill="both", expand=True, padx=6, pady=6)
 
         # --- Policies
         t = self.tabs.add("Policies")
