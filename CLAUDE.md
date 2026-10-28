@@ -129,6 +129,14 @@ decision changes (edit the section, don't append contradictions).
 - Main screen is two columns (list | client). Document rows show only the buttons that fit their state.
 - GUI screenshots for checking layout: capture the app's own window with `PrintWindow` (window set to
   alpha 0 so nothing appears on the owner's screen) - never grab the screen.
+- **Readability (owner found the client panel "crowded and not readable")**: Settings > Text size
+  (`text_size`: Normal / Large / Extra large = `ctk.set_widget_scaling` 1.0 / 1.15 / 1.3, default
+  Large); plain Tk widgets (client list rows) size their fonts by the same factor. Body text 14,
+  labels 12-13, never below 12. **Red (PRIMARY) only for the one main action on a screen** (the
+  next-step button, Save / Create draft); "check this" text is amber `WARN`, not red; selected tabs
+  are neutral `RAISED`. Rarely used links go under a **More ▾** menu.
+- An **empty CTkFrame is 200 px tall**: give containers that may be empty `height=1`, or
+  `grid_remove()` them (this caused big gaps on the client panel and the Email page).
 - Keep screens simple: the owner found a long flat list of checks "too complicated". Pattern that
   works: one verdict line at the top, short grouped items, details folded away (click to open).
 

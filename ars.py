@@ -114,7 +114,7 @@ def claims(details, today=None):
         driver = c["driver"] if c["driver"] and c["driver"].lower() != "not available" else ""
         if not driver and c["fault"] > 0:
             notes.append("DASH names no driver - ask who was driving.")
-        elif details.get("driver") and not _same_person(driver, details["driver"]):
+        elif driver and details.get("driver") and not _same_person(driver, details["driver"]):
             notes.append(f"{driver.title()} was driving, not this client - check how the insurer wants it entered.")
         if 0 < c["fault"] < 100:
             notes.append(f"Partly at fault ({c['fault']}%).")

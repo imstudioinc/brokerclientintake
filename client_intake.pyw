@@ -49,6 +49,12 @@ SUCCESS = ("#15803D", "#4ADE80")
 SUCCESS_BG = ("#E8F5EC", "#16291D")
 DANGER = ("#B91C1C", "#F87171")
 WARN_BG = ("#F1F3F6", "#252D37")
+WARN = ("#B45309", "#FBBF24")           # amber: check this (red is kept for the one main action)
+WARN_SOFT = ("#FEF6E7", "#2E2717")
+RAISED = ("#FFFFFF", "#2E3946")          # selected tab / segment
+
+# Text size setting -> widget scaling (every screen grows evenly)
+TEXT_SIZES = {"Normal": 1.0, "Large": 1.15, "Extra large": 1.3}
 
 FONT = "Segoe UI"
 SP = 8  # spacing unit
@@ -180,6 +186,7 @@ class SettingsDialog(Panel):
         self.root_var = tk.StringVar(value=app.cfg["clients_root"])
         self.tpl_var = tk.StringVar(value=app.cfg["consent_template"])
         self.mode_var = tk.StringVar(value=app.cfg["appearance"])
+        self.size_var = tk.StringVar(value=app.cfg.get("text_size") or "Large")
         self.to_var = tk.StringVar(value=app.cfg["mvr_to"])
         self.cc_var = tk.StringVar(value=app.cfg["mvr_cc"])
 
@@ -191,6 +198,11 @@ class SettingsDialog(Panel):
         ctk.CTkSegmentedButton(body, values=["System", "Light", "Dark"], variable=self.mode_var,
                                font=font(13), selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER) \
             .grid(row=5, column=0, sticky="w", padx=2 * SP)
+        ctk.CTkLabel(body, text="Text size", font=font(13, "bold"), text_color=TEXT) \
+            .grid(row=4, column=0, sticky="e", padx=2 * SP, pady=(2 * SP, SP / 2))
+        ctk.CTkSegmentedButton(body, values=list(TEXT_SIZES), variable=self.size_var,
+                               font=font(13), selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER) \
+            .grid(row=5, column=0, sticky="e", padx=2 * SP)
 
         self._text_row(body, 6, "MVR request: To", self.to_var, "branch manager's email")
         self._text_row(body, 8, "MVR request: CC", self.cc_var, "optional; separate several with ;")
@@ -219,7 +231,7 @@ class SettingsDialog(Panel):
         else:
             text, cmd = "Try with sample clients", lambda: (self.destroy(), app.use_sample())
         app.secondary_button(sample, text, cmd, width=200).pack(side="left")
-        ctk.CTkLabel(sample, text="Uses a separate sample folder; your clients are not touched.",
+        ctk.CTkLabel(sample, text="Your real clients are not touched.",
                      font=font(12), text_color=MUTED).pack(side="left", padx=SP)
 
         btns = ctk.CTkFrame(body, fg_color="transparent")
@@ -265,12 +277,14 @@ class SettingsDialog(Panel):
                       clients_root=self.root_var.get().strip(),
                       consent_template=self.tpl_var.get().strip(),
                       appearance=self.mode_var.get(),
+                      text_size=self.size_var.get(),
                       mvr_to=self.to_var.get().strip(),
                       mvr_cc=self.cc_var.get().strip(),
                       email_app=self.mail_var.get(),
                       mvr_autosave=self.autosave_var.get(),
                       client_types=", ".join(parse_types(self.types_var.get())) or config.DEFAULTS["client_types"])
         ctk.set_appearance_mode(self.app.cfg["appearance"])
+        ctk.set_widget_scaling(TEXT_SIZES.get(self.app.cfg["text_size"], 1.15))
         self.app.on_settings_changed()
         self.app.reload_types()
         self.destroy()
@@ -568,7 +582,7 @@ class EmailDialog(Panel):
         self.greeting.insert(0, emails.first_name(self.client))
         self.greeting.bind("<KeyRelease>", lambda e: self.refresh_preview())
 
-        self.fields_frame = ctk.CTkFrame(left, fg_color="transparent")
+        self.fields_frame = ctk.CTkFrame(left, fg_color="transparent", height=1)   # no blanks = no gap
         self.fields_frame.grid(row=6, column=0, sticky="ew", padx=p)
         self.fields_frame.grid_columnconfigure(0, weight=1)
         self.field_entries = {}
@@ -607,7 +621,7 @@ class EmailDialog(Panel):
         bottom = ctk.CTkFrame(self, fg_color="transparent")
         bottom.grid(row=1, column=0, columnspan=2, sticky="ew", padx=2 * SP, pady=2 * SP)
         # buttons are packed first so a long message can never push them off-screen
-        self.go = ctk.CTkButton(bottom, text="Create Outlook draft", height=40, font=font(14, "bold"),
+        self.go = ctk.CTkButton(bottom, text="Create Outlook draft", height=40, width=200, font=font(14, "bold"),
                                 fg_color=PRIMARY, hover_color=PRIMARY_HOVER, command=self.submit)
         self.go.pack(side="right")
         app.secondary_button(bottom, "Cancel", self.destroy, width=96).pack(side="right", padx=(0, SP))
@@ -1095,6 +1109,7 @@ class App(ctk.CTk):
         super().__init__()
         self.cfg = config.load()
         ctk.set_appearance_mode(self.cfg["appearance"])
+        ctk.set_widget_scaling(TEXT_SIZES.get(self.cfg.get("text_size") or "Large", 1.15))
         icon = Path(__file__).parent / "templates" / "app.ico"
         if icon.exists():
             self.after(250, lambda: self.iconbitmap(str(icon)))  # after CTk sets its own icon
@@ -1117,8 +1132,8 @@ class App(ctk.CTk):
         self._build_topbar()
         body = self.clients_view = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=3 * SP, pady=(0, 3 * SP))
-        body.grid_columnconfigure(0, weight=2, minsize=340, uniform="cols")   # client list
-        body.grid_columnconfigure(1, weight=3, minsize=520, uniform="cols")   # selected client
+        body.grid_columnconfigure(0, weight=1, minsize=340, uniform="cols")   # client list
+        body.grid_columnconfigure(1, weight=2, minsize=520, uniform="cols")   # selected client
         body.grid_rowconfigure(0, weight=1)
 
         self._build_client_list(body)
@@ -1147,8 +1162,8 @@ class App(ctk.CTk):
         return c
 
     def secondary_button(self, parent, text, command, **kw):
-        kw = {"height": 36, **kw}
-        return ctk.CTkButton(parent, text=text, command=command, font=font(13),
+        kw = {"height": 36, "font": font(13), **kw}
+        return ctk.CTkButton(parent, text=text, command=command,
                              fg_color="transparent", border_width=1, border_color=BORDER,
                              text_color=TEXT, hover_color=SURFACE_ALT, **kw)
 
@@ -1184,6 +1199,9 @@ class App(ctk.CTk):
             self.root_label.configure(text=shorten_path(root) if root else "No Clients folder set", text_color=MUTED)
             self.sample_btn.pack_forget()
         self.selected = None
+        for row in self.rows.values():      # rebuilt with the current Text size
+            row.destroy()
+        self.rows.clear()
         self.refresh_list()
         self.tracker_changed()
 
@@ -1488,19 +1506,19 @@ class App(ctk.CTk):
         head = ctk.CTkFrame(c, fg_color="transparent")
         head.grid(row=0, column=0, sticky="ew", padx=p, pady=(2.5 * SP, 0))
         ctk.CTkLabel(head, text="Clients", font=font(17, "bold"), text_color=TEXT).pack(side="left")
-        self.count_label = ctk.CTkLabel(head, text="", font=font(12), text_color=MUTED)
+        self.count_label = ctk.CTkLabel(head, text="", font=font(13), text_color=MUTED)
         self.count_label.pack(side="left", padx=(SP, 0), pady=(3, 0))
         ctk.CTkButton(head, text="+  New client", height=34, width=120, font=font(13, "bold"), fg_color=PRIMARY,
                       hover_color=PRIMARY_HOVER, command=self.new_client).pack(side="right")
 
-        self.search_entry = ctk.CTkEntry(c, height=36, font=font(13),
+        self.search_entry = ctk.CTkEntry(c, height=38, font=font(14),
                                          border_color=BORDER, placeholder_text="Search clients")
         self.search_entry.grid(row=1, column=0, sticky="ew", padx=p, pady=SP * 1.5)
         self.search_entry.bind("<KeyRelease>", lambda e: self.refresh_soon(200, reset_page=True))
 
         self.filter_var = tk.StringVar(value="All")
         self.filter_buttons = ctk.CTkSegmentedButton(c, values=["All"] + self.client_types,
-                                                     variable=self.filter_var, font=font(11), height=30,
+                                                     variable=self.filter_var, font=font(13), height=34,
                                                      selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER,
                                                      command=lambda _: self.refresh_soon(0, reset_page=True))
         self.filter_buttons.grid(row=2, column=0, sticky="ew", padx=p, pady=(0, SP))
@@ -1521,10 +1539,12 @@ class App(ctk.CTk):
 
     def _make_row(self, folder):
         row = tk.Frame(self.list_frame, cursor="hand2", bd=0, highlightthickness=0)
-        row.name = tk.Label(row, anchor="w", font=(FONT, 10, "bold"), cursor="hand2")
-        row.sub = tk.Label(row, anchor="w", font=(FONT, 9), cursor="hand2")
-        row.name.pack(fill="x", padx=12, pady=(7, 0))
-        row.sub.pack(fill="x", padx=12, pady=(0, 7))
+        # plain Tk fonts don't follow CTk scaling: size them by the Text size setting
+        k = TEXT_SIZES.get(self.cfg.get("text_size") or "Large", 1.15)
+        row.name = tk.Label(row, anchor="w", font=(FONT, round(11 * k), "bold"), cursor="hand2")
+        row.sub = tk.Label(row, anchor="w", font=(FONT, round(9.5 * k)), cursor="hand2")
+        row.name.pack(fill="x", padx=round(14 * k), pady=(round(9 * k), 0))
+        row.sub.pack(fill="x", padx=round(14 * k), pady=(round(2 * k), round(9 * k)))
         row.sub_text = None
         for w in (row, row.name, row.sub):
             w.bind("<Button-1>", lambda e, f=folder: self.select(f))
@@ -1699,7 +1719,7 @@ class App(ctk.CTk):
         head.grid_columnconfigure(0, weight=1)
         title = ctk.CTkFrame(head, fg_color="transparent")
         title.grid(row=0, column=0, sticky="w")
-        self.details_title = ctk.CTkLabel(title, text="", font=font(20, "bold"), text_color=TEXT, anchor="w")
+        self.details_title = ctk.CTkLabel(title, text="", font=font(22, "bold"), text_color=TEXT, anchor="w")
         self.details_title.pack(side="left")
         self.details_type = ctk.CTkLabel(title, text="", font=font(12, "bold"), text_color=MUTED,
                                          fg_color=SURFACE_ALT, corner_radius=6, height=24)
@@ -1712,15 +1732,16 @@ class App(ctk.CTk):
         for key, label in (("phone", "Phone"), ("email", "Email"), ("dln", "Licence"), ("birth", "Born")):
             cell = ctk.CTkFrame(self.contact, fg_color="transparent")
             cell.pack(side="left", padx=(0, 3 * SP))
-            ctk.CTkLabel(cell, text=label, font=font(11), text_color=MUTED, height=16).pack(anchor="w")
-            value = ctk.CTkLabel(cell, text="", font=font(13), text_color=TEXT, height=20, cursor="hand2")
+            ctk.CTkLabel(cell, text=label, font=font(12), text_color=MUTED, height=18).pack(anchor="w")
+            value = ctk.CTkLabel(cell, text="", font=font(14), text_color=TEXT, height=22, cursor="hand2")
             value.pack(anchor="w")
             value.bind("<Button-1>", lambda e: self.selected and ClientDialog(self, self.selected))
             self.contact_labels[key] = value
         # details on the quote / DASH that don't match the profile
-        self.facts_warn = ctk.CTkLabel(head, text="", font=font(12), text_color=DANGER, fg_color=WARN_BG,
+        self.facts_warn = ctk.CTkLabel(head, text="", font=font(13), text_color=WARN, fg_color=WARN_SOFT,
                                        corner_radius=8, justify="left", anchor="w", wraplength=520, cursor="hand2")
-        self.facts_warn.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(SP, 0), ipadx=SP, ipady=SP / 2)
+        self.facts_warn.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(1.5 * SP, 0), ipadx=1.5 * SP,
+                             ipady=SP)
         self.facts_warn.bind("<Button-1>", lambda e: self.selected and ClientDialog(self, self.selected))
         self.facts_warn.grid_remove()
 
@@ -1728,24 +1749,22 @@ class App(ctk.CTk):
         bar = ctk.CTkFrame(body, fg_color="transparent")
         bar.grid(row=1, column=0, sticky="ew", padx=p, pady=(2.5 * SP, 0))
         bar.grid_columnconfigure((0, 1, 2), weight=1, uniform="main")
-        ctk.CTkButton(bar, text="Request MVR", height=38, font=font(13, "bold"), fg_color=PRIMARY,
-                      hover_color=PRIMARY_HOVER, command=sel(lambda f: MvrDialog(self, f))) \
-            .grid(row=0, column=0, sticky="ew", padx=(0, SP))
-        self.secondary_button(bar, "Email client…", sel(lambda f: EmailDialog(self, f)), height=38) \
-            .grid(row=0, column=1, sticky="ew", padx=(0, SP))
-        self.secondary_button(bar, "Review quote…", sel(lambda f: eligibility_ui.EligibilityDialog(self, f)),
-                              height=38).grid(row=0, column=2, sticky="ew")
+        for col, (text, cmd) in enumerate((("Request MVR", sel(lambda f: MvrDialog(self, f))),
+                                           ("Email client", sel(lambda f: EmailDialog(self, f))),
+                                           ("Review quote", sel(lambda f: eligibility_ui.EligibilityDialog(self, f))))):
+            self.secondary_button(bar, text, cmd, height=40, font=font(14)) \
+                .grid(row=0, column=col, sticky="ew", padx=(0, SP if col < 2 else 0))
         more = ctk.CTkFrame(body, fg_color="transparent")
         more.grid(row=2, column=0, sticky="w", padx=p - SP / 2, pady=(SP / 2, 0))
-        small = dict(font=font(12), fg_color="transparent", hover_color=SURFACE_ALT, text_color=MUTED, height=28)
+        small = dict(font=font(13), fg_color="transparent", hover_color=SURFACE_ALT, text_color=MUTED, height=30)
         # the everyday links; the rest sit under More
         self.consent_label = "Fill consent"
-        for text, cmd, w in (("Import DASH", sel(lambda f: ImportDashDialog(self, f)), 96),
-                             ("ARS entry", sel(lambda f: ars_ui.ArsEntryPage(self, f)), 80),
-                             ("UW call", sel(lambda f: carriers_ui.UwCallPage(self, f)), 70),
-                             ("Open folder", sel(os.startfile), 90)):
+        for text, cmd, w in (("Import DASH", sel(lambda f: ImportDashDialog(self, f)), 104),
+                             ("ARS entry", sel(lambda f: ars_ui.ArsEntryPage(self, f)), 88),
+                             ("UW call", sel(lambda f: carriers_ui.UwCallPage(self, f)), 76),
+                             ("Open folder", sel(os.startfile), 98)):
             ctk.CTkButton(more, text=text, width=w, command=cmd, **small).pack(side="left")
-        more_btn = ctk.CTkButton(more, text="More ▾", width=70, **small)
+        more_btn = ctk.CTkButton(more, text="More ▾", width=76, **small)
         more_btn.configure(command=lambda: self._more_menu(more_btn, sel))
         more_btn.pack(side="left")
         self.detail_msg = ctk.CTkLabel(body, text="", font=font(13), text_color=SUCCESS,
@@ -1757,9 +1776,11 @@ class App(ctk.CTk):
 
         # ---- tabs: Steps | Documents ----
         self.tab_var = tk.StringVar(value="Steps")       # which tab: "Steps" or "Documents"
-        self.tabs = ctk.CTkSegmentedButton(body, values=["Steps", "Documents"], height=34,
-                                           font=font(13, "bold"), selected_color=PRIMARY,
-                                           selected_hover_color=PRIMARY_HOVER,
+        self.tabs = ctk.CTkSegmentedButton(body, values=["Steps", "Documents"], height=38,
+                                           font=font(14, "bold"), selected_color=RAISED,
+                                           selected_hover_color=RAISED, unselected_color=SURFACE_ALT,
+                                           unselected_hover_color=BORDER, fg_color=SURFACE_ALT,
+                                           text_color=TEXT,
                                            command=lambda v: (self.tab_var.set("Steps" if v.startswith("Steps")
                                                                                else "Documents"),
                                                               self.selected and self.show_details(self.selected)))
@@ -1774,6 +1795,9 @@ class App(ctk.CTk):
         self._build_documents(self.docs_tab, sel)
         self._details_showing = None
 
+    def _descale(self, px):
+        return int(px / ctk.ScalingTracker.get_widget_scaling(self))
+
     def _more_menu(self, button, sel):
         menu = tk.Menu(self, tearoff=0, font=("Segoe UI", 10))
         for text, cmd in ((self.consent_label, sel(self.refill)),
@@ -1786,7 +1810,7 @@ class App(ctk.CTk):
         docs_head = ctk.CTkFrame(tab, fg_color="transparent")
         docs_head.grid(row=0, column=0, sticky="ew", pady=(0, SP))
         docs_head.grid_columnconfigure(0, weight=1)
-        self.docs_count = ctk.CTkLabel(docs_head, text="", font=font(12), text_color=MUTED)
+        self.docs_count = ctk.CTkLabel(docs_head, text="", font=font(13), text_color=MUTED)
         self.docs_count.grid(row=0, column=0, sticky="w")
         self.docs_bar = ctk.CTkProgressBar(docs_head, height=6, progress_color=SUCCESS, fg_color=BORDER)
         self.docs_bar.grid(row=1, column=0, sticky="ew", pady=(SP / 2, 0))
@@ -1796,7 +1820,7 @@ class App(ctk.CTk):
         groups = [("For every client", [l for l, _ in DOCUMENTS]), ("From the client (auto)", list(auto))]
         r = 1
         for title_text, labels in groups:
-            lbl = ctk.CTkLabel(tab, text=title_text.upper(), font=font(11, "bold"), text_color=MUTED)
+            lbl = ctk.CTkLabel(tab, text=title_text, font=font(14, "bold"), text_color=MUTED)
             lbl.grid(row=r, column=0, sticky="w", pady=(1.5 * SP, SP / 2))
             r += 1
             box = ctk.CTkFrame(tab, fg_color=SURFACE_ALT, corner_radius=10, border_width=1, border_color=BORDER)
@@ -1813,12 +1837,12 @@ class App(ctk.CTk):
                     ctk.CTkFrame(box, fg_color=BORDER, height=1).grid(row=i * 2 - 1, column=0, sticky="ew", padx=1.5 * SP)
                 dot = ctk.CTkFrame(row, width=10, height=10, corner_radius=5, fg_color=BORDER)
                 dot.grid(row=0, column=0, padx=(SP, 1.5 * SP))
-                ctk.CTkLabel(row, text=label, font=font(13), text_color=TEXT, anchor="w", height=38) \
+                ctk.CTkLabel(row, text=label, font=font(14), text_color=TEXT, anchor="w", height=42) \
                     .grid(row=0, column=1, sticky="w")
-                status = ctk.CTkLabel(row, text="", font=font(12), anchor="e", height=20)
+                status = ctk.CTkLabel(row, text="", font=font(13), anchor="e", height=22)
                 status.grid(row=0, column=2, sticky="e", padx=SP)
                 rr = {"frame": row, "dot": dot, "status": status, "state": None, "buttons": {}}
-                link = dict(font=font(12), fg_color="transparent", hover_color=SURFACE, height=28)
+                link = dict(font=font(13), fg_color="transparent", hover_color=SURFACE, height=30)
                 # only the buttons that make sense for the row's state are shown (see show_details)
                 buttons = {"open": ("Open", TEXT, None)}
                 if label in auto:
@@ -1849,14 +1873,17 @@ class App(ctk.CTk):
         card.grid_columnconfigure(1, weight=1)
         self.next_accent = ctk.CTkFrame(card, width=5, height=10, fg_color=PRIMARY, corner_radius=3)
         self.next_accent.grid(row=0, column=0, rowspan=4, sticky="ns", padx=(SP, 0), pady=1.5 * SP)
-        self.next_kicker = ctk.CTkLabel(card, text="NEXT STEP", font=font(11, "bold"), text_color=PRIMARY, height=16)
+        self.next_kicker = ctk.CTkLabel(card, text="NEXT STEP", font=font(12, "bold"), text_color=MUTED, height=18)
         self.next_kicker.grid(row=0, column=1, sticky="w", padx=2 * SP, pady=(1.5 * SP, 0))
-        self.next_title = ctk.CTkLabel(card, text="", font=font(16, "bold"), text_color=TEXT, anchor="w",
-                                       justify="left", wraplength=480)
+        self.next_title = ctk.CTkLabel(card, text="", font=font(18, "bold"), text_color=TEXT, anchor="w",
+                                       justify="left", wraplength=620)
         self.next_title.grid(row=1, column=1, sticky="w", padx=2 * SP)
-        self.next_hint = ctk.CTkLabel(card, text="", font=font(12), text_color=MUTED, anchor="w", justify="left",
-                                      wraplength=480)
+        self.next_hint = ctk.CTkLabel(card, text="", font=font(14), text_color=MUTED, anchor="w", justify="left",
+                                      wraplength=620)
         self.next_hint.grid(row=2, column=1, sticky="w", padx=2 * SP, pady=(2, 0))
+        # wrap to the card's real width (CTk wraplength is in unscaled pixels)
+        card.bind("<Configure>", lambda e: [w.configure(wraplength=max(200, self._descale(e.width) - 6 * SP))
+                                            for w in (self.next_title, self.next_hint)], add="+")
         btns = self.next_btns = ctk.CTkFrame(card, fg_color="transparent")
         btns.grid(row=3, column=1, sticky="w", padx=2 * SP, pady=(SP, 1.5 * SP))
         sel = self._sel
@@ -1872,11 +1899,11 @@ class App(ctk.CTk):
                                                                                self.show_details(self.selected))),
         }
         for b in self.next_buttons.values():
-            b.configure(height=34, width=130, font=font(13, "bold"), fg_color=PRIMARY, hover_color=PRIMARY_HOVER)
+            b.configure(height=38, width=140, font=font(14, "bold"), fg_color=PRIMARY, hover_color=PRIMARY_HOVER)
         self.next_done = self.secondary_button(btns, "Mark done", lambda: self._next_id and self.set_step(self._next_id, "done"),
-                                               width=110, height=34)
+                                               width=116, height=38, font=font(14))
         self.next_na = self.secondary_button(btns, "Not applicable", lambda: self._next_id and self.set_step(self._next_id, "na"),
-                                             width=120, height=34)
+                                             width=130, height=38, font=font(14))
         self._next_id = None
 
     def _build_steps(self, tab):
@@ -1884,7 +1911,7 @@ class App(ctk.CTk):
         self._phase_open, self._phase_is_open = {}, {}
         steps = {st[0]: (i, st) for i, st in enumerate(checklist.AUTO_STEPS)}
         for r, (phase, ids) in enumerate(checklist.PHASES):
-            head = ctk.CTkButton(tab, text="", anchor="w", font=font(13, "bold"), text_color=TEXT, height=34,
+            head = ctk.CTkButton(tab, text="", anchor="w", font=font(14, "bold"), text_color=TEXT, height=36,
                                  fg_color="transparent", hover_color=SURFACE_ALT,
                                  command=lambda ph=phase: self._toggle_phase(ph))
             head.grid(row=r * 2, column=0, sticky="ew", pady=(SP if r else 0, 2))
@@ -1897,19 +1924,19 @@ class App(ctk.CTk):
                 if j:
                     ctk.CTkFrame(box, fg_color=BORDER, height=1).grid(row=j * 2 - 1, column=0, sticky="ew", padx=1.5 * SP)
                 rowf = ctk.CTkFrame(box, fg_color="transparent")
-                rowf.grid(row=j * 2, column=0, sticky="ew", padx=1.5 * SP, pady=SP * 0.6)
+                rowf.grid(row=j * 2, column=0, sticky="ew", padx=2 * SP, pady=SP)
                 rowf.grid_columnconfigure(0, weight=1)
                 var = tk.BooleanVar()
-                cb = ctk.CTkCheckBox(rowf, text=f"{title}", variable=var, font=font(13), text_color=TEXT,
+                cb = ctk.CTkCheckBox(rowf, text=f"{title}", variable=var, font=font(14), text_color=TEXT,
                                      text_color_disabled=MUTED, fg_color=SUCCESS, hover_color=SUCCESS,
-                                     checkbox_width=20, checkbox_height=20,
+                                     border_color=MUTED, checkbox_width=22, checkbox_height=22,
                                      command=lambda s=sid: self.toggle_step(s))
                 cb.grid(row=0, column=0, sticky="w")
-                tag = ctk.CTkLabel(rowf, text="", font=font(11), text_color=MUTED, height=20)
+                tag = ctk.CTkLabel(rowf, text="", font=font(12, "bold"), text_color=MUTED, height=22)
                 tag.grid(row=0, column=1, sticky="e")
-                note = ctk.CTkLabel(rowf, text="", font=font(12), text_color=DANGER, anchor="w", justify="left",
-                                    wraplength=440, height=16)
-                note.grid(row=1, column=0, columnspan=2, sticky="w", padx=(30, 0))
+                note = ctk.CTkLabel(rowf, text="", font=font(13), text_color=WARN, anchor="w", justify="left",
+                                    wraplength=560, height=18)
+                note.grid(row=1, column=0, columnspan=2, sticky="w", padx=(32, 0))
                 self.check_rows[sid] = {"var": var, "cb": cb, "note": note, "tag": tag, "auto": auto}
         self._check_state = {}
 
@@ -1951,11 +1978,11 @@ class App(ctk.CTk):
             self.next_kicker.grid()
             self.next_btns.grid()
             self.next_title.grid_configure(pady=0)
-            self.next_title.configure(font=font(16, "bold"), text_color=TEXT)
-            self.next_kicker.configure(text=f"NEXT STEP  ·  {done} of {total} done", text_color=PRIMARY)
+            self.next_title.configure(font=font(18, "bold"), text_color=TEXT)
+            self.next_kicker.configure(text=f"NEXT STEP   ·   {done} of {total} done", text_color=MUTED)
             self.next_title.configure(text=title)
             text = ((note + ".  ") if note else "") + hint
-            self.next_hint.configure(text=text, text_color=DANGER if note and ("issing" in note or note.startswith(("Refer", "Waiting")))
+            self.next_hint.configure(text=text, text_color=WARN if note and ("issing" in note or note.startswith(("Refer", "Waiting")))
                                      else MUTED)
             self.next_hint.grid() if text else self.next_hint.grid_remove()
             if action:
@@ -1980,7 +2007,7 @@ class App(ctk.CTk):
             missing = len(needed) - have
             self.next_title.configure(text=f"✓  All {total} steps done" + (f"  ·  {missing} document"
                                       f"{'s' if missing > 1 else ''} still missing" if missing else ""),
-                                      font=font(14, "bold"), text_color=SUCCESS)
+                                      font=font(16, "bold"), text_color=SUCCESS)
             self.next_title.grid_configure(pady=(1.5 * SP, 0 if missing else 1.5 * SP))
             if missing:
                 self.next_btns.grid()
@@ -1997,18 +2024,20 @@ class App(ctk.CTk):
             is_open = self._phase_open.get(phase, current)   # clicked open / closed, else only the current stage
             self._phase_is_open[phase] = is_open
             mark = "✓" if finished == len(ids) else ""
-            head.configure(text=f"{'▾' if is_open else '▸'}   {phase.upper()}     {finished}/{len(ids)}  {mark}",
-                           text_color=SUCCESS if mark else (PRIMARY if current else TEXT))
+            head.configure(text=f"{'▾' if is_open else '▸'}   {phase}     {finished} of {len(ids)}  {mark}",
+                           text_color=SUCCESS if mark else (TEXT if current else MUTED))
             box.grid() if is_open else box.grid_remove()
             for sid in ids:
                 (st, state, note) = by_id[sid]
                 r = self.check_rows[sid]
                 r["var"].set(state in ("done", "na"))
                 auto_done = bool(st[3]) and state in ("done", "na") and sid not in self._by_hand
+                is_next = sid == self._next_id
                 r["cb"].configure(state="disabled" if auto_done else "normal",
-                                  font=font(13, "bold") if sid == self._next_id else font(13),
-                                  text_color=PRIMARY if sid == self._next_id else TEXT)
-                r["tag"].configure(text="N/A" if state == "na" else "")
+                                  font=font(14, "bold") if is_next else font(14),
+                                  text_color=TEXT if is_next or state == "todo" else MUTED)
+                r["tag"].configure(text="NEXT" if is_next else "N/A" if state == "na" else "",
+                                   text_color=PRIMARY if is_next else MUTED)
                 warn = note if note and "issing" in note and state != "na" and sid != "documents" else \
                     (note if sid == "documents" and state == "todo" else "")
                 r["note"].configure(text=warn)

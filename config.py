@@ -9,6 +9,7 @@ DEFAULTS = {
     "clients_root": "",
     "consent_template": "",   # empty = the built-in form in templates/
     "appearance": "System",   # System | Light | Dark
+    "text_size": "Large",     # Normal | Large | Extra large (client_intake.TEXT_SIZES)
     "mvr_to": "",             # branch manager, e.g. name@brokerage.ca
     "mvr_cc": "",             # separate several with ;
     "email_app": "New Outlook",  # New Outlook | Classic Outlook
