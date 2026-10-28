@@ -170,3 +170,53 @@ def apply(folder, docs, info, save):
     labels = dict(FIELDS)
     filled = [f"{labels[k]} ({s})" for k, (_, s) in fill.items()]
     return filled, warnings
+
+
+def _month(d):
+    return d.strftime("%b %Y")
+
+
+def _car(text):
+    """'2019 HONDA CIVIC LX 4DR' -> '2019 Honda Civic LX 4DR' (short codes stay in capitals)."""
+    return " ".join(w.capitalize() if w.isalpha() and len(w) > 3 else w for w in text.split())
+
+
+def quote_email_values(folder, client_name=""):
+    """Email template blanks read from the newest quote: {"common": {key: value},
+    "carriers": [{"insurer", "quote_number", "premium", "declined"}]} - None without a readable quote."""
+    import review
+    quotes = review.find_docs(folder)["quote"]
+    q = _cached(quotes[0], lambda p: quote.read(str(p))) if quotes else None
+    if not q or not q.get("drivers"):
+        return None
+    named = [d for d in q["drivers"] if client_name and _same_name(client_name, d.get("name") or "")]
+    d = named[0] if named else q["drivers"][0]
+    common = {}
+    if q.get("effective"):
+        common["effective_date"] = q["effective"].strftime("%b %d, %Y").replace(" 0", " ")
+    vehicles = q.get("vehicles", [])
+    if vehicles:
+        common["vehicle"] = "; ".join(_car(v["description"]) for v in vehicles)
+        cov = {k.lower(): v for k, v in vehicles[0]["coverages"].items()}
+        ded = [f"${cov[k]} {k}" for k in ("all perils", "collision", "comprehensive", "specified perils")
+               if cov.get(k)]
+        common["deductible"] = " / ".join(ded) if ded else "No physical damage (liability only)"
+        if not any(k.startswith("#23") for v in vehicles for k in v["coverages"]):
+            common["lienholder"] = "None"
+    if d.get("class"):
+        dates = [f"{k.upper()} {_month(d[k])}" for k in ("g1", "g2", "g") if d.get(k)]
+        common["licence"] = d["class"] + (f" ({', '.join(dates)})" if dates else "")
+    since = d.get("date_insured")
+    if since:
+        months = ((q.get("effective") or datetime.date.today()) - since).days // 30
+        common["experience"] = f"Insured since {since:%B %Y}" + (f" (about {months} months)" if months < 24 else "")
+        if d.get("lapses"):
+            common["experience"] += f"; {len(d['lapses'])} lapse(s) on the quote"
+    else:
+        common["experience"] = "No prior insurance"
+    carriers = [{"insurer": c["name"], "quote_number": c.get("reference") or "",
+                 "premium": f"${c['premium']:,.0f}" if c.get("premium") else "",
+                 "declined": any(review.carrier_message(m) == "decline" for m in c.get("messages", []))}
+                for c in q.get("carriers", [])]
+    carriers.sort(key=lambda c: (c["declined"], not c["premium"]))     # bindable quotes first
+    return {"common": common, "carriers": carriers}

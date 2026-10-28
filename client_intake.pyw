@@ -525,6 +525,7 @@ class EmailDialog(Panel):
         self.info = mvr_email.load_client(folder)
         self.client = (self.info.get("name") or folder.name).upper()
         self.saved_fields = dict(self.info.get("email_fields", {}))
+        self.quote_values, self.carrier_pick, self.touched = None, 0, {}
         self.templates = emails.load_templates()
         self.by_label = {f"{t.group[3:]}  ·  {t.name}" if t.group[:1].isdigit() else t.name: t
                          for t in self.templates}
@@ -616,24 +617,84 @@ class EmailDialog(Panel):
         self.bind("<Escape>", lambda e: self.destroy())
 
         self.on_template()
+        self._read_quote()
 
     # ----- template + fields -----
     @property
     def template(self):
         return self.by_label[self.choice.get()]
 
+    def _read_quote(self):
+        """Read the newest quote in the background, then fill the blanks it knows."""
+        result = {}
+
+        def work():
+            try:
+                result["v"] = client_facts.quote_email_values(self.folder, self.client)
+            except Exception:
+                result["v"] = None
+
+        t = threading.Thread(target=work, daemon=True)
+        t.start()
+
+        def wait():
+            if t.is_alive():
+                self.after(100, wait)
+            elif self.winfo_exists() and result.get("v"):
+                self.quote_values = result["v"]
+                self.on_template()
+        wait()
+
+    def _quote_value(self, key):
+        q = self.quote_values
+        if not q:
+            return ""
+        if key in ("insurer", "quote_number", "premium") and q["carriers"]:
+            return q["carriers"][min(self.carrier_pick, len(q["carriers"]) - 1)].get(key, "")
+        return q["common"].get(key, "")
+
+    def _pick_carrier(self, name):
+        names = [c["insurer"] for c in self.quote_values["carriers"]]
+        self.carrier_pick = names.index(name) if name in names else 0
+        for key in ("insurer", "quote_number", "premium"):
+            self.touched.pop(key, None)
+        self.on_template()
+
+    def _typed(self, key):
+        self.touched[key] = self.field_entries[key].get()
+        self.refresh_preview()
+
     def on_template(self):
+        """Blanks: what you typed here wins, then (underwriter emails) the quote, then what was
+        saved for this client, then the quote. Date blanks get a calendar."""
         for w in self.fields_frame.winfo_children():
             w.destroy()
         self.field_entries = {}
+        uw = self._for_uw()
+        carriers = (self.quote_values or {}).get("carriers") or []
         for i, (key, label) in enumerate(self.template.fields):
             ctk.CTkLabel(self.fields_frame, text=label, font=font(13, "bold"), text_color=TEXT, anchor="w") \
                 .grid(row=2 * i, column=0, sticky="w", pady=(1.5 * SP, SP / 2))
-            e = ctk.CTkEntry(self.fields_frame, height=36, font=font(13), border_color=BORDER)
+            from_quote, saved = self._quote_value(key), self.saved_fields.get(key, "")
+            value = self.touched.get(key, (from_quote or saved) if uw else (saved or from_quote))
+            if key == "insurer" and len(carriers) > 1:
+                e = ctk.CTkComboBox(self.fields_frame, height=36, font=font(13), dropdown_font=font(13),
+                                    border_color=BORDER, button_color=PRIMARY, button_hover_color=PRIMARY_HOVER,
+                                    values=[c["insurer"] + (" (declined)" if c["declined"] else "")
+                                            for c in carriers],
+                                    command=lambda v: self._pick_carrier(v.replace(" (declined)", "")))
+                e.set(value)
+            elif "date" in key:
+                e = tracker_ui.DateField(self.fields_frame, sys.modules[__name__],
+                                         on_change=lambda k=key: self._typed(k))
+                if value:
+                    e.insert(0, value)
+            else:
+                e = ctk.CTkEntry(self.fields_frame, height=36, font=font(13), border_color=BORDER)
+                if value:
+                    e.insert(0, value)
+            e.bind("<KeyRelease>", lambda ev, k=key: self._typed(k))
             e.grid(row=2 * i + 1, column=0, sticky="ew")
-            if self.saved_fields.get(key):
-                e.insert(0, self.saved_fields[key])
-            e.bind("<KeyRelease>", lambda ev: self.refresh_preview())
             self.field_entries[key] = e
         self._set_recipient()
         note = self.template.attach
@@ -679,7 +740,11 @@ class EmailDialog(Panel):
             greet = emails.first_name(re.split(r"[._@]", self.to.get().strip())[0])
         v = {"first_name": greet, "CLIENT_NAME": self.client,
              "client_name": self.client.title(), "broker_name": mvr_email.signature_values(self.app.cfg)["name"]}
-        v.update({k: e.get().strip() for k, e in self.field_entries.items()})
+        for k, e in self.field_entries.items():
+            v[k] = e.get().strip()
+            day = records.parse_date(v[k]) if "date" in k else None
+            if day:
+                v[k] = day.strftime("%B %d, %Y").replace(" 0", " ")
         return v
 
     def refresh_preview(self):
