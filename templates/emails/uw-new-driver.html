@@ -1,0 +1,22 @@
+<!--
+name: Less than 1 year insurance experience
+group: 5. Underwriter approval
+order: 50
+to: underwriter
+subject: UW Approval Request - Less Than 1 Year Insurance Experience | {CLIENT_NAME}
+fields: insurer = Insurance company; quote_number = Quote number; vehicle = Vehicle (e.g. 2022 Toyota RAV4); effective_date = Effective date; premium = Annual premium (e.g. $3,250); experience = Insurance history (e.g. no prior insurance / insured since 03/2026); licence = Licence class and years licensed (e.g. G2, licensed 2021)
+attach: Quote, DASH report and MVR
+-->
+<p>Hi {first_name},</p>
+<p>Please review the auto quote below for approval. The client has <b>less than 1 year of insurance experience</b>.</p>
+<ul>
+  <li><b>Client:</b> {CLIENT_NAME}</li>
+  <li><b>Insurance company:</b> {insurer}, quote # {quote_number}</li>
+  <li><b>Vehicle:</b> {vehicle}</li>
+  <li><b>Effective date:</b> {effective_date}</li>
+  <li><b>Annual premium:</b> {premium}</li>
+  <li><b>Insurance history:</b> {experience}</li>
+  <li><b>Licence:</b> {licence}</li>
+</ul>
+<p>The quote, DASH report and MVR are attached. Please let me know if it is approved, or if you need anything else.</p>
+<p>Thank you,</p>

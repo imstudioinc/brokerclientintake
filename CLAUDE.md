@@ -72,7 +72,7 @@ decision changes (edit the section, don't append contradictions).
   `utf-8-sig` (a BOM once wiped the owner's settings: never edit this file with PowerShell
   `Set-Content`/`Out-File` defaults).
 - Keys include `clients_root`, `client_types`, `email_app`, `mvr_to`/`mvr_cc`, signature fields
-  (`sig_name` etc.), `mvr_autosave`, `sample_prev_root` (set while showing sample clients), `knowledge_dir` (Rules tab notes), `rules_file` (custom eligibility rules).
+  (`sig_name` etc.), `mvr_autosave`, `sample_prev_root` (set while showing sample clients), `knowledge_dir` (Rules tab notes), `rules_file` (custom eligibility rules), `uw_email` (WellCare's in-house underwriter: typed once in the Email page, kept out of the public repo).
 - Clients folder (shared drive at work): `Clients\<Type>\<CLIENT NAME>\`. Types default to
   Auto, Home, Tenant, Commercial; folders directly in Clients show as "Other". Names are UPPERCASE.
 - Per-client records: `<client folder>\tracking.json` (`records.py`) - policies, vehicles, property,
@@ -94,7 +94,7 @@ decision changes (edit the section, don't append contradictions).
 | `tools/make_consent_template.py` | Rebuilds the consent template from a filled WellCare form: removes the printed name/date text (not just covers it - the repo is public), adds rows and fields. Dev-only (pypdf) |
 | `dash_import.py` | Finds DASH reports in Downloads and moves them into the client folder |
 | `mvr_email.py`, `mvr_watch.py` | MVR request email (Outlook draft with attachments); watches Downloads and files incoming MVR PDFs into the right client by licence # / name |
-| `emails.py`, `templates/emails/` | Client email templates (quote requests, quote accepted / documents needed, confirmations, pink card) as Outlook drafts with the HTML signature |
+| `emails.py`, `templates/emails/` | Client email templates (quote requests, quote accepted / documents needed, confirmations, pink card) as Outlook drafts with the HTML signature. `to: underwriter` in a template's header sends it to WellCare's underwriter (`uw_email`) instead of the client, with the latest quote / DASH / MVR ticked: UW approval for < 1 yr insurance experience and deductibles over $1,000 |
 | `records.py`, `tracker_ui.py` | Client record dialog and the Tracker view (to-dos, renewals, policies) |
 | `notes_search.py`, `rules_ui.py` | **Rules** tab: offline search over the `.md` notes (sections by `##`, items = bullets / table rows; rare words weigh more, named carrier's notes first, small synonym list) |
 | `eligibility.py` | DASH reader (facts, claims, policies, gaps) + rules engine (`if` / `when` conditions, verdicts Proceed / Caution / Refer to underwriter / Not eligible, market `tier` and `lines`) |

@@ -552,8 +552,8 @@ class EmailDialog(Panel):
                           command=lambda _: self.on_template()) \
             .grid(row=1, column=0, sticky="ew", padx=p)
 
-        ctk.CTkLabel(left, text="To (client email) *", font=font(13, "bold"), text_color=TEXT) \
-            .grid(row=2, column=0, sticky="w", padx=p, pady=(1.5 * SP, SP / 2))
+        self.to_label = ctk.CTkLabel(left, text="To (client email) *", font=font(13, "bold"), text_color=TEXT)
+        self.to_label.grid(row=2, column=0, sticky="w", padx=p, pady=(1.5 * SP, SP / 2))
         self.to = ctk.CTkEntry(left, height=36, font=font(13), border_color=BORDER,
                                placeholder_text="client@email.com")
         self.to.grid(row=3, column=0, sticky="ew", padx=p)
@@ -636,13 +636,49 @@ class EmailDialog(Panel):
                 e.insert(0, self.saved_fields[key])
             e.bind("<KeyRelease>", lambda ev: self.refresh_preview())
             self.field_entries[key] = e
+        self._set_recipient()
         note = self.template.attach
         self.attach_note.configure(text=f"Suggested: {note}" if note else "Nothing needed for this email.")
         self.error.configure(text="")
         self.refresh_preview()
 
+    def _for_uw(self):
+        return self.template.to == "underwriter"
+
+    def _set_recipient(self):
+        """Underwriter templates go to WellCare's underwriter (address remembered in the settings),
+        with the latest quote / DASH / MVR ticked; the others go to the client."""
+        uw = self._for_uw()
+        if uw == getattr(self, "_uw_mode", False):
+            return
+        self._uw_mode = uw
+        if uw:
+            addr = self.app.cfg.get("uw_email", "")
+            name = emails.first_name(re.split(r"[._@]", addr)[0]) if addr else ""
+            label, hint = "To (WellCare underwriter) *", "underwriter@wellcareinsurance.ca"
+        else:
+            addr, name = self.info.get("email", ""), emails.first_name(self.client)
+            label, hint = "To (client email) *", "client@email.com"
+        self.to_label.configure(text=label)
+        self.to.delete(0, "end")
+        self.to.configure(placeholder_text=hint)
+        if addr:
+            self.to.insert(0, addr)
+        self.greeting.delete(0, "end")
+        self.greeting.insert(0, name)
+        if uw:
+            seen = set()
+            for var, f in self.attach:     # newest first
+                kind = next((k for k in ("quote", "dash", "mvr") if k in f.name.lower()), None)
+                if kind and kind not in seen:
+                    seen.add(kind)
+                    var.set(True)
+
     def values(self):
-        v = {"first_name": self.greeting.get().strip(), "CLIENT_NAME": self.client,
+        greet = self.greeting.get().strip()
+        if not greet and self._for_uw() and "@" in self.to.get():
+            greet = emails.first_name(re.split(r"[._@]", self.to.get().strip())[0])
+        v = {"first_name": greet, "CLIENT_NAME": self.client,
              "client_name": self.client.title(), "broker_name": self.app.cfg.get("sig_name", "")}
         v.update({k: e.get().strip() for k, e in self.field_entries.items()})
         return v
@@ -681,7 +717,8 @@ class EmailDialog(Panel):
     def submit(self):
         to = self.to.get().strip()
         if not re.fullmatch(r"[^@\s;]+@[^@\s;]+\.[^@\s;]+", to):
-            self.error.configure(text="Enter the client's email address.", text_color=DANGER)
+            self.error.configure(text="Enter the underwriter's email address." if self._for_uw()
+                                 else "Enter the client's email address.", text_color=DANGER)
             self.to.focus_set()
             return
         values = self.values()
@@ -694,7 +731,12 @@ class EmailDialog(Panel):
         subject, body = emails.render(self.template, values)
 
         self.saved_fields.update({k: e.get().strip() for k, e in self.field_entries.items() if e.get().strip()})
-        mvr_email.save_client(self.folder, email=to.lower(), email_fields=self.saved_fields)
+        if self._for_uw():
+            if to.lower() != self.app.cfg.get("uw_email", ""):
+                config.update(self.app.cfg, uw_email=to.lower())
+            mvr_email.save_client(self.folder, email_fields=self.saved_fields)
+        else:
+            mvr_email.save_client(self.folder, email=to.lower(), email_fields=self.saved_fields)
 
         self.go.configure(state="disabled", text="Opening Outlook…")
         self.update_idletasks()

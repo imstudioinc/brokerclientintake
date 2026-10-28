@@ -9,6 +9,7 @@ Template file format:
     subject: Your Auto Insurance Policy - Confirmation | {CLIENT_NAME}
     fields: insurer = Insurance company; auto_policy_number = Auto policy number
     attach: Policy documents and pink card(s)
+    to: underwriter          (optional: sent to WellCare's underwriter, not the client)
     -->
     <p>Hi {first_name}, ...</p>  {{include:policy_reminders}}
 
@@ -38,6 +39,7 @@ class Template:
     fields: list = field(default_factory=list)   # [(key, label)]
     attach: str = ""
     custom: bool = False                         # an edited copy in USER_DIR
+    to: str = ""                                 # "underwriter" = WellCare's underwriter, else the client
 
 
 def _parse(path, custom):
@@ -56,7 +58,7 @@ def _parse(path, custom):
         fields.append((key.strip(), label.strip() or key.strip()))
     return Template(path.name, meta.get("name", path.stem), meta.get("group", "Other"),
                     int(meta.get("order", 99)), meta.get("subject", path.stem), text.strip(),
-                    fields, meta.get("attach", ""), custom)
+                    fields, meta.get("attach", ""), custom, meta.get("to", "").lower())
 
 
 def load_templates():
