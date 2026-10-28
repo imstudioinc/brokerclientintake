@@ -1738,15 +1738,16 @@ class App(ctk.CTk):
         more = ctk.CTkFrame(body, fg_color="transparent")
         more.grid(row=2, column=0, sticky="w", padx=p - SP / 2, pady=(SP / 2, 0))
         small = dict(font=font(12), fg_color="transparent", hover_color=SURFACE_ALT, text_color=MUTED, height=28)
-        self.refill_btn = ctk.CTkButton(more, text="Fill consent", width=96, command=sel(self.refill), **small)
+        # the everyday links; the rest sit under More
+        self.consent_label = "Fill consent"
         for text, cmd, w in (("Import DASH", sel(lambda f: ImportDashDialog(self, f)), 96),
-                             ("ARS entry", sel(lambda f: ars_ui.ArsEntryPage(self, f)), 80), (None, None, 0),
+                             ("ARS entry", sel(lambda f: ars_ui.ArsEntryPage(self, f)), 80),
                              ("UW call", sel(lambda f: carriers_ui.UwCallPage(self, f)), 70),
-                             ("Carriers", sel(lambda f: carriers_ui.CarrierInfoPage(self, f)), 70),
-                             ("Client record", sel(lambda f: tracker_ui.ClientRecordDialog(self, f)), 100),
                              ("Open folder", sel(os.startfile), 90)):
-            b = self.refill_btn if text is None else ctk.CTkButton(more, text=text, width=w, command=cmd, **small)
-            b.pack(side="left")
+            ctk.CTkButton(more, text=text, width=w, command=cmd, **small).pack(side="left")
+        more_btn = ctk.CTkButton(more, text="More ▾", width=70, **small)
+        more_btn.configure(command=lambda: self._more_menu(more_btn, sel))
+        more_btn.pack(side="left")
         self.detail_msg = ctk.CTkLabel(body, text="", font=font(13), text_color=SUCCESS,
                                        justify="left", anchor="w", wraplength=520)
         self.detail_msg.grid(row=3, column=0, sticky="w", padx=p, pady=(SP, 0))
@@ -1772,6 +1773,14 @@ class App(ctk.CTk):
         self._build_steps(self.steps_tab)
         self._build_documents(self.docs_tab, sel)
         self._details_showing = None
+
+    def _more_menu(self, button, sel):
+        menu = tk.Menu(self, tearoff=0, font=("Segoe UI", 10))
+        for text, cmd in ((self.consent_label, sel(self.refill)),
+                          ("Carriers & payments", sel(lambda f: carriers_ui.CarrierInfoPage(self, f))),
+                          ("Client record", sel(lambda f: tracker_ui.ClientRecordDialog(self, f)))):
+            menu.add_command(label=text, command=cmd)
+        menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height())
 
     def _build_documents(self, tab, sel):
         docs_head = ctk.CTkFrame(tab, fg_color="transparent")
@@ -1848,7 +1857,7 @@ class App(ctk.CTk):
         self.next_hint = ctk.CTkLabel(card, text="", font=font(12), text_color=MUTED, anchor="w", justify="left",
                                       wraplength=480)
         self.next_hint.grid(row=2, column=1, sticky="w", padx=2 * SP, pady=(2, 0))
-        btns = ctk.CTkFrame(card, fg_color="transparent")
+        btns = self.next_btns = ctk.CTkFrame(card, fg_color="transparent")
         btns.grid(row=3, column=1, sticky="w", padx=2 * SP, pady=(SP, 1.5 * SP))
         sel = self._sel
         self.next_buttons = {
@@ -1939,6 +1948,10 @@ class App(ctk.CTk):
             (sid, title, hint, auto, can_na, action), _, note = nxt
             self.next_card.configure(fg_color=SURFACE_ALT)
             self.next_accent.configure(fg_color=PRIMARY)
+            self.next_kicker.grid()
+            self.next_btns.grid()
+            self.next_title.grid_configure(pady=0)
+            self.next_title.configure(font=font(16, "bold"), text_color=TEXT)
             self.next_kicker.configure(text=f"NEXT STEP  ·  {done} of {total} done", text_color=PRIMARY)
             self.next_title.configure(text=title)
             text = ((note + ".  ") if note else "") + hint
@@ -1953,16 +1966,27 @@ class App(ctk.CTk):
                 self.next_na.pack(side="left")
             if sid == "profile":
                 self.next_buttons["edit"].pack(side="left", padx=(0, SP)) if not action else None
+            if not self.next_btns.pack_slaves():      # an empty CTkFrame is 200 px tall
+                self.next_btns.grid_remove()
+                self.next_hint.grid_configure(pady=(2, 1.5 * SP))
+            else:
+                self.next_hint.grid_configure(pady=(2, 0))
         else:
             self.next_card.configure(fg_color=SUCCESS_BG)
             self.next_accent.configure(fg_color=SUCCESS)
-            self.next_kicker.configure(text="ALL STEPS DONE", text_color=SUCCESS)
-            self.next_title.configure(text="Nothing left on the checklist")
-            self.next_hint.configure(text="Documents still missing show on the Documents tab." if have < len(needed)
-                                     else "", text_color=MUTED)
-            self.next_hint.grid() if have < len(needed) else self.next_hint.grid_remove()
-            if have < len(needed):
+            # one short line instead of a big card
+            self.next_kicker.grid_remove()
+            self.next_hint.grid_remove()
+            missing = len(needed) - have
+            self.next_title.configure(text=f"✓  All {total} steps done" + (f"  ·  {missing} document"
+                                      f"{'s' if missing > 1 else ''} still missing" if missing else ""),
+                                      font=font(14, "bold"), text_color=SUCCESS)
+            self.next_title.grid_configure(pady=(1.5 * SP, 0 if missing else 1.5 * SP))
+            if missing:
+                self.next_btns.grid()
                 self.next_buttons["docs"].pack(side="left")
+            else:
+                self.next_btns.grid_remove()
 
         # stages: finished ones fold into one line, the current one is open
         for phase, ids in checklist.PHASES:
@@ -1984,7 +2008,7 @@ class App(ctk.CTk):
                 r["cb"].configure(state="disabled" if auto_done else "normal",
                                   font=font(13, "bold") if sid == self._next_id else font(13),
                                   text_color=PRIMARY if sid == self._next_id else TEXT)
-                r["tag"].configure(text="N/A" if state == "na" else "auto" if auto_done else "")
+                r["tag"].configure(text="N/A" if state == "na" else "")
                 warn = note if note and "issing" in note and state != "na" and sid != "documents" else \
                     (note if sid == "documents" and state == "todo" else "")
                 r["note"].configure(text=warn)
@@ -2058,7 +2082,7 @@ class App(ctk.CTk):
         self.docs_bar.set(have / len(needed) if needed else 0)
         self._show_steps(folder, kind, docs, info, skip)
         # the consent needs only the client's name: fill it any time, DASH or not
-        self.refill_btn.configure(text="Refill consent" if docs["Client consent"] else "Fill consent")
+        self.consent_label = "Refill consent" if docs["Client consent"] else "Fill consent"
         note = self.note[1:] if self.note and self.note[0] == folder else ("", SUCCESS)
         self.detail_msg.configure(text=note[0], text_color=note[1])
         self.detail_msg.grid() if note[0] else self.detail_msg.grid_remove()
