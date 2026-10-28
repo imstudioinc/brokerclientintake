@@ -630,9 +630,11 @@ class EmailDialog(Panel):
 
         def work():
             try:
-                result["v"] = client_facts.quote_email_values(self.folder, self.client)
-            except Exception:
-                result["v"] = None
+                result["v"] = client_facts.quote_email_values(self.folder, self.client) or {
+                    "common": {}, "carriers": [],
+                    "note": 'No quote in the client folder (a PDF with "Quote" in its name) - type the blanks in.'}
+            except Exception as e:
+                result["v"] = {"common": {}, "carriers": [], "note": f"Could not read the quote: {e!r}"}
 
         t = threading.Thread(target=work, daemon=True)
         t.start()
@@ -699,7 +701,13 @@ class EmailDialog(Panel):
         self._set_recipient()
         note = self.template.attach
         self.attach_note.configure(text=f"Suggested: {note}" if note else "Nothing needed for this email.")
-        self.error.configure(text="")
+        q = self.quote_values or {}
+        if q.get("note") and self._for_uw():
+            self.error.configure(text=q["note"], text_color=DANGER)
+        elif q.get("file") and self.template.fields:
+            self.error.configure(text=f"Blanks filled from {q['file']} - check them.", text_color=MUTED)
+        else:
+            self.error.configure(text="")
         self.refresh_preview()
 
     def _for_uw(self):

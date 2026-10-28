@@ -183,15 +183,23 @@ def _car(text):
 
 def quote_email_values(folder, client_name=""):
     """Email template blanks read from the newest quote: {"common": {key: value},
-    "carriers": [{"insurer", "quote_number", "premium", "declined"}]} - None without a readable quote."""
+    "carriers": [{"insurer", "quote_number", "premium", "declined"}], "file", "note"} - None without a
+    quote. Whatever can be read is filled; "note" says what couldn't be (shown in the email page)."""
     import review
     quotes = review.find_docs(folder)["quote"]
-    q = _cached(quotes[0], lambda p: quote.read(str(p))) if quotes else None
-    if not q or not q.get("drivers"):
+    if not quotes:
         return None
-    named = [d for d in q["drivers"] if client_name and _same_name(client_name, d.get("name") or "")]
-    d = named[0] if named else q["drivers"][0]
-    common = {}
+    out = {"common": {}, "carriers": [], "file": quotes[0].name, "note": ""}
+    try:
+        q = quote.read(str(quotes[0]))
+    except Exception as e:
+        out["note"] = f"Could not read {quotes[0].name}: {e}"
+        return out
+    drivers = q.get("drivers") or []
+    named = [d for d in drivers if client_name and _same_name(client_name, d.get("name") or "")]
+    d = named[0] if named else drivers[0] if drivers else None
+    missing = [] if d else ["the driver (licence, insurance history)"]
+    common = out["common"]
     if q.get("effective"):
         common["effective_date"] = q["effective"].strftime("%b %d, %Y").replace(" 0", " ")
     vehicles = q.get("vehicles", [])
@@ -203,20 +211,27 @@ def quote_email_values(folder, client_name=""):
         common["deductible"] = " / ".join(ded) if ded else "No physical damage (liability only)"
         if not any(k.startswith("#23") for v in vehicles for k in v["coverages"]):
             common["lienholder"] = "None"
-    if d.get("class"):
+    if d and d.get("class"):
         dates = [f"{k.upper()} {_month(d[k])}" for k in ("g1", "g2", "g") if d.get(k)]
         common["licence"] = d["class"] + (f" ({', '.join(dates)})" if dates else "")
-    since = d.get("date_insured")
+    since = d.get("date_insured") if d else None
     if since:
         months = ((q.get("effective") or datetime.date.today()) - since).days // 30
         common["experience"] = f"Insured since {since:%B %Y}" + (f" (about {months} months)" if months < 24 else "")
         if d.get("lapses"):
             common["experience"] += f"; {len(d['lapses'])} lapse(s) on the quote"
-    else:
+    elif d:
         common["experience"] = "No prior insurance"
+    if not vehicles:
+        missing.append("the vehicle")
     carriers = [{"insurer": c["name"], "quote_number": c.get("reference") or "",
                  "premium": f"${c['premium']:,.0f}" if c.get("premium") else "",
                  "declined": any(review.carrier_message(m) == "decline" for m in c.get("messages", []))}
                 for c in q.get("carriers", [])]
     carriers.sort(key=lambda c: (c["declined"], not c["premium"]))     # bindable quotes first
-    return {"common": common, "carriers": carriers}
+    if not carriers:
+        missing.append("the insurance company / quote #")
+    out["carriers"] = carriers
+    if missing:
+        out["note"] = f"From {quotes[0].name}: could not find " + ", ".join(missing) + " - type those in."
+    return out
