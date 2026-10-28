@@ -101,6 +101,7 @@ decision changes (edit the section, don't append contradictions).
 | `records.py`, `tracker_ui.py` | Client record dialog and the Tracker view (to-dos, renewals, policies) |
 | `notes_search.py`, `rules_ui.py` | **Rules** tab: offline search over the `.md` notes (sections by `##`, items = bullets / table rows; rare words weigh more, named carrier's notes first, small synonym list) |
 | `eligibility.py` | DASH reader (facts, claims, policies, gaps) + rules engine (`if` / `when` conditions, verdicts Proceed / Caution / Refer to underwriter / Not eligible, market `tier` and `lines`) |
+| `ars.py`, `ars_ui.py` | **ARS entry** page (client panel link): DASH -> ARS Claims form per claim (Date MM/DD/YYYY, Description dropdown value from coverage / KOL codes, Vehicle, Chargeable, TP/BI / TP/PD / AB / Coll / Other PD = losses only; DCPD KOL16+18 go in Other PD) with Copy buttons; claims over 6 years listed as "don't enter"; insurance history (prior insurer, first insured, continuous since, lapses from `*POSSIBLE GAP*`, cancellations). `eligibility.read_dash_facts` claim details carry `kols`, `claim_no`, `vehicle`, `vehicle_loss` |
 | `templates/rules_ontario.json` | Built-in rules: Intact (standard), Jevco (non-standard), Echelon (commercial, Commercial clients only), WellCare in-house rules (`applies_to_all`) |
 | `ocr.py` | PDF text layer, else Windows built-in OCR (`Windows.Media.Ocr` via winrt) - no internet, nothing to install |
 | `mvr.py` | MVR reader (PDF text, scanned PDF or photo/screenshot) |

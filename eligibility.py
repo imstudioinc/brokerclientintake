@@ -109,9 +109,19 @@ def read_dash_facts(pdf_path, today=None, at_fault_over=25):
     for block in re.split(r"\n(?=Claim #\d+ Date of Loss)", text)[1:]:
         n = int(re.match(r"Claim #(\d+)", block).group(1))
         loss = re.search(r"Total Loss:\s*\$([\d,.]+)", block)
+        block = re.split(r"\nPage \d+ of \d+", block)[0]
+        # "KOL16 - Other Property Damage to insured vehicle: $5,370.00 (Loss); $2.00 (Expense); RESERVE (26/09);"
+        kols = [{"code": int(k.group(1)), "what": k.group(2).strip(), "loss": float(k.group(3).replace(",", "")),
+                 "expense": float(k.group(4).replace(",", "")), "reserve": "RESERVE" in k.group(5)}
+                for k in re.finditer(r"KOL(\d+)\s*-\s*(.+?):\s*\$([\d,.]+)\s*\(Loss\);\s*\$([\d,.]+)\s*\(Expense\);(.*)",
+                                     block)]
+        vehicle = re.search(r"^Vehicle:\s*(.+?)\n(?:Type of Use|Vehicle Loss|First Party)", block, re.S | re.M)
         detail.setdefault(n, {"coverage": _field(block, "Coverage"), "status": _field(block, "Claim Status"),
                               "driver": _field(block, "First Party Driver"),
-                              "loss": float(loss.group(1).replace(",", "")) if loss else 0.0})
+                              "loss": float(loss.group(1).replace(",", "")) if loss else 0.0,
+                              "kols": kols, "claim_no": _field(block, "Claim #"),
+                              "vehicle": " ".join(vehicle.group(1).split()) if vehicle else "",
+                              "vehicle_loss": _field(block, "Vehicle Loss")})
 
     # Claims list: "#2 Date of Loss 2024-12-27 CAA Insurance Company At-Fault : 100%"
     claims = []
@@ -122,7 +132,8 @@ def read_dash_facts(pdf_path, today=None, at_fault_over=25):
         if d and key not in seen:  # each claim once, even if repeated on detail pages
             seen.add(key)
             c = {"number": int(m.group(1)), "date": d, "insurer": m.group(3).strip(), "fault": int(m.group(4)),
-                 **detail.get(int(m.group(1)), {"coverage": "", "status": "", "driver": "", "loss": 0.0})}
+                 **detail.get(int(m.group(1)), {"coverage": "", "status": "", "driver": "", "loss": 0.0, "kols": [],
+                                                "claim_no": "", "vehicle": "", "vehicle_loss": ""})}
             named = c["driver"] and c["driver"].lower() != "not available"
             c["at_wheel"] = _same_person(c["driver"], driver) if named and driver else None   # None = unknown
             claims.append(c)

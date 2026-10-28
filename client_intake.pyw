@@ -26,6 +26,7 @@ from panel import Panel
 import checklist
 import client_edit
 import client_facts
+import ars_ui
 import carriers_ui
 import records
 import rules_ui
@@ -1738,7 +1739,8 @@ class App(ctk.CTk):
         more.grid(row=2, column=0, sticky="w", padx=p - SP / 2, pady=(SP / 2, 0))
         small = dict(font=font(12), fg_color="transparent", hover_color=SURFACE_ALT, text_color=MUTED, height=28)
         self.refill_btn = ctk.CTkButton(more, text="Fill consent", width=96, command=sel(self.refill), **small)
-        for text, cmd, w in (("Import DASH", sel(lambda f: ImportDashDialog(self, f)), 96), (None, None, 0),
+        for text, cmd, w in (("Import DASH", sel(lambda f: ImportDashDialog(self, f)), 96),
+                             ("ARS entry", sel(lambda f: ars_ui.ArsEntryPage(self, f)), 80), (None, None, 0),
                              ("UW call", sel(lambda f: carriers_ui.UwCallPage(self, f)), 70),
                              ("Carriers", sel(lambda f: carriers_ui.CarrierInfoPage(self, f)), 70),
                              ("Client record", sel(lambda f: tracker_ui.ClientRecordDialog(self, f)), 100),
