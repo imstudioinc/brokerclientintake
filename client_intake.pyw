@@ -302,19 +302,18 @@ class SignatureDialog(Panel):
         body.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(body, text="Added to the bottom of every email the app creates (New and Classic Outlook).\n"
                                 "Logo, website and confidentiality notice are added automatically.\n"
-                                "Leave your name empty for no signature.",
+                                "Empty fields use the default details shown.",
                      font=font(12), text_color=MUTED, justify="left") \
             .grid(row=0, column=0, sticky="w", padx=2 * SP, pady=(2 * SP, 0))
 
         self.entries = {}
+        current = mvr_email.signature_values(app.cfg)
         for i, (key, label, hint) in enumerate(self.FIELDS):
             ctk.CTkLabel(body, text=label, font=font(13, "bold"), text_color=TEXT) \
                 .grid(row=1 + 2 * i, column=0, sticky="w", padx=2 * SP, pady=(1.5 * SP, SP / 2))
             e = ctk.CTkEntry(body, height=36, font=font(13), border_color=BORDER, placeholder_text=hint)
             e.grid(row=2 + 2 * i, column=0, sticky="ew", padx=2 * SP)
-            value = app.cfg.get(f"sig_{key}") or ("Insurance Broker" if key == "title" else "")
-            if value:
-                e.insert(0, value)
+            e.insert(0, current[key])
             self.entries[key] = e
         ctk.CTkLabel(body, text="").grid(row=99, column=0)
 
@@ -679,7 +678,7 @@ class EmailDialog(Panel):
         if not greet and self._for_uw() and "@" in self.to.get():
             greet = emails.first_name(re.split(r"[._@]", self.to.get().strip())[0])
         v = {"first_name": greet, "CLIENT_NAME": self.client,
-             "client_name": self.client.title(), "broker_name": self.app.cfg.get("sig_name", "")}
+             "client_name": self.client.title(), "broker_name": mvr_email.signature_values(self.app.cfg)["name"]}
         v.update({k: e.get().strip() for k, e in self.field_entries.items()})
         return v
 

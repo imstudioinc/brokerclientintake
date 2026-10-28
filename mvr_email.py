@@ -70,13 +70,19 @@ def build_body_html(first, last, dln, phone, email):
 
 TEMPLATES = Path(__file__).parent / "templates"
 SIGNATURE_FIELDS = ["name", "title", "phone", "email", "address1", "address2", "branch"]
+# the owner's details: used for any field left empty in Settings > Email signature
+SIGNATURE_DEFAULTS = {"name": "Ilkin Mammadzada", "title": "Insurance Broker", "phone": "+1 (437) 421-3210",
+                      "email": "ilkin@wellcareinsurance.ca", "address1": "Unit 2-427 Dundas St E",
+                      "address2": "Waterdown, ON L8B 0K4", "branch": "Branch #24"}
+
+
+def signature_values(cfg):
+    return {k: (cfg.get(f"sig_{k}") or "").strip() or SIGNATURE_DEFAULTS[k] for k in SIGNATURE_FIELDS}
 
 
 def build_signature(cfg):
-    """Fill templates/signature.html from the sig_* settings. Empty name -> no signature."""
-    values = {k: (cfg.get(f"sig_{k}") or "").strip() for k in SIGNATURE_FIELDS}
-    if not values["name"]:
-        return ""
+    """Fill templates/signature.html from the sig_* settings (empty fields use the defaults)."""
+    values = signature_values(cfg)
     template = (TEMPLATES / "signature.html").read_text(encoding="utf-8")
     template = re.sub(r"<!--.*?-->", "", template, flags=re.S).strip()
     filled = {k: html.escape(v) for k, v in values.items()}
