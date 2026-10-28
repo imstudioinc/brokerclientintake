@@ -29,7 +29,10 @@ decision changes (edit the section, don't append contradictions).
   - The **Underwriting Knowledge notes** (carrier manuals, WellCare in-house rules, payments,
     contacts) stay **out of the repo**. On this dev PC they are in
     `Documents\Docs\Insurance\Underwriting Knowledge\` (notes 01-12 + `00 Index.md` + `carriers.json`); on the remote
-    desktop the owner copied the folder locally and points the Rules tab at it (Notes folder…).
+    desktop the folder sits on the Desktop next to `ClientIntake-windows`. No setting needed:
+    `notes_search.notes_dir()` uses the chosen folder if it still exists, else `Underwriting Knowledge`
+    next to the app or up to 2 folders above it, next to the Clients folder, or in Documents. Never
+    put the notes in the repo or the release zip (`.gitignore` blocks `Underwriting Knowledge/`).
   - Known issue, owner informed: `templates/rules_ontario.json` (built-in eligibility rules,
     summarised from Intact / Jevco / Echelon manuals and WellCare rules) is in the public repo.
     Offered to move it out (read from a file on the shared drive); not decided yet.

@@ -9,7 +9,33 @@ import math
 import re
 from pathlib import Path
 
-DEFAULT_NOTES = Path.home() / "Documents" / "Docs" / "Insurance" / "Underwriting Knowledge"
+import sys
+
+FOLDER = "Underwriting Knowledge"
+DEFAULT_NOTES = Path.home() / "Documents" / "Docs" / "Insurance" / FOLDER
+APP_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+
+
+def _has_notes(folder):
+    try:
+        return folder.is_dir() and any(folder.glob("*.md"))
+    except OSError:
+        return False
+
+
+def notes_dir(cfg):
+    """The notes folder, found without any setting: the folder chosen in the Rules tab (if it still
+    exists), else an "Underwriting Knowledge" folder next to the app or up to two folders above it
+    (e.g. Desktop next to ClientIntake-windows/ClientIntake/ClientIntake.exe; in the project folder
+    it is git-ignored - the repo is public), next to the Clients folder, or in Documents."""
+    chosen = cfg.get("knowledge_dir")
+    if chosen and _has_notes(Path(chosen)):
+        return Path(chosen)
+    places = [APP_DIR / FOLDER, APP_DIR.parent / FOLDER, APP_DIR.parent.parent / FOLDER]
+    if cfg.get("clients_root"):
+        places.append(Path(cfg["clients_root"]).parent / FOLDER)
+    places.append(DEFAULT_NOTES)
+    return next((p for p in places if _has_notes(p)), Path(chosen) if chosen else DEFAULT_NOTES)
 
 CARRIERS = ("intact", "jevco", "pembridge", "echelon", "pafco", "wellcare", "economical", "aviva")
 

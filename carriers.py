@@ -17,7 +17,7 @@ _cache = {}
 
 
 def path(cfg):
-    return Path(cfg.get("knowledge_dir") or notes_search.DEFAULT_NOTES) / FILE
+    return notes_search.notes_dir(cfg) / FILE
 
 
 def load(cfg):

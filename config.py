@@ -15,7 +15,7 @@ DEFAULTS = {
     "client_types": "Auto, Home, Tenant, Commercial",  # sub-folders of the Clients folder
     "last_type": "Auto",
     "mvr_autosave": True,     # file MVR PDFs from Downloads into client folders
-    "knowledge_dir": "",      # Rules tab notes; empty = Documents\Docs\Insurance\Underwriting Knowledge
+    "knowledge_dir": "",      # Rules tab notes; empty = found by notes_search.notes_dir()
 }
 
 

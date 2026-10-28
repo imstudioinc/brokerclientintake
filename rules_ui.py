@@ -66,7 +66,7 @@ class RulesView(ctk.CTkFrame):
 
     # ---------- notes ----------
     def reload(self):
-        folder = notes_search.Path(self.app.cfg.get("knowledge_dir") or notes_search.DEFAULT_NOTES)
+        folder = notes_search.notes_dir(self.app.cfg)
         self.index = notes_search.Index(folder)
         if self.index.notes:
             self.notes_label.configure(text=f"{len(self.index.notes)} notes in {self.ui.shorten_path(folder, 90)}",
