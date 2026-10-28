@@ -86,9 +86,9 @@ decision changes (edit the section, don't append contradictions).
 
 | File | What it does |
 |---|---|
-| `client_intake.pyw` | Main window: client list (paged, cached) on the left with **+ New client**; selected client on the right (header with contact details + Edit, documents grouped with a progress bar, 3 main actions + small ones); dialogs (`ClientDialog` for new / edit, Settings, Signature, MVR request, Email, Import DASH); top bar Clients / Tracker / Rules views; design tokens |
+| `client_intake.pyw` | Main window: client list (paged, cached; line shows the client's stage) on the left with **+ New client**; selected client on the right (header with contact details + Open folder / Edit, a strip of the 3 stages, next-step card, then the chosen stage's buttons, steps and documents); dialogs (`ClientDialog` for new / edit, Settings, Signature, MVR request, Email, Import DASH); top bar Clients / Tracker / Rules views; design tokens |
 | `panel.py` | `Panel`: a page inside the main window that replaces `CTkToplevel` for every dialog (Back bar, title, stacking, window-only calls ignored, forms centred / scrollable) |
-| `checklist.py` | Auto process checklist (12 steps from the owner): auto-ticks from folder / `client.json` (licence #, `mvr_requested`) and logged UW calls (`uw_call` step: done when a call is logged with a result, N/A by itself when the quote has no refer messages; the quote's refer messages are kept in `tracking.json` `quote_refers` keyed on file name + mtime so the client list never reads PDFs), manual ticks and N/A saved in `tracking.json` under `checklist`; `status()` / `summary()` feed the client panel and the list line |
+| `checklist.py` | Auto process checklist (16 steps in the owner's **3 stages** `STAGES`: 1 Intake = details & documents, 2 Quote = forms & quote, 3 Policy = bind, upload files, send documents to the client; `WAITING` steps (MVR received, client documents) don't hold up the next step): auto-ticks from folder / `client.json` (licence #, `mvr_requested`) and logged UW calls (`uw_call` step: done when a call is logged with a result, N/A by itself when the quote has no refer messages; the quote's refer messages are kept in `tracking.json` `quote_refers` keyed on file name + mtime so the client list never reads PDFs), manual ticks and N/A saved in `tracking.json` under `checklist`; `status()` / `summary()` feed the client panel and the list line |
 | `client_edit.py` | Edit client: plan / apply a name or type change (move the folder first - if Windows refuses nothing has changed; then rename files containing the old name; save `client.json`) |
 | `client_facts.py` | Reads the client's name, licence #, date of birth (quote + DASH), phone and email (quote page 1, the right-hand applicant block - the left block is the brokerage). Fills EMPTY `client.json` fields only (never overwrites; `birth` saved as YYYY-MM-DD) and returns mismatch warnings (profile vs documents, quote vs DASH). Runs in `show_details`, so it re-checks whenever a document lands; PDFs cached by (path, mtime) |
 | `carriers.py` | Loads `carriers.json` from the notes folder (`knowledge_dir`), cached by mtime; `find()` maps a quote's carrier name to an entry (aliases); `contacts()` pulls phones / emails out of contact lines |
@@ -134,7 +134,7 @@ decision changes (edit the section, don't append contradictions).
   Large); plain Tk widgets (client list rows) size their fonts by the same factor. Body text 14,
   labels 12-13, never below 12. **Red (PRIMARY) only for the one main action on a screen** (the
   next-step button, Save / Create draft); "check this" text is amber `WARN`, not red; selected tabs
-  are neutral `RAISED`. Rarely used links go under a **More ▾** menu.
+  are neutral `RAISED`. Each stage page holds only its own buttons (no long toolbar).
 - An **empty CTkFrame is 200 px tall**: give containers that may be empty `height=1`, or
   `grid_remove()` them (this caused big gaps on the client panel and the Email page).
 - Keep screens simple: the owner found a long flat list of checks "too complicated". Pattern that

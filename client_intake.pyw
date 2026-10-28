@@ -1572,7 +1572,7 @@ class App(ctk.CTk):
         row.sub.configure(fg=self._c(MUTED))
 
     def _doc_count(self, folder, mtime, kind=""):
-        """(docs found, docs needed, checklist "5/12" or "", contact missing) for the list row."""
+        """(docs found, docs needed, stage "2. Quote" or "", contact missing) for the list row."""
         def stamp(name):
             try:
                 return (folder / name).stat().st_mtime
@@ -1586,7 +1586,8 @@ class App(ctk.CTk):
             docs = {k: v for k, v in found.items() if k not in skip}
             info = mvr_email.load_client(folder)
             rows = checklist.status(folder, kind, found, info, skip, read_quote=False)
-            steps = "{}/{}".format(*checklist.summary(rows)[:2]) if rows else ""
+            stage = checklist.current_stage(rows) if rows else None
+            steps = "" if not rows else "✓ Policy done" if stage is None else                 f"{stage + 1}. {checklist.STAGES[stage][0]}"
             missing = [w for w in ("phone", "email") if not info.get(w)] if kind == "Auto" else []
             cached = (key, (sum(1 for v in docs.values() if v), len(docs), steps, missing))
             self._docs_cache[folder] = cached
@@ -1658,7 +1659,7 @@ class App(ctk.CTk):
             row = self.rows.get(folder) or self._make_row(folder)
             when = datetime.datetime.fromtimestamp(mtime).strftime("%b %d, %Y")
             have, need, steps, missing = self._doc_count(folder, mtime, ftype)
-            sub = f"{ftype}  ·  {when}  ·  " + (f"Step {steps}  ·  " if steps else "") + f"{have}/{need} docs"
+            sub = f"{ftype}  ·  {when}  ·  " + (f"{steps}  ·  " if steps else "") + f"{have}/{need} docs"
             if missing:
                 sub += "  ·  no " + " / ".join(missing)
             if row.sub_text != sub:
@@ -1724,19 +1725,23 @@ class App(ctk.CTk):
         self.details_type = ctk.CTkLabel(title, text="", font=font(12, "bold"), text_color=MUTED,
                                          fg_color=SURFACE_ALT, corner_radius=6, height=24)
         self.details_type.pack(side="left", padx=(1.5 * SP, 0))
-        self.secondary_button(head, "Edit", sel(lambda f: ClientDialog(self, f)), width=80) \
-            .grid(row=0, column=1, sticky="e")
+        head_btns = ctk.CTkFrame(head, fg_color="transparent")
+        head_btns.grid(row=0, column=1, sticky="e")
+        self.secondary_button(head_btns, "Open folder", sel(os.startfile), width=110).pack(side="left", padx=(0, SP))
+        self.secondary_button(head_btns, "Edit", sel(lambda f: ClientDialog(self, f)), width=80).pack(side="left")
         self.contact = ctk.CTkFrame(head, fg_color="transparent")
         self.contact.grid(row=1, column=0, columnspan=2, sticky="w", pady=(SP / 2, 0))
         self.contact_labels = {}
         for key, label in (("phone", "Phone"), ("email", "Email"), ("dln", "Licence"), ("birth", "Born")):
             cell = ctk.CTkFrame(self.contact, fg_color="transparent")
-            cell.pack(side="left", padx=(0, 3 * SP))
+            cell.grid(row=0, column=len(self.contact_labels), sticky="w", padx=(0, 3 * SP))
             ctk.CTkLabel(cell, text=label, font=font(12), text_color=MUTED, height=18).pack(anchor="w")
             value = ctk.CTkLabel(cell, text="", font=font(14), text_color=TEXT, height=22, cursor="hand2")
             value.pack(anchor="w")
             value.bind("<Button-1>", lambda e: self.selected and ClientDialog(self, self.selected))
             self.contact_labels[key] = value
+        # two lines of two when the panel is narrow (the last one would be cut off)
+        head.bind("<Configure>", lambda e: self._wrap_contact(e.width), add="+")
         # details on the quote / DASH that don't match the profile
         self.facts_warn = ctk.CTkLabel(head, text="", font=font(13), text_color=WARN, fg_color=WARN_SOFT,
                                        corner_radius=8, justify="left", anchor="w", wraplength=520, cursor="hand2")
@@ -1745,127 +1750,165 @@ class App(ctk.CTk):
         self.facts_warn.bind("<Button-1>", lambda e: self.selected and ClientDialog(self, self.selected))
         self.facts_warn.grid_remove()
 
-        # ---- toolbar: the main actions, then smaller ones ----
-        bar = ctk.CTkFrame(body, fg_color="transparent")
-        bar.grid(row=1, column=0, sticky="ew", padx=p, pady=(2.5 * SP, 0))
-        bar.grid_columnconfigure((0, 1, 2), weight=1, uniform="main")
-        for col, (text, cmd) in enumerate((("Request MVR", sel(lambda f: MvrDialog(self, f))),
-                                           ("Email client", sel(lambda f: EmailDialog(self, f))),
-                                           ("Review quote", sel(lambda f: eligibility_ui.EligibilityDialog(self, f))))):
-            self.secondary_button(bar, text, cmd, height=40, font=font(14)) \
-                .grid(row=0, column=col, sticky="ew", padx=(0, SP if col < 2 else 0))
-        more = ctk.CTkFrame(body, fg_color="transparent")
-        more.grid(row=2, column=0, sticky="w", padx=p - SP / 2, pady=(SP / 2, 0))
-        small = dict(font=font(13), fg_color="transparent", hover_color=SURFACE_ALT, text_color=MUTED, height=30)
-        # the everyday links; the rest sit under More
-        self.consent_label = "Fill consent"
-        for text, cmd, w in (("Import DASH", sel(lambda f: ImportDashDialog(self, f)), 104),
-                             ("ARS entry", sel(lambda f: ars_ui.ArsEntryPage(self, f)), 88),
-                             ("UW call", sel(lambda f: carriers_ui.UwCallPage(self, f)), 76),
-                             ("Open folder", sel(os.startfile), 98)):
-            ctk.CTkButton(more, text=text, width=w, command=cmd, **small).pack(side="left")
-        more_btn = ctk.CTkButton(more, text="More ▾", width=76, **small)
-        more_btn.configure(command=lambda: self._more_menu(more_btn, sel))
-        more_btn.pack(side="left")
+        # ---- the three stages: a strip to switch, then the chosen stage's buttons, steps and documents ----
         self.detail_msg = ctk.CTkLabel(body, text="", font=font(13), text_color=SUCCESS,
                                        justify="left", anchor="w", wraplength=520)
-        self.detail_msg.grid(row=3, column=0, sticky="w", padx=p, pady=(SP, 0))
+        self.detail_msg.grid(row=1, column=0, sticky="w", padx=p, pady=(SP, 0))
+        strip = ctk.CTkFrame(body, fg_color="transparent")
+        strip.grid(row=2, column=0, sticky="ew", padx=p, pady=(2.5 * SP, 0))
+        strip.grid_columnconfigure((0, 1, 2), weight=1, uniform="stage")
+        self.stage_tabs = []
+        for i, (name, sub, _) in enumerate(checklist.STAGES):
+            tab = ctk.CTkFrame(strip, fg_color=SURFACE_ALT, corner_radius=10, border_width=2,
+                               border_color=SURFACE_ALT, cursor="hand2")
+            tab.grid(row=0, column=i, sticky="ew", padx=(0, SP if i < 2 else 0))
+            top = ctk.CTkLabel(tab, text=f"{i + 1}   {name}", font=font(16, "bold"), text_color=TEXT, anchor="w",
+                               height=24, cursor="hand2")
+            tab.grid_columnconfigure(0, weight=1)
+            top.grid(row=0, column=0, sticky="w", padx=(2 * SP, 0), pady=(1.25 * SP, 0))
+            count = ctk.CTkLabel(tab, text="", font=font(13), text_color=MUTED, height=24, cursor="hand2")
+            count.grid(row=0, column=1, sticky="e", padx=(SP, 2 * SP), pady=(1.25 * SP, 0))
+            low = ctk.CTkLabel(tab, text=sub, font=font(12), text_color=MUTED, anchor="w", height=18,
+                               cursor="hand2")
+            low.grid(row=1, column=0, columnspan=2, sticky="w", padx=2 * SP, pady=(0, 1.25 * SP))
+            for w in (tab, top, count, low):
+                w.bind("<Button-1>", lambda e, s=i: self._pick_stage(s))
+            self.stage_tabs.append((tab, top, count, low))
 
-        # ---- next step (Auto) ----
-        self._build_next_card(body, row=4, padx=p)
+        self._build_next_card(body, row=3, padx=p)
 
-        # ---- tabs: Steps | Documents ----
-        self.tab_var = tk.StringVar(value="Steps")       # which tab: "Steps" or "Documents"
-        self.tabs = ctk.CTkSegmentedButton(body, values=["Steps", "Documents"], height=38,
-                                           font=font(14, "bold"), selected_color=RAISED,
-                                           selected_hover_color=RAISED, unselected_color=SURFACE_ALT,
-                                           unselected_hover_color=BORDER, fg_color=SURFACE_ALT,
-                                           text_color=TEXT,
-                                           command=lambda v: (self.tab_var.set("Steps" if v.startswith("Steps")
-                                                                               else "Documents"),
-                                                              self.selected and self.show_details(self.selected)))
-        self.tabs.grid(row=5, column=0, sticky="ew", padx=p, pady=(3 * SP, SP))
-        self.steps_tab = ctk.CTkFrame(body, fg_color="transparent")
-        self.steps_tab.grid(row=6, column=0, sticky="ew", padx=p, pady=(0, p))
-        self.steps_tab.grid_columnconfigure(0, weight=1)
-        self.docs_tab = ctk.CTkFrame(body, fg_color="transparent")
-        self.docs_tab.grid(row=6, column=0, sticky="ew", padx=p, pady=(0, p))
-        self.docs_tab.grid_columnconfigure(0, weight=1)
-        self._build_steps(self.steps_tab)
-        self._build_documents(self.docs_tab, sel)
+        self.stage_pages = []
+        self.check_rows, self.doc_rows = {}, {}
+        self.stage_docs_head, self.stage_steps_head = [], []
+        steps = {st[0]: st for st in checklist.AUTO_STEPS}
+        auto = {label: (name, optional) for label, _, name, optional in AUTO_DOCUMENTS}
+        stage_docs = [["Client consent", "DASH report", "MVR"] + list(auto), ["Quote (ARS)"], []]
+        email = ("Email client", sel(lambda f: EmailDialog(self, f)))
+        stage_tools = [
+            [("consent", sel(self.refill)), ("Import DASH", sel(lambda f: ImportDashDialog(self, f))),
+             ("Request MVR", sel(lambda f: MvrDialog(self, f))), email],
+            [("ARS entry", sel(lambda f: ars_ui.ArsEntryPage(self, f))),
+             ("Review quote", sel(lambda f: eligibility_ui.EligibilityDialog(self, f))),
+             ("UW call", sel(lambda f: carriers_ui.UwCallPage(self, f))), email],
+            [("Carriers & payments", sel(lambda f: carriers_ui.CarrierInfoPage(self, f))), email,
+             ("Client record", sel(lambda f: tracker_ui.ClientRecordDialog(self, f)))],
+        ]
+        self.consent_btn = None
+        self.stage_doc_labels = stage_docs
+        for i, (name, _, ids) in enumerate(checklist.STAGES):
+            page = ctk.CTkFrame(body, fg_color="transparent")
+            page.grid(row=4, column=0, sticky="ew", padx=p, pady=(2 * SP, p))
+            page.grid_columnconfigure(0, weight=1)
+            self.stage_pages.append(page)
+            tools = ctk.CTkFrame(page, fg_color="transparent")
+            tools.grid(row=0, column=0, sticky="ew")
+            for c, (text, cmd) in enumerate(stage_tools[i]):
+                b = self.secondary_button(tools, "Fill consent" if text == "consent" else text, cmd, height=38,
+                                          font=font(14), width=150 if text == "Carriers & payments" else 120)
+                b.pack(side="left", padx=(0, SP))
+                if text == "consent":
+                    self.consent_btn = b
+
+            head, box = self._list_box(page, row=1, title="Steps")
+            self.stage_steps_head.append(head)
+            for j, sid in enumerate(ids):
+                self._step_row(box, j, steps[sid])
+
+            if stage_docs[i]:
+                head, box = self._list_box(page, row=2, title="Documents")
+                self.stage_docs_head.append(head)
+                for j, label in enumerate(stage_docs[i]):
+                    self._doc_row(box, j, label, auto, sel)
+            else:
+                self.stage_docs_head.append(None)
+        self._stage, self._stage_picked = 0, False
         self._details_showing = None
+
+    def _wrap_contact(self, width):
+        cells = self.contact.winfo_children()
+        need = sum(c.winfo_reqwidth() for c in cells)
+        two = need > width
+        for i, c in enumerate(cells):
+            c.grid_configure(row=i // 2 if two else 0, column=i % 2 if two else i,
+                             pady=(SP / 2 if two and i >= 2 else 0, 0))
 
     def _descale(self, px):
         return int(px / ctk.ScalingTracker.get_widget_scaling(self))
 
-    def _more_menu(self, button, sel):
-        menu = tk.Menu(self, tearoff=0, font=("Segoe UI", 10))
-        for text, cmd in ((self.consent_label, sel(self.refill)),
-                          ("Carriers & payments", sel(lambda f: carriers_ui.CarrierInfoPage(self, f))),
-                          ("Client record", sel(lambda f: tracker_ui.ClientRecordDialog(self, f)))):
-            menu.add_command(label=text, command=cmd)
-        menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height())
+    def _list_box(self, parent, row, title):
+        """A heading and a bordered box under it, for a stage's steps or documents: (heading, box)."""
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.grid(row=row, column=0, sticky="ew", pady=(2.5 * SP, 0))
+        frame.grid_columnconfigure(0, weight=1)
+        head = ctk.CTkLabel(frame, text=title, font=font(14, "bold"), text_color=MUTED, anchor="w", height=22)
+        head.grid(row=0, column=0, sticky="w", pady=(0, SP / 2))
+        box = ctk.CTkFrame(frame, fg_color=SURFACE_ALT, corner_radius=10, border_width=1, border_color=BORDER)
+        box.grid(row=1, column=0, sticky="ew")
+        box.grid_columnconfigure(0, weight=1)
+        head.frame = frame
+        return head, box
 
-    def _build_documents(self, tab, sel):
-        docs_head = ctk.CTkFrame(tab, fg_color="transparent")
-        docs_head.grid(row=0, column=0, sticky="ew", pady=(0, SP))
-        docs_head.grid_columnconfigure(0, weight=1)
-        self.docs_count = ctk.CTkLabel(docs_head, text="", font=font(13), text_color=MUTED)
-        self.docs_count.grid(row=0, column=0, sticky="w")
-        self.docs_bar = ctk.CTkProgressBar(docs_head, height=6, progress_color=SUCCESS, fg_color=BORDER)
-        self.docs_bar.grid(row=1, column=0, sticky="ew", pady=(SP / 2, 0))
+    def _step_row(self, box, j, step):
+        sid, title, hint, auto, can_na, action = step
+        rowf = ctk.CTkFrame(box, fg_color="transparent")
+        rowf.grid(row=j, column=0, sticky="ew", padx=2 * SP)
+        rowf.grid_columnconfigure(0, weight=1)
+        if j:
+            ctk.CTkFrame(rowf, fg_color=BORDER, height=1).grid(row=0, column=0, columnspan=2, sticky="ew")
+        var = tk.BooleanVar()
+        cb = ctk.CTkCheckBox(rowf, text=title, variable=var, font=font(14), text_color=TEXT,
+                             text_color_disabled=MUTED, fg_color=SUCCESS, hover_color=SUCCESS,
+                             border_color=MUTED, checkbox_width=22, checkbox_height=22,
+                             command=lambda s=sid: self.toggle_step(s))
+        cb.grid(row=1, column=0, sticky="w", pady=SP)
+        tag = ctk.CTkLabel(rowf, text="", font=font(12, "bold"), text_color=MUTED, height=22)
+        tag.grid(row=1, column=1, sticky="e")
+        note = ctk.CTkLabel(rowf, text="", font=font(13), text_color=WARN, anchor="w", justify="left",
+                            wraplength=560, height=18)
+        note.grid(row=2, column=0, columnspan=2, sticky="w", padx=(32, 0), pady=(0, SP))
+        self.check_rows[sid] = {"var": var, "cb": cb, "note": note, "tag": tag, "auto": auto}
 
-        self.doc_rows = {}
-        auto = {label: (name, optional) for label, _, name, optional in AUTO_DOCUMENTS}
-        groups = [("For every client", [l for l, _ in DOCUMENTS]), ("From the client (auto)", list(auto))]
-        r = 1
-        for title_text, labels in groups:
-            lbl = ctk.CTkLabel(tab, text=title_text, font=font(14, "bold"), text_color=MUTED)
-            lbl.grid(row=r, column=0, sticky="w", pady=(1.5 * SP, SP / 2))
-            r += 1
-            box = ctk.CTkFrame(tab, fg_color=SURFACE_ALT, corner_radius=10, border_width=1, border_color=BORDER)
-            box.grid(row=r, column=0, sticky="ew")
-            box.grid_columnconfigure(0, weight=1)
-            if labels and labels[0] in auto:
-                self.auto_group_label, self.auto_box = lbl, box
-            r += 1
-            for i, label in enumerate(labels):
-                row = ctk.CTkFrame(box, fg_color="transparent", height=40)
-                row.grid(row=i * 2, column=0, sticky="ew", padx=SP)
-                row.grid_columnconfigure(2, weight=1)
-                if i:
-                    ctk.CTkFrame(box, fg_color=BORDER, height=1).grid(row=i * 2 - 1, column=0, sticky="ew", padx=1.5 * SP)
-                dot = ctk.CTkFrame(row, width=10, height=10, corner_radius=5, fg_color=BORDER)
-                dot.grid(row=0, column=0, padx=(SP, 1.5 * SP))
-                ctk.CTkLabel(row, text=label, font=font(14), text_color=TEXT, anchor="w", height=42) \
-                    .grid(row=0, column=1, sticky="w")
-                status = ctk.CTkLabel(row, text="", font=font(13), anchor="e", height=22)
-                status.grid(row=0, column=2, sticky="e", padx=SP)
-                rr = {"frame": row, "dot": dot, "status": status, "state": None, "buttons": {}}
-                link = dict(font=font(13), fg_color="transparent", hover_color=SURFACE, height=30)
-                # only the buttons that make sense for the row's state are shown (see show_details)
-                buttons = {"open": ("Open", TEXT, None)}
-                if label in auto:
-                    name, optional = auto[label]
-                    buttons["add"] = ("Add…", PRIMARY, lambda l=label, n=name: self.add_doc(l, n))
-                    if optional:
-                        buttons["na"] = ("Not needed", MUTED, lambda l=label: self.toggle_doc_needed(l))
-                        buttons["needed"] = ("Needed", MUTED, lambda l=label: self.toggle_doc_needed(l))
-                else:
-                    shortcut = {"Client consent": ("Fill", sel(self.refill)),
-                                "DASH report": ("Import", sel(lambda f: ImportDashDialog(self, f))),
-                                "MVR": ("Request", sel(lambda f: MvrDialog(self, f)))}.get(label)
-                    if shortcut:
-                        buttons["add"] = (shortcut[0], PRIMARY, shortcut[1])
-                for col, (key, (text, color, cmd)) in enumerate(buttons.items(), start=3):
-                    b = ctk.CTkButton(row, text=text, width=max(52, 8 * len(text) + 12), text_color=color,
-                                      command=cmd, **link)
-                    b.grid(row=0, column=col, padx=(0, SP / 2))
-                    b.grid_remove()
-                    rr["buttons"][key] = b
-                self.doc_rows[label] = rr
+    def _doc_row(self, box, i, label, auto, sel):
+        row = ctk.CTkFrame(box, fg_color="transparent")
+        row.grid(row=i, column=0, sticky="ew", padx=SP)
+        row.grid_columnconfigure(2, weight=1)
+        if i:
+            ctk.CTkFrame(row, fg_color=BORDER, height=1).grid(row=0, column=0, columnspan=9, sticky="ew", padx=SP)
+        dot = ctk.CTkFrame(row, width=10, height=10, corner_radius=5, fg_color=BORDER)
+        dot.grid(row=1, column=0, padx=(SP, 1.5 * SP))
+        ctk.CTkLabel(row, text=label, font=font(14), text_color=TEXT, anchor="w", height=42) \
+            .grid(row=1, column=1, sticky="w")
+        status = ctk.CTkLabel(row, text="", font=font(13), anchor="e", height=22)
+        status.grid(row=1, column=2, sticky="e", padx=SP)
+        rr = {"frame": row, "dot": dot, "status": status, "state": None, "buttons": {}}
+        link = dict(font=font(13), fg_color="transparent", hover_color=SURFACE, height=30)
+        # only the buttons that make sense for the row's state are shown (see show_details)
+        buttons = {"open": ("Open", TEXT, None)}
+        if label in auto:
+            name, optional = auto[label]
+            buttons["add"] = ("Add…", PRIMARY, lambda l=label, n=name: self.add_doc(l, n))
+            if optional:
+                buttons["na"] = ("Not needed", MUTED, lambda l=label: self.toggle_doc_needed(l))
+                buttons["needed"] = ("Needed", MUTED, lambda l=label: self.toggle_doc_needed(l))
+        else:
+            shortcut = {"Client consent": ("Fill", sel(self.refill)),
+                        "DASH report": ("Import", sel(lambda f: ImportDashDialog(self, f))),
+                        "MVR": ("Request", sel(lambda f: MvrDialog(self, f)))}.get(label)
+            if shortcut:
+                buttons["add"] = (shortcut[0], PRIMARY, shortcut[1])
+        for col, (key, (text, color, cmd)) in enumerate(buttons.items(), start=3):
+            b = ctk.CTkButton(row, text=text, width=max(52, 8 * len(text) + 12), text_color=color,
+                              command=cmd, **link)
+            b.grid(row=1, column=col, padx=(0, SP / 2))
+            b.grid_remove()
+            rr["buttons"][key] = b
+        self.doc_rows[label] = rr
 
-    # ---------- next step card + steps (Auto clients) ----------
+    def _pick_stage(self, stage):
+        self._stage, self._stage_picked = stage, True
+        self.selected and self.show_details(self.selected)
+
+    # ---------- next step card (Auto clients) ----------
     def _build_next_card(self, body, row, padx):
         card = self.next_card = ctk.CTkFrame(body, fg_color=SURFACE_ALT, corner_radius=10, border_width=1,
                                              border_color=BORDER)
@@ -1895,8 +1938,11 @@ class App(ctk.CTk):
             "uwcall": ctk.CTkButton(btns, text="Log UW call", command=sel(lambda f: carriers_ui.UwCallPage(self, f))),
             "payments": ctk.CTkButton(btns, text="Payment terms",
                                       command=sel(lambda f: carriers_ui.CarrierInfoPage(self, f))),
-            "docs": ctk.CTkButton(btns, text="See documents", command=lambda: (self.tab_var.set("Documents"),
-                                                                               self.show_details(self.selected))),
+            "consent": ctk.CTkButton(btns, text="Fill consent", command=sel(self.refill)),
+            "ars": ctk.CTkButton(btns, text="ARS entry", command=sel(lambda f: ars_ui.ArsEntryPage(self, f))),
+            "folder": ctk.CTkButton(btns, text="Open folder", command=sel(os.startfile)),
+            "email": ctk.CTkButton(btns, text="Email client", command=sel(lambda f: EmailDialog(self, f))),
+            "docs": ctk.CTkButton(btns, text="See documents", command=lambda: self._pick_stage(0)),
         }
         for b in self.next_buttons.values():
             b.configure(height=38, width=140, font=font(14, "bold"), fg_color=PRIMARY, hover_color=PRIMARY_HOVER)
@@ -1906,81 +1952,58 @@ class App(ctk.CTk):
                                              width=130, height=38, font=font(14))
         self._next_id = None
 
-    def _build_steps(self, tab):
-        self.phase_parts, self.check_rows = {}, {}
-        self._phase_open, self._phase_is_open = {}, {}
-        steps = {st[0]: (i, st) for i, st in enumerate(checklist.AUTO_STEPS)}
-        for r, (phase, ids) in enumerate(checklist.PHASES):
-            head = ctk.CTkButton(tab, text="", anchor="w", font=font(14, "bold"), text_color=TEXT, height=36,
-                                 fg_color="transparent", hover_color=SURFACE_ALT,
-                                 command=lambda ph=phase: self._toggle_phase(ph))
-            head.grid(row=r * 2, column=0, sticky="ew", pady=(SP if r else 0, 2))
-            box = ctk.CTkFrame(tab, fg_color=SURFACE_ALT, corner_radius=10, border_width=1, border_color=BORDER)
-            box.grid(row=r * 2 + 1, column=0, sticky="ew")
-            box.grid_columnconfigure(0, weight=1)
-            self.phase_parts[phase] = (head, box)
-            for j, sid in enumerate(ids):
-                i, (sid, title, hint, auto, can_na, action) = steps[sid]
-                if j:
-                    ctk.CTkFrame(box, fg_color=BORDER, height=1).grid(row=j * 2 - 1, column=0, sticky="ew", padx=1.5 * SP)
-                rowf = ctk.CTkFrame(box, fg_color="transparent")
-                rowf.grid(row=j * 2, column=0, sticky="ew", padx=2 * SP, pady=SP)
-                rowf.grid_columnconfigure(0, weight=1)
-                var = tk.BooleanVar()
-                cb = ctk.CTkCheckBox(rowf, text=f"{title}", variable=var, font=font(14), text_color=TEXT,
-                                     text_color_disabled=MUTED, fg_color=SUCCESS, hover_color=SUCCESS,
-                                     border_color=MUTED, checkbox_width=22, checkbox_height=22,
-                                     command=lambda s=sid: self.toggle_step(s))
-                cb.grid(row=0, column=0, sticky="w")
-                tag = ctk.CTkLabel(rowf, text="", font=font(12, "bold"), text_color=MUTED, height=22)
-                tag.grid(row=0, column=1, sticky="e")
-                note = ctk.CTkLabel(rowf, text="", font=font(13), text_color=WARN, anchor="w", justify="left",
-                                    wraplength=560, height=18)
-                note.grid(row=1, column=0, columnspan=2, sticky="w", padx=(32, 0))
-                self.check_rows[sid] = {"var": var, "cb": cb, "note": note, "tag": tag, "auto": auto}
-        self._check_state = {}
-
-    def _toggle_phase(self, phase):
-        self._phase_open[phase] = not self._phase_is_open.get(phase, False)
-        self.show_details(self.selected)
-
-    def _show_steps(self, folder, kind, docs, info, skip):
+    def _show_stages(self, folder, kind, docs, info, skip):
+        """Stage strip, next-step card and the chosen stage's steps / documents."""
         self._by_hand = set()
         rows = checklist.status(folder, kind, docs, info, skip, by_hand=self._by_hand)
         auto_client = bool(rows)
-        for w in (self.next_card, self.tabs):
-            w.grid() if auto_client else w.grid_remove()
-        if not auto_client:
-            self.steps_tab.grid_remove()
-            self.docs_tab.grid()
-            return
-        steps_shown = self.tab_var.get() == "Steps"
-        (self.steps_tab.grid if steps_shown else self.steps_tab.grid_remove)()
-        (self.docs_tab.grid_remove if steps_shown else self.docs_tab.grid)()
-        done, total, _ = checklist.summary(rows)
-        needed = [k for k in docs if k not in skip]
-        have = sum(1 for k in needed if docs[k])
-        self.tabs.configure(values=[f"Steps  {done}/{total}", f"Documents  {have}/{len(needed)}"])
-        self.tabs.set(f"Steps  {done}/{total}" if steps_shown else f"Documents  {have}/{len(needed)}")
-
         by_id = {st[0]: (st, s, note) for st, s, note in rows}
-        nxt = next(((st, s, note) for st, s, note in rows if s == "todo" and st[0] != "documents"), None)
+        nxt = checklist.next_step(rows)
         self._next_id = nxt[0][0] if nxt else None
         self._check_state = {st[0]: s for st, s, _ in rows}
+        current = checklist.current_stage(rows) if auto_client else (1 if docs.get("Quote (ARS)") else 0)
+        if not self._stage_picked:
+            self._stage = 2 if current is None else current
+        needed = [k for k in docs if k not in skip]
+        have = sum(1 for k in needed if docs[k])
 
-        # next step card
+        # the strip: each stage's progress; the chosen one is outlined
+        for i, (name, sub, ids) in enumerate(checklist.STAGES):
+            tab, top, count, low = self.stage_tabs[i]
+            if auto_client:
+                finished = sum(1 for sid in ids if by_id[sid][1] in ("done", "na"))
+                complete = finished == len(ids)
+                progress = f"{finished}/{len(ids)}"
+            else:
+                complete, progress = False, ""
+            top.configure(text=f"{'✓' if complete else i + 1}   {name}",
+                          text_color=SUCCESS if complete else TEXT if i == current or not auto_client else MUTED)
+            count.configure(text=progress)
+            chosen = i == self._stage
+            tab.configure(fg_color=RAISED if chosen else SURFACE_ALT, border_color=MUTED if chosen else SURFACE_ALT)
+            self.stage_pages[i].grid() if chosen else self.stage_pages[i].grid_remove()
+            self.stage_steps_head[i].frame.grid() if auto_client else self.stage_steps_head[i].frame.grid_remove()
+            head = self.stage_docs_head[i]
+            if head:
+                labels = [l for l in self.stage_doc_labels[i] if l in docs and l not in skip]
+                got = sum(1 for l in labels if docs[l])
+                head.configure(text=f"Documents   {got} of {len(labels)} received")
+
+        # next step card: only on the stage it belongs to
         for b in list(self.next_buttons.values()) + [self.next_done, self.next_na]:
             b.pack_forget()
-        if nxt:
+        show_card = auto_client and (nxt is None and self._stage == 2 or nxt is not None and self._stage == current)
+        self.next_card.grid() if show_card else self.next_card.grid_remove()
+        done, total, _ = checklist.summary(rows) if rows else (0, 0, None)
+        if show_card and nxt:
             (sid, title, hint, auto, can_na, action), _, note = nxt
             self.next_card.configure(fg_color=SURFACE_ALT)
             self.next_accent.configure(fg_color=PRIMARY)
             self.next_kicker.grid()
             self.next_btns.grid()
             self.next_title.grid_configure(pady=0)
-            self.next_title.configure(font=font(18, "bold"), text_color=TEXT)
+            self.next_title.configure(font=font(18, "bold"), text_color=TEXT, text=title)
             self.next_kicker.configure(text=f"NEXT STEP   ·   {done} of {total} done", text_color=MUTED)
-            self.next_title.configure(text=title)
             text = ((note + ".  ") if note else "") + hint
             self.next_hint.configure(text=text, text_color=WARN if note and ("issing" in note or note.startswith(("Refer", "Waiting")))
                                      else MUTED)
@@ -1991,23 +2014,22 @@ class App(ctk.CTk):
                 self.next_done.pack(side="left", padx=(0, SP))
             if can_na:
                 self.next_na.pack(side="left")
-            if sid == "profile":
-                self.next_buttons["edit"].pack(side="left", padx=(0, SP)) if not action else None
             if not self.next_btns.pack_slaves():      # an empty CTkFrame is 200 px tall
                 self.next_btns.grid_remove()
                 self.next_hint.grid_configure(pady=(2, 1.5 * SP))
             else:
                 self.next_hint.grid_configure(pady=(2, 0))
-        else:
+        elif show_card:
             self.next_card.configure(fg_color=SUCCESS_BG)
             self.next_accent.configure(fg_color=SUCCESS)
             # one short line instead of a big card
             self.next_kicker.grid_remove()
             self.next_hint.grid_remove()
+            waiting = [by_id[s][0][1] for s in checklist.WAITING if by_id[s][1] == "todo"]
             missing = len(needed) - have
-            self.next_title.configure(text=f"✓  All {total} steps done" + (f"  ·  {missing} document"
-                                      f"{'s' if missing > 1 else ''} still missing" if missing else ""),
-                                      font=font(16, "bold"), text_color=SUCCESS)
+            self.next_title.configure(text="✓  Nothing left to do" + (f"  ·  waiting for: {', '.join(waiting).lower()}"
+                                      if waiting else f"  ·  {missing} document{'s' if missing > 1 else ''} missing"
+                                      if missing else ""), font=font(16, "bold"), text_color=SUCCESS)
             self.next_title.grid_configure(pady=(1.5 * SP, 0 if missing else 1.5 * SP))
             if missing:
                 self.next_btns.grid()
@@ -2015,33 +2037,20 @@ class App(ctk.CTk):
             else:
                 self.next_btns.grid_remove()
 
-        # stages: finished ones fold into one line, the current one is open
-        for phase, ids in checklist.PHASES:
-            head, box = self.phase_parts[phase]
-            states = [by_id[i][1] for i in ids]
-            finished = sum(1 for s in states if s in ("done", "na"))
-            current = self._next_id in ids
-            is_open = self._phase_open.get(phase, current)   # clicked open / closed, else only the current stage
-            self._phase_is_open[phase] = is_open
-            mark = "✓" if finished == len(ids) else ""
-            head.configure(text=f"{'▾' if is_open else '▸'}   {phase}     {finished} of {len(ids)}  {mark}",
-                           text_color=SUCCESS if mark else (TEXT if current else MUTED))
-            box.grid() if is_open else box.grid_remove()
-            for sid in ids:
-                (st, state, note) = by_id[sid]
-                r = self.check_rows[sid]
-                r["var"].set(state in ("done", "na"))
-                auto_done = bool(st[3]) and state in ("done", "na") and sid not in self._by_hand
-                is_next = sid == self._next_id
-                r["cb"].configure(state="disabled" if auto_done else "normal",
-                                  font=font(14, "bold") if is_next else font(14),
-                                  text_color=TEXT if is_next or state == "todo" else MUTED)
-                r["tag"].configure(text="NEXT" if is_next else "N/A" if state == "na" else "",
-                                   text_color=PRIMARY if is_next else MUTED)
-                warn = note if note and "issing" in note and state != "na" and sid != "documents" else \
-                    (note if sid == "documents" and state == "todo" else "")
-                r["note"].configure(text=warn)
-                r["note"].grid() if warn else r["note"].grid_remove()
+        for sid, (st, state, note) in by_id.items():
+            r = self.check_rows[sid]
+            r["var"].set(state in ("done", "na"))
+            auto_done = bool(st[3]) and state in ("done", "na") and sid not in self._by_hand
+            is_next = sid == self._next_id
+            r["cb"].configure(state="disabled" if auto_done else "normal",
+                              font=font(14, "bold") if is_next else font(14),
+                              text_color=TEXT if is_next or state == "todo" else MUTED)
+            tag = "NEXT" if is_next else "N/A" if state == "na" else \
+                "WAITING" if sid in checklist.WAITING and state == "todo" else ""
+            r["tag"].configure(text=tag, text_color=PRIMARY if is_next else MUTED)
+            warn = note if note and "issing" in note and state != "na" and sid != "documents" else ""
+            r["note"].configure(text=warn)
+            r["note"].grid() if warn else r["note"].grid_remove()
 
     def show_details(self, folder):
         if not folder or not folder.exists():
@@ -2056,7 +2065,7 @@ class App(ctk.CTk):
             self._details_showing = "body"
         if getattr(self, "_shown_folder", None) != folder:      # another client: stages back to default
             self._shown_folder = folder
-            self._phase_open = {}
+            self._stage_picked = False
 
         kind = self.client_type_of.get(folder, "")
         self.details_title.configure(text=shorten(folder.name, 34))
@@ -2082,11 +2091,11 @@ class App(ctk.CTk):
 
         skip = records.docs_not_needed(folder) if kind == "Auto" else set()
         auto = kind == "Auto"
-        for w in (self.auto_group_label, self.auto_box):
-            w.grid() if auto else w.grid_remove()
         for label, r in self.doc_rows.items():
             if label not in docs:            # auto documents on a non-auto client
+                r["frame"].grid_remove()
                 continue
+            r["frame"].grid()
             files = docs[label]
             if files:
                 status, color, dot = (f"{len(files)} files" if len(files) > 1 else
@@ -2095,7 +2104,7 @@ class App(ctk.CTk):
             elif label in skip:
                 status, color, dot = "Not needed", MUTED, BORDER
             else:
-                status, color, dot = "Missing", DANGER, DANGER
+                status, color, dot = "Missing", WARN, WARN
             state = (status, bool(files), label in skip)
             if r["state"] != state:  # only touch widgets whose content changed
                 r["dot"].configure(fg_color=dot)
@@ -2105,13 +2114,9 @@ class App(ctk.CTk):
                     b.grid() if key in show else b.grid_remove()
                 r["state"] = state
             r["buttons"]["open"].configure(command=lambda fs=files: [os.startfile(f) for f in fs])
-        needed = [k for k in docs if k not in skip]
-        have = sum(1 for k in needed if docs[k])
-        self.docs_count.configure(text=f"{have} of {len(needed)} received")
-        self.docs_bar.set(have / len(needed) if needed else 0)
-        self._show_steps(folder, kind, docs, info, skip)
+        self._show_stages(folder, kind, docs, info, skip)
         # the consent needs only the client's name: fill it any time, DASH or not
-        self.consent_label = "Refill consent" if docs["Client consent"] else "Fill consent"
+        self.consent_btn.configure(text="Refill consent" if docs["Client consent"] else "Fill consent")
         note = self.note[1:] if self.note and self.note[0] == folder else ("", SUCCESS)
         self.detail_msg.configure(text=note[0], text_color=note[1])
         self.detail_msg.grid() if note[0] else self.detail_msg.grid_remove()

@@ -18,21 +18,26 @@ import review
 #   auto: key of an automatic check below, or None (ticked by hand)
 #   action: what the step's button does in the app (None = no button)
 AUTO_STEPS = [
+    # 1. Intake: the client's details and documents
     ("profile", "Client profile", "Name and driver's licence #. Phone and email can follow - add them when you get them.",
      "profile", False, "edit"),
+    ("consent", "Consent form filled", "Fill WellCare's consent form and have the client sign it.", "consent", False,
+     "consent"),
     ("dash", "DASH report", "Pull the DASH report if the client has insurance history.", "dash", True, "dash"),
-    ("quote", "First quote in ARS", "Quote in Applied Rating and save the Quote Information PDF in the folder.",
-     "quote", False, None),
-    ("uw_call", "Refer messages confirmed with the underwriter", "The quote has refer messages: call the "
-     "underwriter, confirm the client is eligible, and log the call (who, when, why, result).", "uw_call", True,
-     "uwcall"),
     ("mvr_request", "MVR request sent", "Email the branch manager for the MVR (address set in Settings).",
      "mvr_request", False, "mvr"),
     ("mvr", "MVR received", "Saved to the folder automatically when you download it from Outlook.", "mvr", False, None),
-    ("requote", "Quote corrected and re-run", "Fix ARS with the DASH and MVR (Review quote shows what's wrong), "
-     "then quote again.", None, False, "review"),
     ("documents", "Documents from the client", "Ownership, void cheque (most clients pay monthly), winter tire "
-     "photos, bill of sale, financing papers - ask while you quote.", "documents", False, None),
+     "photos, bill of sale, financing papers.", "documents", False, None),
+    # 2. Quote: fill the forms and get the quote
+    ("quote", "Quote in ARS", "Quote in Applied Rating (ARS entry has the DASH claims and gaps ready to type) and "
+     "save the Quote Information PDF in the folder.", "quote", False, "ars"),
+    ("uw_call", "Refer messages confirmed with the underwriter", "The quote has refer messages: call the "
+     "underwriter, confirm the client is eligible, and log the call (who, when, why, result).", "uw_call", True,
+     "uwcall"),
+    ("requote", "Quote checked with the DASH and MVR", "Review quote shows what doesn't match - fix ARS and quote "
+     "again if needed.", None, False, "review"),
+    # 3. Policy: after the client accepts the quote
     ("approved", "Client approved; quote exported to PowerBroker", "Agree how the client pays: the carrier's "
      "payment terms and WellCare's payment options are on the Carriers page.", None, False, "payments"),
     ("pb_policy", "Policy set up in PowerBroker", "", None, False, None),
@@ -41,13 +46,19 @@ AUTO_STEPS = [
     ("uwc", "Application filled and submitted on UW-Compass", "Submit when everything looks fine.", None, False, None),
     ("referred", "Referred (if UW-Compass shows a refer message)", "Refer to head office or the insurer - "
      "mark N/A if there was nothing to refer.", None, True, None),
+    ("uploaded", "Files uploaded to PowerBroker", "Consent, DASH, MVR, quote, application and the client's "
+     "documents.", None, False, "folder"),
+    ("sent", "Policy documents sent to the client", "Confirmation email with the policy number, policy documents "
+     "and pink card(s).", None, False, "email"),
 ]
 
-
-# the steps in three stages; a finished stage folds into one line in the app
-PHASES = [("Intake", ["profile", "dash", "quote", "uw_call", "mvr_request", "mvr"]),
-          ("Quote", ["requote", "documents"]),
-          ("Bind", ["approved", "pb_policy", "pb_app", "uwc", "referred"])]
+# the three stages of a client's file
+STAGES = [("Intake", "Details & documents", ["profile", "consent", "dash", "mvr_request", "mvr", "documents"]),
+          ("Quote", "Forms & quote", ["quote", "uw_call", "requote"]),
+          ("Policy", "Bind, upload, send", ["approved", "pb_policy", "pb_app", "uwc", "referred",
+                                                           "uploaded", "sent"])]
+# steps that wait on someone else: they don't hold up the next step
+WAITING = {"mvr", "documents"}
 
 
 def steps_for(kind):
@@ -129,6 +140,8 @@ def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None):
                 state = "done"
             if missing:
                 note = f"{', '.join(missing).capitalize()} missing".replace(", " + missing[-1], " and " + missing[-1])                     if len(missing) > 1 else f"{missing[0].capitalize()} missing"
+        elif auto == "consent" and docs.get("Client consent"):
+            state, note = "done", "In the folder"
         elif auto == "dash" and docs.get("DASH report"):
             state, note = "done", "In the folder"
         elif auto == "quote" and docs.get("Quote (ARS)"):
@@ -169,8 +182,26 @@ def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None):
     return out
 
 
+def next_step(rows):
+    """The first step still to do, skipping the ones that wait on someone else (MVR, client documents)."""
+    return next(((st, s, note) for st, s, note in rows if s == "todo" and st[0] not in WAITING), None)
+
+
+def stage_of(step_id):
+    return next(i for i, (_, _, ids) in enumerate(STAGES) if step_id in ids)
+
+
 def summary(rows):
     """(done, total, next step title or None)."""
     done = sum(1 for _, s, _ in rows if s in ("done", "na"))
-    nxt = next((st[1] for st, s, _ in rows if s == "todo" and st[0] != "documents"), None)
-    return done, len(rows), nxt
+    nxt = next_step(rows)
+    return done, len(rows), nxt[0][1] if nxt else None
+
+
+def current_stage(rows):
+    """Index of the stage the client is in (the next step's), or None when every step is done."""
+    nxt = next_step(rows)
+    if nxt:
+        return stage_of(nxt[0][0])
+    todo = next((st for st, s, _ in rows if s == "todo"), None)
+    return stage_of(todo[0]) if todo else None
