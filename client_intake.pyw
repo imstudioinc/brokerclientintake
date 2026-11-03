@@ -27,7 +27,9 @@ import checklist
 import client_edit
 import client_facts
 import ars_ui
+import carriers
 import carriers_ui
+import policy_ui
 import records
 import rules_ui
 import eligibility_ui
@@ -527,7 +529,7 @@ class EmailDialog(Panel):
 
     ATTACHABLE = {".pdf", ".jpg", ".jpeg", ".png", ".heic", ".doc", ".docx", ".xlsx"}
 
-    def __init__(self, app, folder):
+    def __init__(self, app, folder, template=None):
         super().__init__(app)
         self.app, self.folder = app, folder
         self.title(f"Email client - {folder.name.upper()}")
@@ -541,6 +543,8 @@ class EmailDialog(Panel):
         self.client = (self.info.get("name") or folder.name).upper()
         self.saved_fields = dict(self.info.get("email_fields", {}))
         self.quote_values, self.carrier_pick, self.touched = None, 0, {}
+        # the bound policy's details (Tracker) fill the policy emails before the quote does
+        self.policy_values = policy_ui.email_values(folder)
         self.templates = emails.load_templates()
         self.by_label = {f"{t.group[3:]}  ·  {t.name}" if t.group[:1].isdigit() else t.name: t
                          for t in self.templates}
@@ -558,8 +562,10 @@ class EmailDialog(Panel):
         ctk.CTkLabel(left, text="Template", font=font(13, "bold"), text_color=TEXT) \
             .grid(row=0, column=0, sticky="w", padx=p, pady=(p, SP / 2))
         ctype = app.client_type_of.get(folder, "").lower()
-        start = next((l for l, t in self.by_label.items() if t.file == f"quote-{ctype}.html"),
-                     next(iter(self.by_label)))
+        wanted = (template or "quote-{type}.html").format(type=ctype)
+        start = next((l for l, t in self.by_label.items() if t.file == wanted),
+                     next((l for l, t in self.by_label.items() if t.file == f"quote-{ctype}.html"),
+                          next(iter(self.by_label))))
         self.choice = tk.StringVar(value=start)
         ctk.CTkOptionMenu(left, values=list(self.by_label), variable=self.choice, height=36, font=font(13),
                           dropdown_font=font(13), fg_color=SURFACE_ALT, button_color=PRIMARY,
@@ -693,8 +699,9 @@ class EmailDialog(Panel):
             ctk.CTkLabel(self.fields_frame, text=label, font=font(13, "bold"), text_color=TEXT, anchor="w") \
                 .grid(row=2 * i, column=0, sticky="w", pady=(1.5 * SP, SP / 2))
             from_quote, saved = self._quote_value(key), self.saved_fields.get(key, "")
-            value = self.touched.get(key, (from_quote or saved) if uw else (saved or from_quote))
-            if key == "insurer" and len(carriers) > 1:
+            value = self.touched.get(key, self.policy_values.get(key)
+                                     or ((from_quote or saved) if uw else (saved or from_quote)))
+            if key == "insurer" and len(carriers) > 1 and not self.policy_values.get("insurer"):
                 e = ctk.CTkComboBox(self.fields_frame, height=36, font=font(13), dropdown_font=font(13),
                                     border_color=BORDER, button_color=PRIMARY, button_hover_color=PRIMARY_HOVER,
                                     values=[c["insurer"] + (" (declined)" if c["declined"] else "")
@@ -728,14 +735,22 @@ class EmailDialog(Panel):
     def _for_uw(self):
         return self.template.to == "underwriter"
 
+    def _for_billing(self):
+        return self.template.to == "billing"
+
     def _set_recipient(self):
         """Underwriter templates go to WellCare's underwriter (address remembered in the settings),
         with the latest quote / DASH / MVR ticked; the others go to the client."""
         uw = self._for_uw()
-        if uw == getattr(self, "_uw_mode", False):
+        mode = "uw" if uw else "billing" if self._for_billing() else "client"
+        if mode == getattr(self, "_uw_mode", "client"):
             return
-        self._uw_mode = uw
-        if uw:
+        self._uw_mode = mode
+        if mode == "billing":
+            insurer = self.policy_values.get("insurer", "")
+            addr, name = policy_ui.billing_email(self.app.cfg, insurer), ""
+            label, hint = f"To ({insurer or 'insurer'} billing) *", "billing email (Carriers & payments page)"
+        elif uw:
             addr = self.app.cfg.get("uw_email", "")
             name = emails.first_name(re.split(r"[._@]", addr)[0]) if addr else ""
             label, hint = "To (WellCare underwriter) *", "underwriter@wellcareinsurance.ca"
@@ -762,7 +777,9 @@ class EmailDialog(Panel):
         if not greet and self._for_uw() and "@" in self.to.get():
             greet = emails.first_name(re.split(r"[._@]", self.to.get().strip())[0])
         v = {"first_name": greet, "CLIENT_NAME": self.client,
-             "client_name": self.client.title(), "broker_name": mvr_email.signature_values(self.app.cfg)["name"]}
+             "client_name": self.client.title(), "broker_name": mvr_email.signature_values(self.app.cfg)["name"],
+             "payment_options_html": carriers.wellcare_payment_html(carriers.load(self.app.cfg))
+             or "<p>Please call me and I will explain how to pay.</p>"}
         for k, e in self.field_entries.items():
             v[k] = e.get().strip()
             day = records.parse_date(v[k]) if "date" in k else None
@@ -805,6 +822,7 @@ class EmailDialog(Panel):
         to = self.to.get().strip()
         if not re.fullmatch(r"[^@\s;]+@[^@\s;]+\.[^@\s;]+", to):
             self.error.configure(text="Enter the underwriter's email address." if self._for_uw()
+                                 else "Enter the billing team's email address." if self._for_billing()
                                  else "Enter the client's email address.", text_color=DANGER)
             self.to.focus_set()
             return
@@ -818,8 +836,8 @@ class EmailDialog(Panel):
         subject, body = emails.render(self.template, values)
 
         self.saved_fields.update({k: e.get().strip() for k, e in self.field_entries.items() if e.get().strip()})
-        if self._for_uw():
-            if to.lower() != self.app.cfg.get("uw_email", ""):
+        if self._for_uw() or self._for_billing():
+            if self._for_uw() and to.lower() != self.app.cfg.get("uw_email", ""):
                 config.update(self.app.cfg, uw_email=to.lower())
             mvr_email.save_client(self.folder, email_fields=self.saved_fields)
         else:
@@ -1790,7 +1808,8 @@ class App(ctk.CTk):
             [("ARS entry", sel(lambda f: ars_ui.ArsEntryPage(self, f))),
              ("Review quote", sel(lambda f: eligibility_ui.EligibilityDialog(self, f))),
              ("UW call", sel(lambda f: carriers_ui.UwCallPage(self, f))), email],
-            [("Carriers & payments", sel(lambda f: carriers_ui.CarrierInfoPage(self, f))), email,
+            [("Policy details", sel(self.accept_quote)),
+             ("Carriers & payments", sel(lambda f: carriers_ui.CarrierInfoPage(self, f))), email,
              ("Client record", sel(lambda f: tracker_ui.ClientRecordDialog(self, f)))],
         ]
         self.consent_btn = None
@@ -1904,6 +1923,17 @@ class App(ctk.CTk):
             rr["buttons"][key] = b
         self.doc_rows[label] = rr
 
+    def _step_email(self, folder):
+        """The email for the next step (documents to sign, down payment, pink slip...)."""
+        name = checklist.EMAIL_FOR_STEP.get(self._next_id)
+        EmailDialog(self, folder, template=name)
+
+    def accept_quote(self, folder):
+        def saved(msg):
+            self.refresh_list(keep_scroll=True)
+            self.show_note(folder, msg, SUCCESS)
+        policy_ui.AcceptQuotePage(self, folder, on_saved=saved)
+
     def _pick_stage(self, stage):
         self._stage, self._stage_picked = stage, True
         self.selected and self.show_details(self.selected)
@@ -1941,7 +1971,8 @@ class App(ctk.CTk):
             "consent": ctk.CTkButton(btns, text="Fill consent", command=sel(self.refill)),
             "ars": ctk.CTkButton(btns, text="ARS entry", command=sel(lambda f: ars_ui.ArsEntryPage(self, f))),
             "folder": ctk.CTkButton(btns, text="Open folder", command=sel(os.startfile)),
-            "email": ctk.CTkButton(btns, text="Email client", command=sel(lambda f: EmailDialog(self, f))),
+            "email": ctk.CTkButton(btns, text="Write the email", command=sel(self._step_email)),
+            "accept": ctk.CTkButton(btns, text="Quote accepted", command=sel(self.accept_quote)),
             "docs": ctk.CTkButton(btns, text="See documents", command=lambda: self._pick_stage(0)),
         }
         for b in self.next_buttons.values():
@@ -2005,12 +2036,19 @@ class App(ctk.CTk):
             self.next_title.configure(font=font(18, "bold"), text_color=TEXT, text=title)
             self.next_kicker.configure(text=f"NEXT STEP   ·   {done} of {total} done", text_color=MUTED)
             text = ((note + ".  ") if note else "") + hint
+            if sid == "down_payment":                    # the carrier's own rule, from the notes
+                p = records.bound_policy(records.load(folder)) or {}
+                rule = policy_ui.down_payment_rule(self.cfg, p.get("insurer", ""))
+                amount = f" (${records.money(p['down_payment']):,.2f} saved)" if records.money(
+                    p.get("down_payment")) else ""
+                if rule:
+                    text = f"{p.get('insurer')} down payment: {rule}{amount}.  " + text
             self.next_hint.configure(text=text, text_color=WARN if note and ("issing" in note or note.startswith(("Refer", "Waiting")))
                                      else MUTED)
             self.next_hint.grid() if text else self.next_hint.grid_remove()
             if action:
                 self.next_buttons[action].pack(side="left", padx=(0, SP))
-            if not auto:
+            if not auto or sid == "billing":           # billing: N/A by itself, done by hand
                 self.next_done.pack(side="left", padx=(0, SP))
             if can_na:
                 self.next_na.pack(side="left")

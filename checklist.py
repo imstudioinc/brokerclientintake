@@ -38,25 +38,44 @@ AUTO_STEPS = [
     ("requote", "Quote checked with the DASH and MVR", "Review quote shows what doesn't match - fix ARS and quote "
      "again if needed.", None, False, "review"),
     # 3. Policy: after the client accepts the quote
-    ("approved", "Client approved; quote exported to PowerBroker", "Agree how the client pays: the carrier's "
-     "payment terms and WellCare's payment options are on the Carriers page.", None, False, "payments"),
-    ("pb_policy", "Policy set up in PowerBroker", "", None, False, None),
+    ("approved", "Quote accepted - policy saved to the Tracker", "Pick the carrier the client chose: the "
+     "policy, premium and vehicles go to the Tracker from the quote. Agree how the client pays.", "policy", False,
+     "accept"),
+    ("pb_policy", "Quote exported; policy set up in PowerBroker", "", None, False, None),
     ("pb_app", "Application created in PowerBroker", "Paste the REMARKS text from UW-Compass into the application.",
      None, False, None),
-    ("uwc", "Application filled and submitted on UW-Compass", "Submit when everything looks fine.", None, False, None),
+    ("sign_docs", "Documents sent to the client to sign", "Auto application, consent form, AB form package and "
+     "PAC form (with a void cheque).", None, False, "email"),
+    ("down_payment", "Down payment requested", "Ask the client for the down payment - mark N/A if the carrier "
+     "takes none.", None, True, "email"),
+    ("signed", "Signed documents back from the client", "", None, False, None),
+    ("paid", "Client confirmed the down payment", "The client sends you the payment confirmation.", None, True, None),
+    ("billing", "Echelon billing asked to use the client's credit card", "Once the down payment is done, email "
+     "Echelon's billing team to update the down payment method to the insured's credit card.", "billing", True,
+     "email"),
+    ("uploaded", "Signed documents uploaded and validated", "Upload them to the system and validate.", None, False,
+     "folder"),
+    ("uwc", "All documents submitted to head office", "Submit on UW-Compass when everything looks fine.", None, False,
+     None),
     ("referred", "Referred (if UW-Compass shows a refer message)", "Refer to head office or the insurer - "
      "mark N/A if there was nothing to refer.", None, True, None),
-    ("uploaded", "Files uploaded to PowerBroker", "Consent, DASH, MVR, quote, application and the client's "
-     "documents.", None, False, "folder"),
-    ("sent", "Policy documents sent to the client", "Confirmation email with the policy number, policy documents "
-     "and pink card(s).", None, False, "email"),
+    ("temp_pink", "Temporary pink slip (1 month) sent", "Send it once the documents are with head office.", None,
+     False, "email"),
+    ("ho_confirm", "Head office confirmed the policy", "", None, False, None),
+    ("sent", "1-year pink slip and policy documents sent", "Confirmation email with the policy number, the policy "
+     "documents and the 1-year pink card(s).", None, False, "email"),
 ]
 
 # the three stages of a client's file
 STAGES = [("Intake", "Details & documents", ["profile", "consent", "dash", "mvr_request", "mvr", "documents"]),
           ("Quote", "Forms & quote", ["quote", "uw_call", "requote"]),
-          ("Policy", "Bind, upload, send", ["approved", "pb_policy", "pb_app", "uwc", "referred",
-                                                           "uploaded", "sent"])]
+          ("Policy", "Bind, upload, send", ["approved", "pb_policy", "pb_app", "sign_docs", "down_payment",
+                                            "signed", "paid", "billing", "uploaded", "uwc", "referred",
+                                            "temp_pink", "ho_confirm", "sent"])]
+# the email template each email step opens ({type} = the client type, e.g. confirm-auto.html)
+EMAIL_FOR_STEP = {"sign_docs": "sign-auto.html", "down_payment": "down-payment.html",
+                  "billing": "billing-credit-card.html", "temp_pink": "temp-pink-card.html",
+                  "sent": "confirm-{type}.html"}
 # steps that wait on someone else: they don't hold up the next step
 WAITING = {"mvr", "documents"}
 
@@ -140,6 +159,14 @@ def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None):
                 state = "done"
             if missing:
                 note = f"{', '.join(missing).capitalize()} missing".replace(", " + missing[-1], " and " + missing[-1])                     if len(missing) > 1 else f"{missing[0].capitalize()} missing"
+        elif auto == "policy" and records.bound_policy(data):
+            p = records.bound_policy(data)
+            state = "done"
+            note = " ".join(x for x in (p.get("insurer"), p.get("policy_number")) if x)
+        elif auto == "billing":
+            p = records.bound_policy(data)
+            if not p or "echelon" not in (p.get("insurer") or "").lower():
+                state, note = "na", "Only for Echelon policies"
         elif auto == "consent" and docs.get("Client consent"):
             state, note = "done", "In the folder"
         elif auto == "dash" and docs.get("DASH report"):

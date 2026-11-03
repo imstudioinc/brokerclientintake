@@ -9,7 +9,8 @@ Template file format:
     subject: Your Auto Insurance Policy - Confirmation | {CLIENT_NAME}
     fields: insurer = Insurance company; auto_policy_number = Auto policy number
     attach: Policy documents and pink card(s)
-    to: underwriter          (optional: sent to WellCare's underwriter, not the client)
+    to: underwriter          (optional: sent to WellCare's underwriter, not the client;
+                              "billing" = the policy carrier's billing team, from carriers.json)
     -->
     <p>Hi {first_name}, ...</p>  {{include:policy_reminders}}
 
@@ -39,7 +40,7 @@ class Template:
     fields: list = field(default_factory=list)   # [(key, label)]
     attach: str = ""
     custom: bool = False                         # an edited copy in USER_DIR
-    to: str = ""                                 # "underwriter" = WellCare's underwriter, else the client
+    to: str = ""                   # "underwriter" = WellCare's underwriter, "billing" = carrier billing, else the client
 
 
 def _parse(path, custom):
@@ -88,7 +89,8 @@ def first_name(full):
 
 
 def render(template, values):
-    """Return (subject, body_html). Values are HTML-escaped; unknown {names} stay visible."""
+    """Return (subject, body_html). Values are HTML-escaped (except keys ending in _html, which are
+    ready-made HTML from the app); unknown {names} stay visible."""
     body = re.sub(r"\{\{include:([\w-]+)\}\}", lambda m: _block(m.group(1)), template.body)
 
     def fill(text, escape):
@@ -96,7 +98,7 @@ def render(template, values):
             key = m.group(1)
             if key not in values or values[key] in (None, ""):
                 return m.group(0)
-            return html.escape(str(values[key])) if escape else str(values[key])
+            return html.escape(str(values[key])) if escape and not key.endswith("_html") else str(values[key])
         return re.sub(r"\{(\w+)\}", sub, text)
 
     body_html = ('<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">'

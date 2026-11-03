@@ -468,6 +468,12 @@ class ClientRecordDialog(Panel):
         head.pack(fill="x", padx=20, pady=(18, 0))
         ctk.CTkLabel(head, text=self.folder.name, font=ui.font(22, "bold"), text_color=ui.TEXT).pack(side="left")
         app.secondary_button(head, "Open folder", lambda: os.startfile(self.folder), width=110).pack(side="right")
+        # contact details from the client's profile - nothing to type again here
+        who = records.client_info(self.folder)
+        contact = "     ".join(f"{label}  {who[k]}" for k, label in (("phone", "Phone"), ("email", "Email"),
+                                                                     ("dln", "Licence")) if who.get(k))
+        if contact:
+            ctk.CTkLabel(self, text=contact, font=ui.font(13), text_color=ui.MUTED, anchor="w")                 .pack(fill="x", padx=20, pady=(4, 0))
 
         # Facts a broker looks for first, in one readable sentence-sized row
         facts = ctk.CTkFrame(self, fg_color="transparent")
@@ -649,11 +655,12 @@ class TrackerView(ctk.CTkFrame):
             .pack(side="left", padx=(0, 8))
         self.month_menu = ctk.CTkOptionMenu(filters, values=["All months"], variable=self.f_month, **menu)
         self.month_menu.pack(side="left")
-        cols = [("client", "Client"), ("line", "Line"), ("status", "Status"), ("insurer", "Insurer"),
+        cols = [("client", "Client"), ("phone", "Phone"), ("email", "Email"), ("line", "Line"), ("status", "Status"), ("insurer", "Insurer"),
                 ("policy_number", "Policy #"), ("effective", "Effective"), ("expiry", "Expiry"),
                 ("premium", "Premium"), ("plan", "Plan"), ("by", "Added by")]
         frame, self.pol = make_table(t, ui, cols, right=("premium",),
-                                     widths={"client": 190, "premium": 110, "effective": 120, "expiry": 120},
+                                     widths={"client": 190, "phone": 120, "email": 210, "premium": 110,
+                                             "effective": 120, "expiry": 120},
                                      height=14)
         self.totals = ctk.CTkLabel(t, text="", font=ui.font(14, "bold"), text_color=ui.TEXT, anchor="e")
         self.totals.pack(side="bottom", fill="x", padx=12, pady=(0, 10))  # pinned below the table
@@ -750,12 +757,14 @@ class TrackerView(ctk.CTkFrame):
                     continue
                 if month != "All months" and not (p.get("effective") or "").startswith(month):
                     continue
-                rows.append((p.get("expiry") or "", folder, p))
-        for n, (_, folder, p) in enumerate(sorted(rows, key=lambda r: r[0])):
+                rows.append((p.get("expiry") or "", folder, p, data))
+        for n, (_, folder, p, data) in enumerate(sorted(rows, key=lambda r: r[0])):
             iid = f"{folder}|{p['id']}"
             self._pol_folders[iid] = folder
             tags = [t for t in (status_tag(p.get("status")), "odd" if n % 2 else "") if t]
-            self.pol.insert("", "end", iid=iid, tags=tags, values=[folder.name] + [
+            who = data.get("client", {})
+            self.pol.insert("", "end", iid=iid, tags=tags, values=[folder.name, who.get("phone", ""),
+                                                                   who.get("email", "")] + [
                 show_value("policies", k, p.get(k)) for k in
                 ("line", "status", "insurer", "policy_number", "effective", "expiry", "premium", "plan", "by")])
             amount = records.money(p.get("premium"))

@@ -1,0 +1,14 @@
+<!--
+name: Down payment request
+group: 2. Quote accepted
+order: 26
+subject: Auto Insurance - Down Payment Request | {CLIENT_NAME}
+fields: insurer = Insurance company; down_payment = Down payment amount (e.g. $444.33); due_date = Pay by (date)
+attach: Nothing needed
+-->
+<p>Hi {first_name},</p>
+<p>To start your policy with <b>{insurer}</b>, a <b>down payment of {down_payment}</b> is needed. Please make the payment by <b>{due_date}</b>.</p>
+{payment_options_html}
+<p><b>Once you have paid, please reply to this email with the payment confirmation</b> (a receipt or a screenshot), so we can confirm it with the insurance company.</p>
+<p>Your monthly payments will then be taken as set out in your PAC form.</p>
+<p>Thank you,</p>

@@ -75,3 +75,18 @@ def wellcare_payment_text(data):
     if w.get("intro"):
         lines.append(w["intro"])
     return "\n".join(lines).strip()
+
+
+def wellcare_payment_html(data):
+    """WellCare's payment options as HTML for a client email, or "" without carriers.json."""
+    import html
+    w = data.get("wellcare_payment") or {}
+    if not w.get("options"):
+        return ""
+    parts = ["<p><b>How to pay:</b></p>"]
+    for title, points in w["options"]:
+        parts.append(f"<p><b>{html.escape(title)}</b></p><ul>"
+                     + "".join(f"<li>{html.escape(p)}</li>" for p in points) + "</ul>")
+    if w.get("intro"):
+        parts.append(f"<p>{html.escape(w['intro'])}</p>")
+    return "".join(parts)

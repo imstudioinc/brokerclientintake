@@ -34,9 +34,11 @@ KINDS = {
             ("premium", "Annual premium ($)", "money", None),
             ("plan", "Payment plan", "choice", PLANS),
             ("monthly", "Monthly payment ($)", "money", None),
+            ("down_payment", "Down payment ($)", "money", None),
             ("method", "Payment method", "choice", METHODS),
             ("payment_day", "Payment day of month", "text", None),
             ("bound_date", "Date bound", "date", None),
+            ("quote_number", "Quote number", "text", None),
             ("coverage", "Coverage notes (limits, deductibles, endorsements)", "long", None),
         ],
         "columns": ["line", "status", "insurer", "policy_number", "effective", "expiry", "premium", "plan"],
@@ -229,10 +231,27 @@ def due_items(folder, data, horizon_days=45, quote_follow_up_days=7):
     return out
 
 
+def client_info(folder):
+    """The client's contact details (client.json), {} if there are none."""
+    try:
+        return json.loads((Path(folder) / "client.json").read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {}
+
+
 def scan_all(client_folders):
-    """[(folder, data)] for every client that has records."""
+    """[(folder, data)] for every client that has records; data["client"] = their contact details."""
     result = []
     for folder in client_folders:
         if (Path(folder) / FILE).exists():
-            result.append((Path(folder), load(folder)))
+            data = load(folder)
+            data["client"] = client_info(folder)
+            result.append((Path(folder), data))
     return result
+
+
+def bound_policy(data, line=None):
+    """The newest bound / active policy (of that line), or None."""
+    live = [p for p in data.get("policies", []) if p.get("status") in ("Bound", "Active", "Renewed")
+            and (line is None or p.get("line") == line)]
+    return max(live, key=lambda p: (p.get("bound_date") or "", p.get("created") or ""), default=None)
