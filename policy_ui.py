@@ -76,8 +76,14 @@ def billing_email(cfg, insurer):
     name = carriers.find(data, insurer)
     if not name:
         return ""
-    found = [v for kind, v, _ in carriers.contacts(data["carriers"][name].get("accounting") or []) if kind == "email"]
-    return found[0] if found else ""
+    entry = data["carriers"][name]
+
+    def emails(kind):
+        return [v for k, v, _ in carriers.contacts(entry.get(kind) or []) if k == "email"]
+    found = emails("accounting")
+    # several billing addresses: the one on the carrier's own domain (the same as its underwriting / claims)
+    own = {a.split("@")[1].lower() for a in emails("underwriting") + emails("claims")}
+    return next((a for a in found if a.split("@")[1].lower() in own), found[0] if found else "")
 
 
 # ---------- email blanks from the saved policy ----------
@@ -85,17 +91,26 @@ def _nice(d):
     return d.strftime("%b %d, %Y").replace(" 0", " ")
 
 
+NUMBER_KEY = {"Auto": "auto", "Home": "home", "Condo": "home", "Tenant": "tenant"}      # line -> blank prefix
+KEY_LINES = {"auto_policy_number": ("Auto",), "home_policy_number": ("Home", "Condo"),
+             "tenant_policy_number": ("Tenant",)}
+
+
 def email_values(folder):
-    """Email template blanks from the client's newest bound policy (and its vehicles): {key: value}."""
+    """Email template blanks from the client's bound policies (and vehicles): {key: value}.
+    Insurer, dates and premium come from the auto policy (else the newest one); every bound policy
+    gives its own number (auto_ / home_ / tenant_policy_number), and policy_number is the main one."""
     data = records.load(folder)
-    p = records.bound_policy(data)
+    p = records.bound_policy(data, "Auto") or records.bound_policy(data)
     if not p:
         return {}
     v = {"insurer": p.get("insurer", "")}
-    number = p.get("policy_number", "")
-    if number:
-        key = {"Home": "home", "Condo": "home", "Tenant": "tenant"}.get(p.get("line"), "auto")
-        v[f"{key}_policy_number"] = number
+    for line, key in NUMBER_KEY.items():
+        other = records.bound_policy(data, line)
+        if other and other.get("policy_number"):
+            v.setdefault(f"{key}_policy_number", other["policy_number"])
+    if p.get("policy_number"):
+        v["policy_number"] = p["policy_number"]
     eff = records.parse_date(p.get("effective"))
     if eff:
         v["effective_date"] = _nice(eff)
@@ -112,6 +127,24 @@ def email_values(folder):
     if any(cars):
         v["vehicle"] = "; ".join(c for c in cars if c)
     return v
+
+
+def remember_policy_numbers(folder, typed):
+    """Save policy numbers typed into an email ({blank key: value}) onto the matching bound policy, so
+    they are typed once and every later email (and the Tracker) has them. Returns how many were saved."""
+    saved = 0
+    for key, value in typed.items():
+        value = (value or "").strip()
+        if not value or not key.endswith("policy_number"):
+            continue
+        data = records.load(folder)
+        lines = KEY_LINES.get(key)
+        p = next((records.bound_policy(data, line) for line in lines or () if records.bound_policy(data, line)),
+                 None) if lines else records.bound_policy(data, "Auto") or records.bound_policy(data)
+        if p and p.get("policy_number") != value:
+            records.save_item(folder, "policies", {**p, "policy_number": value})
+            saved += 1
+    return saved
 
 
 def save_accepted(folder, kind, policy, vehicles):

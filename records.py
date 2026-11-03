@@ -213,21 +213,24 @@ def due_items(folder, data, horizon_days=45, quote_follow_up_days=7):
     for r in data["reminders"]:
         d = parse_date(r.get("due"))
         if not r.get("done") and d:
-            out.append({"due": d, "what": r.get("text", ""), "kind": "Reminder", "id": r.get("id")})
+            out.append({"due": d, "what": r.get("text", ""), "kind": "Reminder", "id": r.get("id"),
+                        "record": "reminders"})
     for p in data["policies"]:
         status = p.get("status", "")
         label = f"{p.get('line', '')} {p.get('insurer', '')} {p.get('policy_number', '')}".strip()
         exp = parse_date(p.get("expiry"))
         if exp and status in ("Bound", "Active", "Renewed") and exp <= now + datetime.timedelta(days=horizon_days):
             what = "Policy expired - renew or close" if exp < now else "Renewal coming up - review / re-market"
-            out.append({"due": exp, "what": f"{what}: {label}", "kind": "Renewal"})
+            out.append({"due": exp, "what": f"{what}: {label}", "kind": "Renewal", "id": p.get("id"),
+                        "record": "policies"})
         if status == "Quoted":
             created = parse_date((p.get("created") or "")[:10]) or now
             follow = created + datetime.timedelta(days=quote_follow_up_days)
-            out.append({"due": follow, "what": f"Follow up on quote: {label}", "kind": "Quote"})
+            out.append({"due": follow, "what": f"Follow up on quote: {label}", "kind": "Quote", "id": p.get("id"),
+                        "record": "policies"})
         if status == "Bound" and p.get("line") == "Auto" and not data["vehicles"]:
             out.append({"due": parse_date(p.get("bound_date")) or now,
-                        "what": f"Add vehicle details for {label}", "kind": "Missing info"})
+                        "what": f"Add vehicle details for {label}", "kind": "Missing info", "record": "vehicles"})
     return out
 
 

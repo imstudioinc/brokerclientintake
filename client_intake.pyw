@@ -9,6 +9,7 @@ import queue
 import re
 import sys
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog
@@ -836,6 +837,10 @@ class EmailDialog(Panel):
         subject, body = emails.render(self.template, values)
 
         self.saved_fields.update({k: e.get().strip() for k, e in self.field_entries.items() if e.get().strip()})
+        try:                # a policy number typed here is saved on the policy: type it once
+            policy_ui.remember_policy_numbers(self.folder, {k: e.get() for k, e in self.field_entries.items()})
+        except OSError:
+            pass
         if self._for_uw() or self._for_billing():
             if self._for_uw() and to.lower() != self.app.cfg.get("uw_email", ""):
                 config.update(self.app.cfg, uw_email=to.lower())
@@ -1200,10 +1205,34 @@ class App(ctk.CTk):
         if self.clients_root and self.clients_root.exists():
             self.refresh_list()
             return
+        if self.clients_root:          # set, but not reachable yet (shared drive still connecting): keep it
+            self.refresh_list()
+            self._wait_for_root()
+            return
         p = filedialog.askdirectory(parent=self, title="Choose your Clients folder")
         if p:
             config.update(self.cfg, clients_root=str(Path(p)))
         self.on_settings_changed()
+
+    def _wait_for_root(self):
+        """Check every few seconds (off the window's thread: a dead network drive can be slow) until the
+        Clients folder is reachable, then show the clients."""
+        root = self.clients_root
+        if not root or getattr(self, "_watching", None) == root:
+            return
+        self._watching = root
+
+        def work():
+            while self.clients_root == root:
+                time.sleep(4)
+                try:
+                    if root.exists():
+                        self.ui(self.refresh_list)
+                        break
+                except OSError:
+                    pass
+            self._watching = None
+        threading.Thread(target=work, daemon=True).start()
 
     def reload_types(self):
         self.refresh_list()
@@ -1221,6 +1250,7 @@ class App(ctk.CTk):
             row.destroy()
         self.rows.clear()
         self.refresh_list()
+        self._wait_for_root() if root and not root.exists() else None
         self.tracker_changed()
 
     # ---------- sample data ----------
@@ -1544,7 +1574,7 @@ class App(ctk.CTk):
         self.list_frame = ctk.CTkScrollableFrame(c, fg_color="transparent")
         self.list_frame.grid(row=3, column=0, sticky="nsew", padx=SP, pady=(0, SP))
         self.list_frame.grid_columnconfigure(0, weight=1)
-        self.empty_label = ctk.CTkLabel(self.list_frame, text="", font=font(13), text_color=MUTED)
+        self.empty_label = ctk.CTkLabel(self.list_frame, text="", font=font(13), text_color=MUTED, wraplength=300)
         self.more_btn = self.secondary_button(self.list_frame, "Show more", self.show_more)
 
     # The list uses plain Tk widgets (much faster than CTk ones) and keeps its rows between
@@ -1630,7 +1660,9 @@ class App(ctk.CTk):
         self.more_btn.grid_forget()
         if not root or not root.exists():
             self.count_label.configure(text="")
-            self.empty_label.configure(text="Set your Clients folder in Settings.")
+            self.empty_label.configure(
+                text=(f"Can't reach your Clients folder:\n{root}\nIs the shared drive connected? "
+                      "Nothing is lost - the app keeps checking.") if root else "Set your Clients folder in Settings.")
             self.empty_label.grid(row=0, column=0, pady=4 * SP)
             self.row_buttons = {}
             self.show_details(None)

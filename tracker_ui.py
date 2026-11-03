@@ -633,10 +633,11 @@ class TrackerView(ctk.CTkFrame):
         frame, self.todo = make_table(t, ui, [("when", "When"), ("client", "Client"), ("kind", "Type"), ("what", "What to do")],
                                       widths={"when": 150, "client": 200, "kind": 130, "what": 600}, height=14,
                                       tree_col=True)
-        self.todo.bind("<Double-1>", lambda e: self.open_client(self.todo, "Reminders"))
-        ctk.CTkLabel(t, text="Renewals appear 45 days before expiry. Quotes get a follow-up after 7 days. "
-                             "Double-click a row to open the client.",
-                     font=ui.font(12), text_color=ui.MUTED).pack(side="bottom", anchor="w", padx=8, pady=(0, 8))
+        self.todo.bind("<Double-1>", lambda e: self.edit_todo())
+        self._bar(t, [("+ Add to-do", self.add_todo, True), ("Edit", self.edit_todo, False),
+                      ("Mark done", self.done_todo, False), ("Open client", lambda: self.open_client(self.todo), False)],
+                  "Renewals appear 45 days before expiry. Quotes get a follow-up after 7 days. "
+                  "Double-click a row to edit it.")
         frame.pack(fill="both", expand=True, padx=6, pady=6)
 
         # --- Policies
@@ -662,10 +663,13 @@ class TrackerView(ctk.CTkFrame):
                                      widths={"client": 190, "phone": 120, "email": 210, "premium": 110,
                                              "effective": 120, "expiry": 120},
                                      height=14)
+        self._bar(t, [("+ Add policy", self.add_policy, True), ("Edit", self.edit_policy, False),
+                      ("Open client", lambda: self.open_client(self.pol), False)],
+                  "Double-click a row to edit the policy.")
         self.totals = ctk.CTkLabel(t, text="", font=ui.font(14, "bold"), text_color=ui.TEXT, anchor="e")
-        self.totals.pack(side="bottom", fill="x", padx=12, pady=(0, 10))  # pinned below the table
+        self.totals.pack(side="bottom", fill="x", padx=12, pady=(0, 4))  # pinned above the buttons
         frame.pack(fill="both", expand=True, padx=6, pady=6)
-        self.pol.bind("<Double-1>", lambda e: self.open_client(self.pol, "Policies"))
+        self.pol.bind("<Double-1>", lambda e: self.edit_policy())
 
         self.items, self.todo_rows = [], []
         self.load()
@@ -721,7 +725,7 @@ class TrackerView(ctk.CTkFrame):
 
         tree = self.todo
         tree.delete(*tree.get_children())
-        self._todo_folders = {}
+        self._todo_items = {}
         groups = (("now", "Due now"), ("soon", "Next 14 days"), ("later", "Later"))
         for key, title in groups:
             members = [r for r in rows if self._bucket(r[0], today) == key]
@@ -735,7 +739,7 @@ class TrackerView(ctk.CTkFrame):
                 tree.insert(parent, "end", iid=iid, tags=[t for t in (tag, "odd" if n % 2 else "") if t],
                             values=[when_text(due, today), folder.name, TODO_KIND.get(d["kind"], d["kind"]),
                                     d["what"]])
-                self._todo_folders[iid] = folder
+                self._todo_items[iid] = (folder, d)
         if not rows:
             tree.insert("", "end", iid="empty", tags=("muted",),
                         values=["", "Nothing to do here.", "", "Add reminders from a client's record."])
@@ -775,12 +779,154 @@ class TrackerView(ctk.CTkFrame):
         self.totals.configure(text=("     ".join(parts) + "        " if len(parts) > 1 else "")
                                    + f"{count} polic{'y' if count == 1 else 'ies'}, ${total:,.2f} total premium")
 
-    def open_client(self, tree, tab):
-        sel = tree.selection()
+    # ----- buttons under the lists
+    def _bar(self, tab, buttons, hint):
+        bar = ctk.CTkFrame(tab, fg_color="transparent")
+        bar.pack(side="bottom", fill="x", padx=6, pady=(0, 8))
+        for text, command, main in buttons:
+            if main:
+                ctk.CTkButton(bar, text=text, height=36, font=self.ui.font(13, "bold"), fg_color=self.ui.PRIMARY,
+                              hover_color=self.ui.PRIMARY_HOVER, command=command).pack(side="left", padx=(0, 8))
+            else:
+                self.app.secondary_button(bar, text, command, height=36, font=self.ui.font(13))                     .pack(side="left", padx=(0, 8))
+        ctk.CTkLabel(bar, text=hint, font=self.ui.font(12), text_color=self.ui.MUTED, wraplength=520,
+                     justify="left", anchor="w").pack(side="left", padx=(8, 0))
+
+    def _hint(self, text):
+        messagebox.showinfo("Tracker", text, parent=self)
+
+    def _chosen_todo(self):
+        sel = self.todo.selection()
+        got = self._todo_items.get(sel[0]) if sel else None
+        if not got:
+            self._hint("Select a to-do first.")
+        return got
+
+    def _chosen_policy(self):
+        """(folder, policy) for the selected row of the Policies list."""
+        sel = self.pol.selection()
+        folder = self._pol_folders.get(sel[0]) if sel else None
+        if not folder:
+            self._hint("Select a policy first.")
+            return None
+        pid = sel[0].rsplit("|", 1)[-1]
+        data = next((d for f, d in self.items if f == folder), {})
+        policy = next((x for x in data.get("policies", []) if x.get("id") == pid), None)
+        return (folder, policy) if policy else None
+
+    def _editor(self, folder, kind, item=None):
+        RecordEditor(self, self.app, folder, kind, item=item, on_saved=self.load)
+
+    def open_client(self, tree, tab=None):
+        """Open the whole client record (and select the client on the Clients page)."""
+        got = self._chosen_todo() if tree is self.todo else self._chosen_policy()
+        if not got:
+            return
+        folder = got[0]
+        if folder in self.app.client_type_of:
+            self.app.select(folder)
+        ClientRecordDialog(self.app, folder, tab=tab or "Policies")
+
+    # to-do: edit the reminder / policy behind the row
+    def edit_todo(self):
+        got = self._chosen_todo()
+        if not got:
+            return
+        folder, d = got
+        kind = d.get("record")
+        data = records.load(folder)
+        item = next((x for x in data.get(kind, []) if x.get("id") == d.get("id")), None) if d.get("id") else None
+        if item:
+            self._editor(folder, kind, item)
+        else:
+            ClientRecordDialog(self.app, folder, tab="Vehicles" if kind == "vehicles" else "Policies")
+
+    def done_todo(self):
+        got = self._chosen_todo()
+        if not got:
+            return
+        folder, d = got
+        if d["kind"] != "Reminder":
+            self._hint("Renewals and quote follow-ups go away by themselves when the policy is updated "
+                       "(a new expiry date, or status Bound / Lost). Use Edit to change the policy.")
+            return
+        item = next((x for x in records.load(folder)["reminders"] if x.get("id") == d.get("id")), None)
+        if item:
+            records.save_item(folder, "reminders", {**item, "done": True})
+            self.load()
+
+    def add_todo(self):
+        sel = self.todo.selection()
+        start = self._todo_items[sel[0]][0].name if sel and sel[0] in self._todo_items else ""
+        ClientPicker(self.app, "Add a to-do - which client?", lambda f: self._editor(f, "reminders"), start)
+
+    # policies
+    def edit_policy(self):
+        got = self._chosen_policy()
+        if got:
+            self._editor(got[0], "policies", got[1])
+
+    def add_policy(self):
+        sel = self.pol.selection()
+        start = self._pol_folders[sel[0]].name if sel and sel[0] in self._pol_folders else ""
+        ClientPicker(self.app, "Add a policy - which client?", lambda f: self._editor(f, "policies"), start)
+
+
+class ClientPicker(Panel):
+    """Choose a client by typing part of the name, then on_pick(folder)."""
+    FORM = True
+
+    def __init__(self, app, title, on_pick, start=""):
+        super().__init__(app)
+        ui = self.ui = _ui(app)
+        self.on_pick = on_pick
+        self.title(title)
+        self.geometry("560x560")
+        self.folders = sorted(app.client_type_of, key=lambda f: f.name)
+        self.shown = []
+        card = ctk.CTkFrame(self, fg_color=ui.SURFACE, corner_radius=12, border_width=1, border_color=ui.BORDER)
+        card.pack(fill="x")
+        ctk.CTkLabel(card, text="Type part of the name", font=ui.font(14, "bold"), text_color=ui.TEXT)             .pack(anchor="w", padx=16, pady=(16, 6))
+        self.search = ctk.CTkEntry(card, height=40, font=ui.font(14), border_color=ui.BORDER,
+                                   placeholder_text="Client name")
+        self.search.pack(fill="x", padx=16)
+        k = ctk.ScalingTracker.get_widget_scaling(self)
+        box = tk.Frame(card, bg=_c(ui.BORDER))
+        box.pack(fill="x", padx=16, pady=(12, 0))
+        self.list = tk.Listbox(box, height=12, activestyle="none", borderwidth=0, highlightthickness=0,
+                               font=("Segoe UI", round(11 * k)), bg=_c(ui.SURFACE_ALT), fg=_c(ui.TEXT),
+                               selectbackground=_c(ui.PRIMARY), selectforeground="#FFFFFF", exportselection=False)
+        bar = ttk.Scrollbar(box, command=self.list.yview)
+        self.list.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y", padx=(0, 1), pady=1)
+        self.list.pack(fill="x", padx=1, pady=1)
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=16, pady=16)
+        ctk.CTkButton(row, text="Choose", width=120, height=38, font=ui.font(14, "bold"), fg_color=ui.PRIMARY,
+                      hover_color=ui.PRIMARY_HOVER, command=self.choose).pack(side="right")
+        app.secondary_button(row, "Cancel", self.destroy, width=96).pack(side="right", padx=(0, 8))
+        self.search.bind("<KeyRelease>", lambda e: self.fill())
+        self.search.bind("<Return>", lambda e: self.choose())
+        self.list.bind("<Double-1>", lambda e: self.choose())
+        self.list.bind("<Return>", lambda e: self.choose())
+        if start:
+            self.search.insert(0, start)
+        self.fill()
+        self.search.focus_set()
+
+    def fill(self):
+        q = self.search.get().strip().lower()
+        self.shown = [f for f in self.folders if q in f.name.lower()]
+        self.list.delete(0, "end")
+        for f in self.shown:
+            self.list.insert("end", f.name)
+        if self.shown:
+            self.list.selection_set(0)
+
+    def choose(self):
+        sel = self.list.curselection()
         if not sel:
             return
-        folder = (self._todo_folders if tree is self.todo else self._pol_folders).get(sel[0])
-        if folder:
-            if folder in self.app.client_type_of:
-                self.app.select(folder)
-            ClientRecordDialog(self.app, folder, tab=tab)
+        folder = self.shown[sel[0]]
+        self.destroy()
+        self.on_pick(folder)
