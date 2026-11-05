@@ -5,6 +5,8 @@ Check statuses: "decline" (a carrier won't write it), "bad" (fix the quote), "re
 client), "todo" (carrier to-do), "info" (note), "ok" (matches).
 """
 import datetime
+import fnmatch
+import os
 from pathlib import Path
 
 import eligibility
@@ -21,12 +23,14 @@ DOC_PATTERNS = {"dash": ["DASH Report*.pdf", "*DASH*.pdf"],
 def find_docs(folder):
     """{kind: [paths newest first]} for DASH, MVR and Quote PDFs in the client folder."""
     folder, out = Path(folder), {}
+    try:
+        with os.scandir(folder) as entries:           # one listing for all patterns
+            files = [(e.name, e.stat().st_mtime) for e in entries if e.is_file()]
+    except OSError:
+        files = []
     for kind, patterns in DOC_PATTERNS.items():
-        seen = {}
-        for pat in patterns:
-            for p in folder.glob(pat):
-                seen[p] = p.stat().st_mtime
-        out[kind] = sorted(seen, key=seen.get, reverse=True)
+        seen = {n: m for n, m in files if any(fnmatch.fnmatchcase(n.lower(), p.lower()) for p in patterns)}
+        out[kind] = [folder / n for n in sorted(seen, key=seen.get, reverse=True)]
     return out
 
 

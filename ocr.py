@@ -6,8 +6,18 @@ work computer; the Python side needs the winrt packages (bundled in the exe).
 import asyncio
 import io
 
-import pdfplumber
-import pypdfium2 as pdfium
+
+
+def _plumber():
+    """pdfplumber, loaded when a PDF is first opened (it takes ~0.2 s to import: not at startup)."""
+    import pdfplumber
+    return pdfplumber
+
+
+def _pdfium():
+    """pypdfium2, loaded when a scanned page is first drawn (not at startup)."""
+    import pypdfium2
+    return pypdfium2
 
 
 class OcrUnavailable(Exception):
@@ -25,7 +35,7 @@ def text_lines(pdf_path):
     """Lines of the PDF's text layer, or [] for a scanned / image-only PDF (or a photo)."""
     if is_image(pdf_path):
         return []
-    with pdfplumber.open(pdf_path) as pdf:
+    with _plumber().open(pdf_path) as pdf:
         text = "\n".join((p.extract_text() or "") for p in pdf.pages)
     return [l for l in text.splitlines() if l.strip()]
 
@@ -63,7 +73,7 @@ def page_images(pdf_path, scale=4):
         k2 = 2400 / img.width if img.width < 2400 else 1
         yield img.resize((int(img.width * k2), int(img.height * k2))).point(lambda v: 0 if v < 200 else 255)
         return
-    doc = pdfium.PdfDocument(str(pdf_path))
+    doc = _pdfium().PdfDocument(str(pdf_path))
     try:
         for page in doc:
             img = page.render(scale=scale).to_pil().convert("L")

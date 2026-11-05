@@ -11,7 +11,6 @@ import shutil
 import time
 from pathlib import Path
 
-import pdfplumber
 
 from fill_consent import read_consent
 from mvr_email import load_client, save_client
@@ -21,6 +20,12 @@ MVR_WORDS = re.compile(r"\bMVR\b|DRIVER'?S?\s+RECORD|DRIVER\s+ABSTRACT|DRIVING\s
 # Our own documents also carry licence numbers - never treat them as an MVR
 SKIP_NAMES = re.compile(r"^(DASH Report|Client Consent|New Client Consent)|consent form|quote", re.I)
 DLN_IN_TEXT = re.compile(r"\b([A-Z])[\s-]?(\d{4})[\s-]?(\d{5})[\s-]?(\d{5})\b")
+
+
+def _plumber():
+    """pdfplumber, loaded when a PDF is first opened (it takes ~0.2 s to import: not at startup)."""
+    import pdfplumber
+    return pdfplumber
 
 
 def _raw_dln(dln):
@@ -58,7 +63,7 @@ class ClientIndex:
 
 def read_pdf_text(path, pages=2):
     try:
-        with pdfplumber.open(path) as pdf:
+        with _plumber().open(path) as pdf:
             return "\n".join((p.extract_text() or "") for p in pdf.pages[:pages])
     except Exception:
         return ""

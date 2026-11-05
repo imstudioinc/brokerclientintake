@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import uuid
 from email.message import EmailMessage
 from email.utils import make_msgid
 from pathlib import Path
@@ -26,7 +27,10 @@ def load_client(folder):
 def save_client(folder, **values):
     data = load_client(folder)
     data.update({k: v for k, v in values.items() if v is not None})
-    (Path(folder) / CLIENT_FILE).write_text(json.dumps(data, indent=2), encoding="utf-8")
+    path = Path(folder) / CLIENT_FILE
+    tmp = path.with_name(f".{CLIENT_FILE}.{uuid.uuid4().hex[:8]}.tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.replace(tmp, path)       # one step: readers never see half a file, and the folder's time changes
     return data
 
 

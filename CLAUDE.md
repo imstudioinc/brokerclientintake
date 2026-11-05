@@ -86,7 +86,7 @@ decision changes (edit the section, don't append contradictions).
 
 | File | What it does |
 |---|---|
-| `client_intake.pyw` | Main window: client list (paged, cached; line shows the client's stage) on the left with **+ New client**; selected client on the right (header with contact details + Open folder / Edit, a strip of the 3 stages, next-step card, then the chosen stage's buttons, steps and documents); dialogs (`ClientDialog` for new / edit, Settings, Signature, MVR request, Email, Import DASH); top bar Clients / Tracker / Rules views; design tokens |
+| `client_intake.pyw` | Main window: client list (paged; drawn from `_scan` + `_row_cache`, see Performance rules; line shows the client's stage) on the left with **+ New client**; selected client on the right (header with contact details + Open folder / Edit, a strip of the 3 stages, next-step card, then the chosen stage's buttons, steps and documents); dialogs (`ClientDialog` for new / edit, Settings, Signature, MVR request, Email, Import DASH); top bar Clients / Tracker / Rules views; design tokens |
 | `panel.py` | `Panel`: a page inside the main window that replaces `CTkToplevel` for every dialog (Back bar, title, stacking, window-only calls ignored, forms centred / scrollable) |
 | `checklist.py` | Auto process checklist (23 steps in the owner's **3 stages** `STAGES`: 1 Intake = details & documents, 2 Quote = forms & quote, 3 Policy = the owner's bind process: quote accepted (saved to the Tracker), PowerBroker, documents to sign (auto application, consent, AB package, PAC), down payment requested / confirmed, Echelon billing email (N/A unless the policy is Echelon), upload + validate, submit to head office, temporary 1-month pink slip, head office confirms, 1-year pink slip + policy documents; `EMAIL_FOR_STEP` = the template each email step opens; `WAITING` steps (MVR received, client documents) don't hold up the next step): auto-ticks from folder / `client.json` (licence #, `mvr_requested`) and logged UW calls (`uw_call` step: done when a call is logged with a result, N/A by itself when the quote has no refer messages; the quote's refer messages are kept in `tracking.json` `quote_refers` keyed on file name + mtime so the client list never reads PDFs), manual ticks and N/A saved in `tracking.json` under `checklist`; `status()` / `summary()` feed the client panel and the list line |
 | `client_edit.py` | Edit client: plan / apply a name or type change (move the folder first - if Windows refuses nothing has changed; then rename files containing the old name; save `client.json`) |
@@ -97,7 +97,7 @@ decision changes (edit the section, don't append contradictions).
 | `tools/make_consent_template.py` | Rebuilds the consent template from a filled WellCare form: removes the printed name/date text (not just covers it - the repo is public), adds rows and fields. Dev-only (pypdf) |
 | `dash_import.py` | Finds DASH reports in Downloads and moves them into the client folder |
 | `mvr_email.py`, `mvr_watch.py` | MVR request email (Outlook draft with attachments); watches Downloads and files incoming MVR PDFs into the right client by licence # / name |
-| `emails.py`, `templates/emails/` | Client email templates (quote requests, quote accepted / documents needed, confirmations, pink card) as Outlook drafts with the HTML signature. `to: underwriter` in a template's header sends it to WellCare's underwriter (`uw_email`) instead of the client, with the latest quote / DASH / MVR ticked: UW approval for < 1 yr insurance experience and deductibles over $1,000. Blanks are filled from the bound policy first (`policy_ui.email_values`), then the newest quote (`client_facts.quote_email_values`, read in a thread; several carriers = a picker, bindable ones first); blanks with `date` in the key get a calendar (`tracker_ui.DateField`); `{payment_options_html}` = WellCare's payment options from `carriers.json` (keys ending `_html` are not escaped) |
+| `emails.py`, `templates/emails/` | Email templates (to the client, the underwriter, an insurer's billing team: quote requests, quote accepted / documents needed, confirmations, pink cards, UW approvals, billing) as Outlook drafts with the HTML signature. The page is called **Write email** (not "Email client": not every template goes to the client). **Edit this template** opens `TemplateEditor` (in `client_intake.pyw`): subject + message as plain text (blank line = paragraph, `- ` = bullet, `**bold**`; `emails.html_to_text` / `text_to_html`, HTML mode for anything else), click-to-insert fields, live preview, Reset; saves an edited copy in `%APPDATA%\ClientIntake\emails` (`emails.save_custom`, keeps `to` / `fields` / `attach`, remembers the original it was made from so an outdated copy is flagged; dropdown shows "(edited)"). `load_templates()` is cached by file times. `to: underwriter` in a template's header sends it to WellCare's underwriter (`uw_email`) instead of the client, with the latest quote / DASH / MVR ticked: UW approval for < 1 yr insurance experience and deductibles over $1,000. Blanks are filled from the bound policy first (`policy_ui.email_values`), then the newest quote (`client_facts.quote_email_values`, read in a thread; several carriers = a picker, bindable ones first); blanks with `date` in the key get a calendar (`tracker_ui.DateField`); `{payment_options_html}` = WellCare's payment options from `carriers.json` (keys ending `_html` are not escaped) |
 | `records.py`, `tracker_ui.py` | Client record dialog and the Tracker view (to-dos, renewals, policies; client phone / email from `client.json`, never retyped). The Tracker is editable: buttons + double-click open the policy / reminder behind a row in `RecordEditor` (`due_items` carry `record` + `id`), Add to-do / Add policy go through `ClientPicker`, Mark done works on reminders. `records.bound_policy()` = the newest bound policy |
 | `policy_ui.py` | **Quote accepted / Policy details** page: carrier, premium, effective date and vehicles read from the newest quote and saved as the client's bound policy + vehicles (no retyping); down payment rule and 2-month suggestion from `carriers.json`; `email_values()` fills policy emails from the saved policies (each line's own `auto_` / `home_` / `tenant_policy_number`, plus `policy_number` for the main one) and `remember_policy_numbers()` saves a number typed into an email back onto the policy; `billing_email()` = the carrier's billing address from `carriers.json`, the one on the carrier's own domain when there are several (`to: billing` templates) |
 | `notes_search.py`, `rules_ui.py` | **Rules** tab: offline search over the `.md` notes (sections by `##`, items = bullets / table rows; rare words weigh more, named carrier's notes first, small synonym list) |
@@ -128,6 +128,8 @@ decision changes (edit the section, don't append contradictions).
   repaints rows that changed. Avoid reading files per row on every refresh.
 - Tk tag fonts in text boxes use **negative sizes (pixels)** to match CTk fonts.
 - Main screen is two columns (list | client). Document rows show only the buttons that fit their state.
+- Panels with their own scrolling (the client page's `CTkScrollableFrame`) flush Tk's pending layout on every
+  change (`CTkScrollbar._draw` calls `update_idletasks`), so fewer / cheaper widget changes matter more than anything.
 - GUI screenshots for checking layout: capture the app's own window with `PrintWindow` (window set to
   alpha 0 so nothing appears on the owner's screen) - never grab the screen.
 - **Readability (owner found the client panel "crowded and not readable")**: Settings > Text size
@@ -140,6 +142,36 @@ decision changes (edit the section, don't append contradictions).
   `grid_remove()` them (this caused big gaps on the client panel and the Email page).
 - Keep screens simple: the owner found a long flat list of checks "too complicated". Pattern that
   works: one verdict line at the top, short grouped items, details folded away (click to open).
+
+## Performance rules (the owner found the app laggy; these made it smooth - keep them)
+
+- **The window thread never reads client files.** Anything per client comes from a thread:
+  the list line from `_compute_row` (via `_need_rows`, results posted with `app.ui`), the client page
+  from `_gather` (via `_start_gather` / `_gathered`; PDFs are read there) and is drawn by
+  `_render_details`, which only reads the finished bundle. The first draw uses the last bundle
+  (`_bundles`) if there is one. `app.ui` queue is polled every 40 ms.
+- **One directory listing, never `glob` per pattern** (`folder_files`, `find_docs`, `review.find_docs`,
+  `scan_clients` use `os.scandir`; names are matched in memory with `fnmatch`). No per-client `stat`
+  when the list is drawn: the Clients-folder scan already carries each folder's modified time, and that
+  time is the cache key for the list line. So **every save into a client folder must be atomic**
+  (temp file + `os.replace`, as `records._write`, `mvr_email.save_client` do) - that is what changes
+  the folder's time.
+- **Typing / filtering only redraws** (`refresh_soon(..., rescan=False)`). A change to one client calls
+  `client_changed(folder)` (that client's line + page only). Full re-scans of the Clients folder happen at
+  start-up, after Settings, on window focus (at most every 8 s), F5, new client and rename.
+- **In render code use `self._set(widget, ...)` and `self._show(widget, visible)`** instead of
+  `configure()` / `grid()`: every CTk configure redraws the widget, and the client page has ~150 of them.
+  `font()` is memoized (one CTkFont per size / weight). Switching stage pages re-renders from the same bundle
+  and reads nothing.
+- Heavy libraries load on first use (`_plumber()`, `_pypdf()`, `_pdfium()` in `fill_consent`, `ocr`,
+  `eligibility`, `client_facts`, `mvr_watch`): keep imports of pdfplumber / pypdf / pypdfium2 out of
+  module level (PyInstaller still finds imports inside functions). `_prewarm` draws the client page once,
+  off-screen, shortly after start so the first click is quick; `sys.setswitchinterval(0.002)` lets the window
+  run while a thread parses a PDF.
+- The Tracker reloads only when it is showing (it also loads each time it is opened).
+- To measure: count `os.scandir` / `open` calls and time `select` / `_pick_stage` / typing with a few hundred
+  dummy client folders (the shared drive makes each file call slow, so call counts matter more than the
+  local milliseconds).
 
 ## Domain rules built into the code (don't "fix" these)
 

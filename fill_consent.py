@@ -16,10 +16,20 @@ import re
 import sys
 from pathlib import Path
 
-import pdfplumber
-from pypdf import PdfReader, PdfWriter
 
 DEFAULT_TEMPLATE = Path(__file__).parent / "templates" / "WellCare Consent Form.pdf"
+
+
+def _plumber():
+    """pdfplumber, loaded when a PDF is first opened (it takes ~0.2 s to import: not at startup)."""
+    import pdfplumber
+    return pdfplumber
+
+
+def _pypdf():
+    """pypdf, loaded when a PDF is first read or written (not at startup)."""
+    import pypdf
+    return pypdf
 
 
 def format_dln(dln):
@@ -37,7 +47,7 @@ def is_valid_dln(dln):
 
 def read_dash(pdf_path):
     """Return (name, dln) from the header of a DASH driver report."""
-    with pdfplumber.open(pdf_path) as pdf:
+    with _plumber().open(pdf_path) as pdf:
         text = pdf.pages[0].extract_text() or ""
     name = re.search(r"DRIVER REPORT\s*\n(.+?)\s+Report Date:", text)
     dln = re.search(r"DLN:\s*([A-Z0-9-]+)", text)
@@ -49,7 +59,7 @@ def read_dash(pdf_path):
 def read_consent(pdf_path):
     """Return (name, dln) of the first driver on a filled consent form, or None."""
     try:
-        reader = PdfReader(pdf_path)
+        reader = _pypdf().PdfReader(pdf_path)
         fields = reader.get_fields() or {}
     except Exception:
         return None
@@ -57,7 +67,7 @@ def read_consent(pdf_path):
     name, dln = value("Name 1") or value("Client(s) Name"), value("Driver License 1")
     if not name:   # flattened WellCare form: "AND: JOHN SMITH (the "Client")"
         try:
-            with pdfplumber.open(pdf_path) as pdf:     # reads by position: name sits between AND: and (the
+            with _plumber().open(pdf_path) as pdf:     # reads by position: name sits between AND: and (the
                 m = re.search(r"AND:\s*(.+?)\s*\(the", pdf.pages[0].extract_text() or "")
             name = m.group(1).strip() if m else ""
         except Exception:
@@ -103,7 +113,7 @@ def fill(client_folder, dln=None, template=None):
         except Exception:
             dln = ""
 
-    reader = PdfReader(template)
+    reader = _pypdf().PdfReader(template)
     slots = sum(1 for k in (reader.get_fields() or {}) if re.fullmatch(r"Name \d+", k)) or 3
     dash_files = sorted(folder.glob("DASH Report*.pdf"), key=lambda p: p.stat().st_mtime)
     dash = [d for d in (read_dash(p) for p in dash_files) if d]
@@ -128,7 +138,7 @@ def fill(client_folder, dln=None, template=None):
         if f"Driver License {i}" in fields:
             values[f"Driver License {i}"] = licence
 
-    writer = PdfWriter(clone_from=reader)
+    writer = _pypdf().PdfWriter(clone_from=reader)
     if template == DEFAULT_TEMPLATE:
         # draw the values into the page and drop the fields: looks the same in every viewer
         writer.update_page_form_field_values(writer.pages[0], values, auto_regenerate=False, flatten=True)

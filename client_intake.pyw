@@ -4,6 +4,8 @@ Creates the client folder, fills the consent form, and shows which
 documents (Consent, DASH, Quote, MVR) each client folder already has.
 """
 import datetime
+import fnmatch
+import functools
 import os
 import queue
 import re
@@ -95,16 +97,35 @@ def doc_list(kind):
     return DOCUMENTS + ([(label, pats) for label, pats, _, _ in AUTO_DOCUMENTS] if kind == "Auto" else [])
 
 
+def folder_files(folder):
+    """[(name, mtime)] of the files in a folder from ONE directory listing. (Every glob() is another
+    listing, and on the shared drive each listing is a network round trip.)"""
+    try:
+        with os.scandir(folder) as entries:
+            return [(e.name, e.stat().st_mtime) for e in entries if e.is_file()]
+    except OSError:
+        return []
+
+
+def name_matches(name, patterns):
+    """Windows-style (case-insensitive) glob match of a file name against several patterns."""
+    low = name.lower()
+    return any(fnmatch.fnmatchcase(low, pat.lower()) for pat in patterns)
+
+
 def find_docs(folder, kind=""):
     """Return {label: [files]} for the tracked documents in a client folder."""
+    folder = Path(folder)
+    files = [(n, m) for n, m in folder_files(folder) if Path(n).suffix.lower() in DOC_EXTS]
     found, base = {}, set()
     for label, patterns in doc_list(kind):
-        files = {p for pat in patterns for p in folder.glob(pat) if p.suffix.lower() in DOC_EXTS and p.is_file()}
+        hits = {n: m for n, m in files if name_matches(n, patterns)}
+        names = set(hits)
         if label in dict(DOCUMENTS):
-            base |= files
+            base |= names
         else:
-            files -= base            # e.g. "Client Consent" is not a lienholder paper
-        found[label] = sorted(files, key=lambda p: p.stat().st_mtime)
+            names -= base            # e.g. "Client Consent" is not a lienholder paper
+        found[label] = [folder / n for n in sorted(names, key=hits.get)]
     return found
 
 
@@ -142,18 +163,24 @@ def parse_types(text):
 
 
 def scan_clients(root, types):
-    """[(folder, type)] for Clients/<Type>/<client>, plus older client folders kept
-    directly in Clients (type "Other")."""
+    """[(folder, type, modified)] for Clients/<Type>/<client>, plus older client folders kept
+    directly in Clients (type "Other"). One directory listing per Clients / <Type> folder, and no
+    call per client: the listing already carries each folder's modified time."""
     wanted = {t.lower(): t for t in types}
+
+    def subfolders(path):
+        try:
+            with os.scandir(path) as entries:
+                return [(Path(e.path), e.stat().st_mtime) for e in entries if e.is_dir()]
+        except OSError:
+            return []
     found = []
-    for child in root.iterdir():
-        if not child.is_dir():
-            continue
+    for child, modified in subfolders(root):
         t = wanted.get(child.name.lower())
         if t:
-            found += [(c, t) for c in child.iterdir() if c.is_dir()]
+            found += [(c, t, m) for c, m in subfolders(child)]
         else:
-            found.append((child, "Other"))
+            found.append((child, "Other", modified))
     return found
 
 
@@ -165,7 +192,9 @@ def type_folder(root, client_type):
     return root / client_type
 
 
+@functools.lru_cache(maxsize=None)
 def font(size=14, weight="normal"):
+    """One shared CTkFont per size / weight (a new one for every widget made drawing slower)."""
     return ctk.CTkFont(family=FONT, size=size, weight=weight)
 
 
@@ -525,15 +554,195 @@ class MvrDialog(Panel):
         return mail
 
 
+class TemplateEditor(Panel):
+    """Change the wording of an email template (to a client, the underwriter or an insurer's billing team).
+
+    The message is plain text: a blank line starts a new paragraph, a line starting with "- " is a bullet,
+    **text** is bold. Click a field name to put it into the text where the cursor is. Your version is kept
+    on this computer and used from then on; "Reset" brings back the original."""
+
+    AUTO_LABELS = {"first_name": "Client's first name", "client_name": "Client's name",
+                   "CLIENT_NAME": "Client's name (capitals)", "broker_name": "Your name"}
+
+    def __init__(self, app, template, values, on_done):
+        super().__init__(app)
+        self.app, self.template, self.values, self.on_done = app, template, values, on_done
+        self.title(f"Edit email - {template.name}")
+        self.geometry("1100x700")
+        self.configure(fg_color=BG)
+        self.transient(app)
+        text = emails.html_to_text(template.body)
+        self.html_mode = text is None            # special formatting: edited as HTML
+        self.known = (set(emails.AUTO_FIELDS) | {k for k, _ in template.fields} | {"payment_options_html"}
+                      | set(re.findall(r"\{(\w+)\}", template.subject + template.body)))
+        self.grid_columnconfigure(0, weight=3, uniform="cols")
+        self.grid_columnconfigure(1, weight=2, uniform="cols")
+        self.grid_rowconfigure(0, weight=1)
+        p = 2 * SP
+
+        # ----- left: subject and message -----
+        left = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=12, border_width=1, border_color=BORDER)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, SP), pady=(0, SP))
+        left.grid_columnconfigure(0, weight=1)
+        left.grid_rowconfigure(3, weight=1)
+        ctk.CTkLabel(left, text="Subject", font=font(13, "bold"), text_color=TEXT) \
+            .grid(row=0, column=0, sticky="w", padx=p, pady=(p, SP / 2))
+        self.subject = ctk.CTkEntry(left, height=38, font=font(14), border_color=BORDER)
+        self.subject.grid(row=1, column=0, sticky="ew", padx=p)
+        self.subject.insert(0, template.subject)
+        self.mode_label = ctk.CTkLabel(left, text="", font=font(13, "bold"), text_color=TEXT)
+        self.mode_label.grid(row=2, column=0, sticky="w", padx=p, pady=(1.5 * SP, SP / 2))
+        self.body = ctk.CTkTextbox(left, font=font(14), wrap="word", border_width=1, border_color=BORDER,
+                                   undo=True, fg_color=SURFACE_ALT, text_color=TEXT)
+        self.body.grid(row=3, column=0, sticky="nsew", padx=p)
+        self.body.insert("1.0", template.body if self.html_mode else text)
+        self.hint = ctk.CTkLabel(left, text="", font=font(12), text_color=MUTED, justify="left", anchor="w",
+                                 wraplength=560)
+        self.hint.grid(row=4, column=0, sticky="ew", padx=p, pady=(SP / 2, SP))
+        self.switch = self.app.secondary_button(left, "", self.switch_mode, width=150, height=30,
+                                                font=font(12))
+        self.switch.grid(row=5, column=0, sticky="w", padx=p, pady=(0, p))
+        self._mode_texts()
+        self.body.bind("<KeyRelease>", lambda e: self.refresh_preview())
+        self.subject.bind("<KeyRelease>", lambda e: self.refresh_preview())
+
+        # ----- right: fields to insert, preview -----
+        right = ctk.CTkScrollableFrame(self, fg_color=SURFACE, corner_radius=12, border_width=1, border_color=BORDER)
+        right.grid(row=0, column=1, sticky="nsew", padx=(SP, 0), pady=(0, SP))
+        right.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(right, text="Click to add to the message", font=font(13, "bold"), text_color=TEXT) \
+            .grid(row=0, column=0, sticky="w", padx=p, pady=(p, SP / 2))
+        fields = [(k, self.AUTO_LABELS[k]) for k in ("first_name", "client_name", "broker_name")] + \
+            [(k, label.split(" (")[0]) for k, label in template.fields]
+        box = ctk.CTkFrame(right, fg_color="transparent")
+        box.grid(row=1, column=0, sticky="ew", padx=p - SP / 2)
+        for key, label in fields:
+            self.app.secondary_button(box, label, lambda k=key: self.insert_field(k), height=30,
+                                      font=font(12)).pack(side="top", anchor="w", padx=SP / 2, pady=SP / 4)
+        ctk.CTkLabel(right, text="How it will look", font=font(13, "bold"), text_color=TEXT) \
+            .grid(row=2, column=0, sticky="w", padx=p, pady=(2 * SP, SP / 2))
+        self.preview_subject = ctk.CTkLabel(right, text="", font=font(13, "bold"), text_color=TEXT, anchor="w",
+                                            justify="left", wraplength=360)
+        self.preview_subject.grid(row=3, column=0, sticky="ew", padx=p)
+        self.preview = ctk.CTkTextbox(right, font=font(13), wrap="word", height=300, fg_color=SURFACE_ALT,
+                                      border_width=1, border_color=BORDER, text_color=TEXT)
+        self.preview.grid(row=4, column=0, sticky="nsew", padx=p, pady=(SP / 2, p))
+
+        # ----- bottom bar -----
+        bottom = ctk.CTkFrame(self, fg_color="transparent")
+        bottom.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, SP))
+        ctk.CTkButton(bottom, text="Save", height=40, width=130, font=font(14, "bold"), fg_color=PRIMARY,
+                      hover_color=PRIMARY_HOVER, command=self.save).pack(side="right")
+        app.secondary_button(bottom, "Cancel", self.destroy, width=96).pack(side="right", padx=(0, SP))
+        if template.custom:
+            app.secondary_button(bottom, "Reset to the original", self.reset, width=170).pack(side="left")
+        note = ("You changed this email before; the original has been updated since. Reset to get the new original."
+                if template.outdated else "You changed this email. Reset brings back the original wording."
+                if template.custom else "")
+        self.error = ctk.CTkLabel(bottom, text=note, font=font(12), text_color=WARN if template.outdated else MUTED,
+                                  justify="left", anchor="w", wraplength=560)
+        self.error.pack(side="left", fill="x", expand=True, padx=2 * SP)
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.refresh_preview()
+        self.body.focus_set()
+
+    # ----- text / HTML -----
+    def _mode_texts(self):
+        if self.html_mode:
+            self.mode_label.configure(text="Message (HTML)")
+            self.hint.configure(text="This email uses special formatting, so it is edited as HTML: <p> paragraph, "
+                                     "<b> bold, <ul><li> bullets. {{include:name}} adds a shared paragraph.")
+            self.switch.configure(text="Edit as plain text")
+        else:
+            self.mode_label.configure(text="Message")
+            self.hint.configure(text="A blank line starts a new paragraph.  A line starting with - is a bullet.  "
+                                     "**text** is bold.  Names in {braces} are filled in for each client.")
+            self.switch.configure(text="Edit as HTML")
+
+    def current_html(self):
+        text = self.body.get("1.0", "end").strip()
+        return text if self.html_mode else emails.text_to_html(text)
+
+    def switch_mode(self):
+        text = self.body.get("1.0", "end").strip()
+        if self.html_mode:
+            plain = emails.html_to_text(text)
+            if plain is None:
+                self.error.configure(text="This message has formatting that plain text can't hold.", text_color=DANGER)
+                return
+            new = plain
+        else:
+            new = emails.text_to_html(text)
+        self.html_mode = not self.html_mode
+        self.body.delete("1.0", "end")
+        self.body.insert("1.0", new)
+        self._mode_texts()
+        self.refresh_preview()
+
+    def insert_field(self, key):
+        self.body.insert("insert", "{" + key + "}")
+        self.body.focus_set()
+        self.refresh_preview()
+
+    def _edited(self):
+        t = self.template
+        return emails.Template(**{**t.__dict__, "subject": self.subject.get().strip() or t.subject,
+                                  "body": self.current_html()})
+
+    def refresh_preview(self):
+        try:
+            subject, body = emails.render(self._edited(), self.values)
+        except Exception:
+            return
+        self.preview_subject.configure(text=subject)
+        self.preview.configure(state="normal")
+        self.preview.delete("1.0", "end")
+        self.preview.insert("1.0", emails.to_text(body))
+        self.preview.configure(state="disabled")
+
+    # ----- save / reset -----
+    def save(self):
+        edited = self._edited()
+        if not self.body.get("1.0", "end").strip():
+            self.error.configure(text="The message is empty.", text_color=DANGER)
+            return
+        unknown = sorted(set(re.findall(r"\{(\w+)\}", edited.subject + edited.body)) - self.known)
+        if unknown:
+            self.error.configure(text="Not a known field: " + ", ".join("{" + u + "}" for u in unknown)
+                                 + ". Use the buttons on the right to add fields.", text_color=DANGER)
+            return
+        try:
+            emails.save_custom(self.template, edited.subject, edited.body)
+        except OSError as e:
+            self.error.configure(text=f"Could not save: {e}", text_color=DANGER)
+            return
+        self.destroy()
+        self.on_done(self.template.file)
+
+    def reset(self):
+        from tkinter import messagebox
+        if not messagebox.askyesno("Reset", "Go back to the original wording? Your changes to this email "
+                                            "will be lost.", parent=self):
+            return
+        try:
+            emails.reset_custom(self.template)
+        except OSError as e:
+            self.error.configure(text=f"Could not reset: {e}", text_color=DANGER)
+            return
+        self.destroy()
+        self.on_done(self.template.file)
+
+
 class EmailDialog(Panel):
-    """Pick a client email template, fill the blanks, attach files, open an Outlook draft."""
+    """Write an email from a template (to the client, the underwriter or an insurer's billing team): fill the
+    blanks, attach files, open an Outlook draft."""
 
     ATTACHABLE = {".pdf", ".jpg", ".jpeg", ".png", ".heic", ".doc", ".docx", ".xlsx"}
 
     def __init__(self, app, folder, template=None):
         super().__init__(app)
         self.app, self.folder = app, folder
-        self.title(f"Email client - {folder.name.upper()}")
+        self.title(f"Write email - {folder.name.upper()}")
         self.geometry("1040x720")
         self.minsize(900, 600)
         self.configure(fg_color=BG)
@@ -547,8 +756,7 @@ class EmailDialog(Panel):
         # the bound policy's details (Tracker) fill the policy emails before the quote does
         self.policy_values = policy_ui.email_values(folder)
         self.templates = emails.load_templates()
-        self.by_label = {f"{t.group[3:]}  ·  {t.name}" if t.group[:1].isdigit() else t.name: t
-                         for t in self.templates}
+        self.by_label = self._labels()
 
         self.grid_columnconfigure(0, weight=2, uniform="cols")
         self.grid_columnconfigure(1, weight=3, uniform="cols")
@@ -568,11 +776,12 @@ class EmailDialog(Panel):
                      next((l for l, t in self.by_label.items() if t.file == f"quote-{ctype}.html"),
                           next(iter(self.by_label))))
         self.choice = tk.StringVar(value=start)
-        ctk.CTkOptionMenu(left, values=list(self.by_label), variable=self.choice, height=36, font=font(13),
-                          dropdown_font=font(13), fg_color=SURFACE_ALT, button_color=PRIMARY,
-                          button_hover_color=PRIMARY_HOVER, text_color=TEXT, dynamic_resizing=False,
-                          command=lambda _: self.on_template()) \
-            .grid(row=1, column=0, sticky="ew", padx=p)
+        self.template_menu = ctk.CTkOptionMenu(
+            left, values=list(self.by_label), variable=self.choice, height=36, font=font(13),
+            dropdown_font=font(13), fg_color=SURFACE_ALT, button_color=PRIMARY,
+            button_hover_color=PRIMARY_HOVER, text_color=TEXT, dynamic_resizing=False,
+            command=lambda _: self.on_template())
+        self.template_menu.grid(row=1, column=0, sticky="ew", padx=p)
 
         self.to_label = ctk.CTkLabel(left, text="To (client email) *", font=font(13, "bold"), text_color=TEXT)
         self.to_label.grid(row=2, column=0, sticky="w", padx=p, pady=(1.5 * SP, SP / 2))
@@ -812,11 +1021,25 @@ class EmailDialog(Panel):
         for p in filedialog.askopenfilenames(parent=self, title="Attach files", initialdir=self.folder):
             self._add_attachment(Path(p))
 
+    def _labels(self):
+        """Dropdown text for each template: "Quote accepted  ·  Auto quote accepted ..." (edited ones marked)."""
+        return {(f"{t.group[3:]}  ·  {t.name}" if t.group[:1].isdigit() else t.name) + ("  (edited)" if t.custom else ""): t
+                for t in self.templates}
+
     def edit_template(self):
-        path = emails.edit_copy(self.template)
-        os.startfile(path)
-        self.error.configure(text=f"Editing your copy: {path.name}. Save it, then reopen this window.",
-                             text_color=MUTED)
+        """Open the editor for the chosen template; this page picks up the new wording when it closes."""
+        TemplateEditor(self.app, self.template, self.values(), self.reload_templates)
+
+    def reload_templates(self, file):
+        """The templates changed (saved or reset in the editor): reload them and show the same one again."""
+        self.templates = emails.load_templates()
+        self.by_label = self._labels()
+        self.template_menu.configure(values=list(self.by_label))
+        label = next((l for l, t in self.by_label.items() if t.file == file), next(iter(self.by_label)))
+        self.choice.set(label)
+        self.on_template()
+        self.error.configure(text="✓ Email wording saved." if self.template.custom else "✓ Back to the original wording.",
+                             text_color=SUCCESS)
 
     # ----- create -----
     def submit(self):
@@ -1144,7 +1367,18 @@ class App(ctk.CTk):
         self.note = None
         self.client_type_of = {}
         self.rows = {}            # folder -> list row (kept between refreshes)
-        self._docs_cache = {}     # folder -> (mtime, documents found)
+        self._scan = None         # [(folder, type, modified)] from the last look at the Clients folder
+        self._scan_info = {}      # folder -> (type, modified)
+        self._scan_time, self._scan_busy, self._scan_again = 0, False, False
+        self._refresh_rescan = False
+        self._row_cache, self._row_pending = {}, set()    # list lines, worked out in a thread
+        self._shown_order = []    # folders in the list, in the order they are placed
+        self._bundles = {}        # folder -> last reading of the client's files (instant first draw)
+        self._gathering, self._regather = set(), set()
+        self._shown_folder, self._shown_stamp, self._loading = None, None, False
+        self._applied, self._visible = {}, {}      # what _set() / _show() last did to each widget
+        self._next_packed = []
+        self._tracker_dirty = False
         self._rows_mode = None
         self._refresh_job = None
         self.list_limit = self.PAGE
@@ -1165,10 +1399,11 @@ class App(ctk.CTk):
         self.bind("<Control-n>", lambda e: self.new_client())
         self.bind("<Control-t>", lambda e: self.show_view("Tracker" if self.view_var.get() == "Clients" else "Clients"))
         self.bind("<Control-f>", lambda e: self.search_entry.focus_set())
-        self.bind("<F5>", lambda e: self.refresh_list())
+        self.bind("<F5>", lambda e: (setattr(self, "_shown_stamp", None), self.refresh_soon(0)))
         self.bind("<FocusIn>", self._on_focus)
 
         self.after(100, self._first_run)
+        self.after(700, self._prewarm)
 
     # ---------- helpers ----------
     @property
@@ -1198,12 +1433,12 @@ class App(ctk.CTk):
 
     def _on_focus(self, event):
         # Refresh when returning to the app, so files saved elsewhere show up
-        if event.widget is self:
+        if event.widget is self and time.monotonic() - self._scan_time > 8:    # not on every click back
             self.refresh_soon(300)
 
     def _first_run(self):
         if self.clients_root and self.clients_root.exists():
-            self.refresh_list()
+            self._scan_async()                       # the window is up first; the clients appear when listed
             return
         if self.clients_root:          # set, but not reachable yet (shared drive still connecting): keep it
             self.refresh_list()
@@ -1213,6 +1448,24 @@ class App(ctk.CTk):
         if p:
             config.update(self.cfg, clients_root=str(Path(p)))
         self.on_settings_changed()
+
+    def _prewarm(self):
+        """customtkinter draws every widget the first time it is shown (~0.4 s for the client page). Do that
+        once, off-screen, while nothing is selected, so the first click on a client is not slow."""
+        if self.selected or self._details_showing == "body":
+            return
+        try:
+            body = self.details_body
+            for page in self.stage_pages:
+                page.grid()
+            width, height = max(self.details.winfo_width(), 600), max(self.details.winfo_height(), 600)
+            body.place(x=-10 * width, y=0, width=width, height=height)
+            self.update_idletasks()
+            body.place_forget()
+            for page in self.stage_pages[1:]:
+                page.grid_remove()
+        except Exception:
+            pass                                  # only an optimisation
 
     def _wait_for_root(self):
         """Check every few seconds (off the window's thread: a dead network drive can be slow) until the
@@ -1339,7 +1592,7 @@ class App(ctk.CTk):
                 func(*args)
             except Exception:
                 pass
-        self.after(200, self._drain_ui)
+        self.after(40, self._drain_ui)
 
     # ---------- MVR auto-save ----------
     def _watch_mvrs(self):
@@ -1362,7 +1615,7 @@ class App(ctk.CTk):
             kind = self.client_type_of.get(folder, "")
             self.show_toast(f"✓ MVR saved for {folder.name}" + (f" ({kind})" if kind else ""),
                             "Open", lambda: os.startfile(dest), ok=True)
-            self.refresh_list(keep_scroll=True)
+            self.client_changed(folder)
             if self.selected == folder:
                 self.show_note(folder, f"✓ MVR received and saved: {dest.name}", SUCCESS)
         else:
@@ -1413,8 +1666,9 @@ class App(ctk.CTk):
         self.view_var.set(name)
 
     def tracker_changed(self):
-        """A client record was saved: keep an open Tracker window up to date."""
-        if self.tracker_win and self.tracker_win.winfo_exists():
+        """A client record was saved: reload the Tracker if it is showing (it also loads whenever it is
+        opened), instead of reading every client's records after each small change."""
+        if self.tracker_win and self.tracker_win.winfo_exists() and self.view_var.get() == "Tracker":
             self.tracker_win.load()
 
     # ---------- updates ----------
@@ -1486,7 +1740,7 @@ class App(ctk.CTk):
                 return folder, f"✓ {name} already existed in {client_type}.\nIt had no consent form - one was filled.", True
             except Exception as e:
                 return folder, f"{name} already exists - consent form not filled: {e}", False
-        elsewhere = sorted({t for f, t in scan_clients(root, self.client_types)
+        elsewhere = sorted({t for f, t, _ in scan_clients(root, self.client_types)
                             if f.name.upper() == name and t != client_type})
         folder.mkdir(parents=True)
         if self.cfg.get("last_type") != client_type:
@@ -1562,13 +1816,13 @@ class App(ctk.CTk):
         self.search_entry = ctk.CTkEntry(c, height=38, font=font(14),
                                          border_color=BORDER, placeholder_text="Search clients")
         self.search_entry.grid(row=1, column=0, sticky="ew", padx=p, pady=SP * 1.5)
-        self.search_entry.bind("<KeyRelease>", lambda e: self.refresh_soon(200, reset_page=True))
+        self.search_entry.bind("<KeyRelease>", lambda e: self.refresh_soon(150, reset_page=True, rescan=False))
 
         self.filter_var = tk.StringVar(value="All")
         self.filter_buttons = ctk.CTkSegmentedButton(c, values=["All"] + self.client_types,
                                                      variable=self.filter_var, font=font(13), height=34,
                                                      selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER,
-                                                     command=lambda _: self.refresh_soon(0, reset_page=True))
+                                                     command=lambda _: self.refresh_soon(0, reset_page=True, rescan=False))
         self.filter_buttons.grid(row=2, column=0, sticky="ew", padx=p, pady=(0, SP))
 
         self.list_frame = ctk.CTkScrollableFrame(c, fg_color="transparent")
@@ -1619,66 +1873,189 @@ class App(ctk.CTk):
         row.name.configure(fg=self._c(TEXT))
         row.sub.configure(fg=self._c(MUTED))
 
-    def _doc_count(self, folder, mtime, kind=""):
-        """(docs found, docs needed, stage "2. Quote" or "", contact missing) for the list row."""
-        def stamp(name):
-            try:
-                return (folder / name).stat().st_mtime
-            except OSError:
-                return 0
-        key = (mtime, stamp("client.json"), stamp(records.FILE), kind)   # client.json is edited in place
-        cached = self._docs_cache.get(folder)
-        if not cached or cached[0] != key:   # re-check files only when something changed
-            skip = records.docs_not_needed(folder) if kind == "Auto" else set()
-            found = find_docs(folder, kind)
-            docs = {k: v for k, v in found.items() if k not in skip}
-            info = mvr_email.load_client(folder)
-            rows = checklist.status(folder, kind, found, info, skip, read_quote=False)
-            stage = checklist.current_stage(rows) if rows else None
-            steps = "" if not rows else "✓ Policy done" if stage is None else                 f"{stage + 1}. {checklist.STAGES[stage][0]}"
-            missing = [w for w in ("phone", "email") if not info.get(w)] if kind == "Auto" else []
-            cached = (key, (sum(1 for v in docs.values() if v), len(docs), steps, missing))
-            self._docs_cache[folder] = cached
-        return cached[1]
+    # The list is drawn from `self._scan` (one cheap listing of the Clients folder, nothing per client) and
+    # `self._row_cache` (each client's "3/9 docs" line, worked out in a background thread and redone only
+    # when that client's folder changed). Typing in the search box only redraws: it never touches the disk.
 
-    def refresh_soon(self, delay=250, reset_page=False):
-        """Coalesce bursts (typing, focus events) into one refresh."""
+    def _set(self, widget, **kw):
+        """configure() only what changed: every CTk configure() redraws the widget, and the client page
+        has ~150 of them."""
+        applied = self._applied.setdefault(widget, {})
+        changed = {k: v for k, v in kw.items() if k not in applied or applied[k] != v}
+        if changed:
+            widget.configure(**changed)
+            applied.update(changed)
+
+    def _show(self, widget, visible):
+        """grid() / grid_remove() only when the state changes."""
+        if self._visible.get(widget) != visible:
+            widget.grid() if visible else widget.grid_remove()
+            self._visible[widget] = visible
+
+    def _compute_row(self, folder, kind):
+        """(docs found, docs needed, stage like "2. Quote" or "", contact missing) for a client's list line.
+        Reads the client's files, so it runs in a thread."""
+        data = checklist.load(folder)
+        skip = set(data.get("docs_not_needed", [])) if kind == "Auto" else set()
+        found = find_docs(folder, kind)
+        docs = {k: v for k, v in found.items() if k not in skip}
+        info = mvr_email.load_client(folder)
+        rows = checklist.status(folder, kind, found, info, skip, read_quote=False, data=data)
+        stage = checklist.current_stage(rows) if rows else None
+        steps = "" if not rows else "✓ Policy done" if stage is None else f"{stage + 1}. {checklist.STAGES[stage][0]}"
+        missing = [w for w in ("phone", "email") if not info.get(w)] if kind == "Auto" else []
+        return (sum(1 for v in docs.values() if v), len(docs), steps, missing)
+
+    def _row_text(self, folder, ftype, modified):
+        text = f"{ftype}  ·  {datetime.datetime.fromtimestamp(modified).strftime('%b %d, %Y')}"
+        cached = self._row_cache.get(folder)
+        if cached:
+            have, need, steps, missing = cached[1]
+            text += "  ·  " + (f"{steps}  ·  " if steps else "") + f"{have}/{need} docs"
+            if missing:
+                text += "  ·  no " + " / ".join(missing)
+        return text
+
+    def _paint_row_text(self, folder):
+        row, info = self.rows.get(folder), self._scan_info.get(folder)
+        if row and info:
+            text = self._row_text(folder, *info)
+            if row.sub_text != text:
+                row.sub.configure(text=text)
+                row.sub_text = text
+
+    def _need_rows(self, items):
+        """Work out the list lines that are missing or out of date, in one background thread."""
+        todo = [(f, t, m) for f, t, m in items
+                if f not in self._row_pending and self._row_cache.get(f, (None,))[0] != (m, t)]
+        if not todo:
+            return
+        self._row_pending.update(f for f, _, _ in todo)
+
+        def work():
+            for folder, kind, modified in todo:
+                try:
+                    result = self._compute_row(folder, kind)
+                except Exception:
+                    result = None
+                self.ui(self._row_ready, folder, (modified, kind), result)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _row_ready(self, folder, key, result):
+        self._row_pending.discard(folder)
+        if result is not None:
+            self._row_cache[folder] = (key, result)
+            self._paint_row_text(folder)
+
+    # ----- looking at the Clients folder
+    def _scan_clients(self):
+        """[(folder, type, modified)] newest first, or None when the Clients folder can't be reached."""
+        root = self.clients_root
+        try:
+            if not root or not root.exists():
+                return None
+            found = scan_clients(root, self.client_types)
+        except OSError:
+            return None
+        return sorted(found, key=lambda c: c[2], reverse=True)
+
+    def _apply_scan(self, result):
+        self._scan = result
+        self._scan_time = time.monotonic()
+        if result is not None:
+            self.client_type_of = {f: t for f, t, _ in result}
+            self._scan_info = {f: (t, m) for f, t, m in result}
+        self._render()
+
+    def _scan_async(self):
+        """Look at the Clients folder in a thread (a shared drive can be slow), then redraw."""
+        if self._scan_busy:
+            self._scan_again = True
+            return
+        self._scan_busy = True
+
+        def work():
+            result = self._scan_clients()
+            self.ui(self._scanned, result)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _scanned(self, result):
+        self._scan_busy = False
+        self._apply_scan(result)
+        if self._scan_again:
+            self._scan_again = False
+            self._scan_async()
+
+    def refresh_soon(self, delay=250, reset_page=False, rescan=True):
+        """Coalesce bursts (typing, focus events) into one refresh. rescan=False only redraws the list
+        from the last look at the Clients folder."""
         if reset_page:
             self.list_limit = self.PAGE
+        self._refresh_rescan = self._refresh_rescan or rescan
         if self._refresh_job:
             self.after_cancel(self._refresh_job)
         self._refresh_job = self.after(delay, self._run_refresh)
 
     def _run_refresh(self):
         self._refresh_job = None
-        self.refresh_list(keep_scroll=True)
+        rescan, self._refresh_rescan = self._refresh_rescan, False
+        if rescan or self._scan is None:
+            self._scan_async()
+        else:
+            self._render()
 
-    def refresh_list(self, keep_scroll=False):
+    def refresh_list(self, keep_scroll=False, rescan=True):
+        """Draw the list now. Looks at the Clients folder first unless rescan=False (then it only redraws)."""
+        if rescan or self._scan is None:
+            self._apply_scan(self._scan_clients())
+        else:
+            self._render()
+
+    def client_changed(self, folder):
+        """Something in this client's folder changed (a tick, a document, a saved record): redo that client
+        only - its list line and its page - instead of looking at every client again."""
+        try:
+            modified = Path(folder).stat().st_mtime
+        except OSError:
+            modified = None
+        if self._scan is not None and modified is not None:
+            self._scan = sorted(((f, t, modified if f == folder else m) for f, t, m in self._scan),
+                                key=lambda c: c[2], reverse=True)
+            self._scan_info = {f: (t, m) for f, t, m in self._scan}
+        self._row_cache.pop(folder, None)
+        self._bundles.pop(folder, None)
+        if folder == self.selected:
+            self._shown_stamp = None                  # draw the page again
+        self._tracker_dirty = True
+        self._render()
+
+    def _render(self):
+        """Draw the list from the last look at the Clients folder: filter, sort, show a page of rows."""
         root = self.clients_root
-        for row in self.rows.values():
-            row.grid_forget()
-        self.more_btn.grid_forget()
-        if not root or not root.exists():
-            self.count_label.configure(text="")
-            self.empty_label.configure(
-                text=(f"Can't reach your Clients folder:\n{root}\nIs the shared drive connected? "
-                      "Nothing is lost - the app keeps checking.") if root else "Set your Clients folder in Settings.")
+        if self._scan is None:
+            for f in self._shown_order:
+                if f in self.rows:
+                    self.rows[f].grid_forget()
+            self._shown_order = []
+            self.more_btn.grid_forget()
+            self._set(self.count_label, text="")
+            if self._scan_busy:
+                text = "Loading clients…"
+            elif root:
+                text = (f"Can't reach your Clients folder:\n{root}\nIs the shared drive connected? "
+                        "Nothing is lost - the app keeps checking.")
+            else:
+                text = "Set your Clients folder in Settings."
+            self._set(self.empty_label, text=text)
             self.empty_label.grid(row=0, column=0, pady=4 * SP)
             self.row_buttons = {}
-            self.show_details(None)
+            if not self._scan_busy:
+                self.show_details(None)
             return
 
         q = self.search_entry.get().lower().strip()
         types = self.client_types
-        clients = []
-        for f, t in scan_clients(root, types):
-            try:
-                clients.append((f, t, f.stat().st_mtime))
-            except OSError:
-                continue
-        clients.sort(key=lambda c: c[2], reverse=True)
-        self.client_type_of = {f: t for f, t, _ in clients}
-
+        clients = self._scan
         values = ["All"] + types + (["Other"] if any(t == "Other" for _, t, _ in clients) else [])
         if list(self.filter_buttons.cget("values")) != values:
             self.filter_buttons.configure(values=values)
@@ -1687,7 +2064,7 @@ class App(ctk.CTk):
         kind = self.filter_var.get()
         shown = [c for c in clients if q in c[0].name.lower() and kind in ("All", c[1])]
         filtered = bool(q) or kind != "All"
-        self.count_label.configure(text=f"{len(shown)} of {len(clients)}" if filtered else f"{len(clients)}")
+        self._set(self.count_label, text=f"{len(shown)} of {len(clients)}" if filtered else f"{len(clients)}")
 
         # forget rows of folders that are gone; restyle everything after a light/dark switch
         for f in [f for f in self.rows if f not in self.client_type_of]:
@@ -1701,36 +2078,46 @@ class App(ctk.CTk):
         if shown:
             self.empty_label.grid_forget()
         else:
-            self.empty_label.configure(text="No clients match your search." if filtered else "No clients yet.")
+            self._set(self.empty_label, text="No clients match your search." if filtered else "No clients yet.")
             self.empty_label.grid(row=0, column=0, pady=4 * SP)
 
         page = shown[:self.list_limit]
-        for i, (folder, ftype, mtime) in enumerate(page):
+        for folder, ftype, modified in page:
             row = self.rows.get(folder) or self._make_row(folder)
-            when = datetime.datetime.fromtimestamp(mtime).strftime("%b %d, %Y")
-            have, need, steps, missing = self._doc_count(folder, mtime, ftype)
-            sub = f"{ftype}  ·  {when}  ·  " + (f"{steps}  ·  " if steps else "") + f"{have}/{need} docs"
-            if missing:
-                sub += "  ·  no " + " / ".join(missing)
-            if row.sub_text != sub:
-                row.sub.configure(text=sub)
-                row.sub_text = sub
-            row.grid(row=i + 1, column=0, sticky="ew", pady=1)
+            text = self._row_text(folder, ftype, modified)
+            if row.sub_text != text:
+                row.sub.configure(text=text)
+                row.sub_text = text
+        order = [f for f, _, _ in page]
+        if order != self._shown_order:           # re-place the rows only when the list itself changed
+            for f in self._shown_order:
+                if f in self.rows:
+                    self.rows[f].grid_forget()
+            for i, f in enumerate(order):
+                self.rows[f].grid(row=i + 1, column=0, sticky="ew", pady=1)
+            self._shown_order = order
+        self.more_btn.grid_forget()
         if len(shown) > len(page):
             self.more_btn.configure(text=f"Show more ({len(shown) - len(page)} left)")
             self.more_btn.grid(row=len(page) + 1, column=0, pady=SP)
-        self.row_buttons = {f: self.rows[f] for f, _, _ in page}
+        self.row_buttons = {f: self.rows[f] for f in order}
+        self._need_rows(page)
 
-        if self.selected and self.selected in self.client_type_of:
-            self._paint_row(self.selected)
-            self.show_details(self.selected)
-        else:
+        sel = self.selected
+        if sel and sel not in self.client_type_of:
             self.selected = None
+            self.show_details(None)
+        elif sel:
+            self._paint_row(sel)
+            shown_for, shown_at = self._shown_stamp or (None, 0)
+            if shown_for != sel or self._scan_info[sel][1] > shown_at:   # changed on disk since it was drawn
+                self.show_details(sel)
+        elif self._details_showing != "empty":
             self.show_details(None)
 
     def show_more(self):
         self.list_limit += self.PAGE
-        self.refresh_list(keep_scroll=True)
+        self._render()
 
     def select(self, folder):
         previous = self.selected
@@ -1804,7 +2191,7 @@ class App(ctk.CTk):
         self.detail_msg = ctk.CTkLabel(body, text="", font=font(13), text_color=SUCCESS,
                                        justify="left", anchor="w", wraplength=520)
         self.detail_msg.grid(row=1, column=0, sticky="w", padx=p, pady=(SP, 0))
-        strip = ctk.CTkFrame(body, fg_color="transparent")
+        strip = self.stage_strip = ctk.CTkFrame(body, fg_color="transparent")
         strip.grid(row=2, column=0, sticky="ew", padx=p, pady=(2.5 * SP, 0))
         strip.grid_columnconfigure((0, 1, 2), weight=1, uniform="stage")
         self.stage_tabs = []
@@ -1833,7 +2220,7 @@ class App(ctk.CTk):
         steps = {st[0]: st for st in checklist.AUTO_STEPS}
         auto = {label: (name, optional) for label, _, name, optional in AUTO_DOCUMENTS}
         stage_docs = [["Client consent", "DASH report", "MVR"] + list(auto), ["Quote (ARS)"], []]
-        email = ("Email client", sel(lambda f: EmailDialog(self, f)))
+        email = ("Write email", sel(lambda f: EmailDialog(self, f)))
         stage_tools = [
             [("consent", sel(self.refill)), ("Import DASH", sel(lambda f: ImportDashDialog(self, f))),
              ("Request MVR", sel(lambda f: MvrDialog(self, f))), email],
@@ -1962,13 +2349,16 @@ class App(ctk.CTk):
 
     def accept_quote(self, folder):
         def saved(msg):
-            self.refresh_list(keep_scroll=True)
+            self.client_changed(folder)
             self.show_note(folder, msg, SUCCESS)
         policy_ui.AcceptQuotePage(self, folder, on_saved=saved)
 
     def _pick_stage(self, stage):
+        """Another stage's page: drawn from what was read already, nothing is read again."""
         self._stage, self._stage_picked = stage, True
-        self.selected and self.show_details(self.selected)
+        bundle = self._bundles.get(self.selected) if self.selected else None
+        if bundle:
+            self._render_details(self.selected, bundle)
 
     # ---------- next step card (Auto clients) ----------
     def _build_next_card(self, body, row, padx):
@@ -2015,15 +2405,15 @@ class App(ctk.CTk):
                                              width=130, height=38, font=font(14))
         self._next_id = None
 
-    def _show_stages(self, folder, kind, docs, info, skip):
-        """Stage strip, next-step card and the chosen stage's steps / documents."""
-        self._by_hand = set()
-        rows = checklist.status(folder, kind, docs, info, skip, by_hand=self._by_hand)
+    def _render_stages(self, folder, kind, docs, skip, rows, by_hand, down_hint=""):
+        """Stage strip, next-step card and the chosen stage's steps / documents. Only touches the widgets
+        whose content changed, and reads nothing from the disk."""
         auto_client = bool(rows)
         by_id = {st[0]: (st, s, note) for st, s, note in rows}
         nxt = checklist.next_step(rows)
         self._next_id = nxt[0][0] if nxt else None
         self._check_state = {st[0]: s for st, s, _ in rows}
+        self._by_hand = by_hand
         current = checklist.current_stage(rows) if auto_client else (1 if docs.get("Quote (ARS)") else 0)
         if not self._stage_picked:
             self._stage = 2 if current is None else current
@@ -2031,6 +2421,7 @@ class App(ctk.CTk):
         have = sum(1 for k in needed if docs[k])
 
         # the strip: each stage's progress; the chosen one is outlined
+        self._show(self.stage_strip, True)
         for i, (name, sub, ids) in enumerate(checklist.STAGES):
             tab, top, count, low = self.stage_tabs[i]
             if auto_client:
@@ -2039,91 +2430,156 @@ class App(ctk.CTk):
                 progress = f"{finished}/{len(ids)}"
             else:
                 complete, progress = False, ""
-            top.configure(text=f"{'✓' if complete else i + 1}   {name}",
-                          text_color=SUCCESS if complete else TEXT if i == current or not auto_client else MUTED)
-            count.configure(text=progress)
+            self._set(top, text=f"{'✓' if complete else i + 1}   {name}",
+                      text_color=SUCCESS if complete else TEXT if i == current or not auto_client else MUTED)
+            self._set(count, text=progress)
             chosen = i == self._stage
-            tab.configure(fg_color=RAISED if chosen else SURFACE_ALT, border_color=MUTED if chosen else SURFACE_ALT)
-            self.stage_pages[i].grid() if chosen else self.stage_pages[i].grid_remove()
-            self.stage_steps_head[i].frame.grid() if auto_client else self.stage_steps_head[i].frame.grid_remove()
+            self._set(tab, fg_color=RAISED if chosen else SURFACE_ALT, border_color=MUTED if chosen else SURFACE_ALT)
+            self._show(self.stage_pages[i], chosen)
+            self._show(self.stage_steps_head[i].frame, auto_client)
             head = self.stage_docs_head[i]
             if head:
                 labels = [l for l in self.stage_doc_labels[i] if l in docs and l not in skip]
                 got = sum(1 for l in labels if docs[l])
-                head.configure(text=f"Documents   {got} of {len(labels)} received")
+                self._set(head, text=f"Documents   {got} of {len(labels)} received")
 
         # next step card: only on the stage it belongs to
-        for b in list(self.next_buttons.values()) + [self.next_done, self.next_na]:
-            b.pack_forget()
         show_card = auto_client and (nxt is None and self._stage == 2 or nxt is not None and self._stage == current)
-        self.next_card.grid() if show_card else self.next_card.grid_remove()
+        self._show(self.next_card, show_card)
         done, total, _ = checklist.summary(rows) if rows else (0, 0, None)
+        wanted = []                  # the buttons on the card: [(widget, padx)]
         if show_card and nxt:
             (sid, title, hint, auto, can_na, action), _, note = nxt
-            self.next_card.configure(fg_color=SURFACE_ALT)
-            self.next_accent.configure(fg_color=PRIMARY)
-            self.next_kicker.grid()
-            self.next_btns.grid()
+            self._set(self.next_card, fg_color=SURFACE_ALT)
+            self._set(self.next_accent, fg_color=PRIMARY)
+            self._show(self.next_kicker, True)
             self.next_title.grid_configure(pady=0)
-            self.next_title.configure(font=font(18, "bold"), text_color=TEXT, text=title)
-            self.next_kicker.configure(text=f"NEXT STEP   ·   {done} of {total} done", text_color=MUTED)
+            self._set(self.next_title, font=font(18, "bold"), text_color=TEXT, text=title)
+            self._set(self.next_kicker, text=f"NEXT STEP   ·   {done} of {total} done", text_color=MUTED)
             text = ((note + ".  ") if note else "") + hint
-            if sid == "down_payment":                    # the carrier's own rule, from the notes
-                p = records.bound_policy(records.load(folder)) or {}
-                rule = policy_ui.down_payment_rule(self.cfg, p.get("insurer", ""))
-                amount = f" (${records.money(p['down_payment']):,.2f} saved)" if records.money(
-                    p.get("down_payment")) else ""
-                if rule:
-                    text = f"{p.get('insurer')} down payment: {rule}{amount}.  " + text
-            self.next_hint.configure(text=text, text_color=WARN if note and ("issing" in note or note.startswith(("Refer", "Waiting")))
-                                     else MUTED)
-            self.next_hint.grid() if text else self.next_hint.grid_remove()
+            if down_hint:                                # the carrier's own rule, from the notes
+                text = down_hint + "  " + text
+            self._set(self.next_hint, text=text,
+                      text_color=WARN if note and ("issing" in note or note.startswith(("Refer", "Waiting")))
+                      else MUTED)
+            self._show(self.next_hint, bool(text))
             if action:
-                self.next_buttons[action].pack(side="left", padx=(0, SP))
+                wanted.append((self.next_buttons[action], (0, SP)))
             if not auto or sid == "billing":           # billing: N/A by itself, done by hand
-                self.next_done.pack(side="left", padx=(0, SP))
+                wanted.append((self.next_done, (0, SP)))
             if can_na:
-                self.next_na.pack(side="left")
-            if not self.next_btns.pack_slaves():      # an empty CTkFrame is 200 px tall
-                self.next_btns.grid_remove()
-                self.next_hint.grid_configure(pady=(2, 1.5 * SP))
-            else:
-                self.next_hint.grid_configure(pady=(2, 0))
+                wanted.append((self.next_na, 0))
+            self.next_hint.grid_configure(pady=(2, 0) if wanted else (2, 1.5 * SP))
         elif show_card:
-            self.next_card.configure(fg_color=SUCCESS_BG)
-            self.next_accent.configure(fg_color=SUCCESS)
+            self._set(self.next_card, fg_color=SUCCESS_BG)
+            self._set(self.next_accent, fg_color=SUCCESS)
             # one short line instead of a big card
-            self.next_kicker.grid_remove()
-            self.next_hint.grid_remove()
+            self._show(self.next_kicker, False)
+            self._show(self.next_hint, False)
             waiting = [by_id[s][0][1] for s in checklist.WAITING if by_id[s][1] == "todo"]
             missing = len(needed) - have
-            self.next_title.configure(text="✓  Nothing left to do" + (f"  ·  waiting for: {', '.join(waiting).lower()}"
-                                      if waiting else f"  ·  {missing} document{'s' if missing > 1 else ''} missing"
-                                      if missing else ""), font=font(16, "bold"), text_color=SUCCESS)
+            self._set(self.next_title, text="✓  Nothing left to do" + (
+                f"  ·  waiting for: {', '.join(waiting).lower()}" if waiting else
+                f"  ·  {missing} document{'s' if missing > 1 else ''} missing" if missing else ""),
+                font=font(16, "bold"), text_color=SUCCESS)
             self.next_title.grid_configure(pady=(1.5 * SP, 0 if missing else 1.5 * SP))
             if missing:
-                self.next_btns.grid()
-                self.next_buttons["docs"].pack(side="left")
-            else:
-                self.next_btns.grid_remove()
+                wanted.append((self.next_buttons["docs"], 0))
+        if wanted != self._next_packed:                   # re-pack the card's buttons only when they change
+            for b in list(self.next_buttons.values()) + [self.next_done, self.next_na]:
+                b.pack_forget()
+            for b, padx in wanted:
+                b.pack(side="left", padx=padx)
+            self._next_packed = wanted
+        self._show(self.next_btns, bool(wanted))          # an empty CTkFrame is 200 px tall
 
         for sid, (st, state, note) in by_id.items():
             r = self.check_rows[sid]
-            r["var"].set(state in ("done", "na"))
-            auto_done = bool(st[3]) and state in ("done", "na") and sid not in self._by_hand
+            ticked = state in ("done", "na")
+            if r["var"].get() != ticked:
+                r["var"].set(ticked)
+            auto_done = bool(st[3]) and ticked and sid not in by_hand
             is_next = sid == self._next_id
-            r["cb"].configure(state="disabled" if auto_done else "normal",
-                              font=font(14, "bold") if is_next else font(14),
-                              text_color=TEXT if is_next or state == "todo" else MUTED)
+            self._set(r["cb"], state="disabled" if auto_done else "normal",
+                      font=font(14, "bold") if is_next else font(14),
+                      text_color=TEXT if is_next or state == "todo" else MUTED)
             tag = "NEXT" if is_next else "N/A" if state == "na" else \
                 "WAITING" if sid in checklist.WAITING and state == "todo" else ""
-            r["tag"].configure(text=tag, text_color=PRIMARY if is_next else MUTED)
+            self._set(r["tag"], text=tag, text_color=PRIMARY if is_next else MUTED)
             warn = note if note and "issing" in note and state != "na" and sid != "documents" else ""
-            r["note"].configure(text=warn)
-            r["note"].grid() if warn else r["note"].grid_remove()
+            self._set(r["note"], text=warn)
+            self._show(r["note"], bool(warn))
 
-    def show_details(self, folder):
-        if not folder or not folder.exists():
+    # ----- the client page: files are read in a thread, the page is drawn on the window's thread
+    def _gather(self, folder, kind):
+        """Read everything the client page shows from the client's files. Runs in a thread: no widgets."""
+        info = mvr_email.load_client(folder)
+        docs = find_docs(folder, kind)
+        # fill missing details from the quote / DASH, and flag the ones that don't match
+        try:
+            filled, warnings = client_facts.apply(folder, docs, info, mvr_email.save_client)
+        except Exception:
+            filled, warnings = [], []
+        data = checklist.load(folder)
+        skip = set(data.get("docs_not_needed", [])) if kind == "Auto" else set()
+        by_hand = set()
+        rows = checklist.status(folder, kind, docs, info, skip, by_hand=by_hand, data=data)
+        down_hint = ""
+        nxt = checklist.next_step(rows)
+        if nxt and nxt[0][0] == "down_payment":
+            p = records.bound_policy(data) or {}
+            rule = policy_ui.down_payment_rule(self.cfg, p.get("insurer", ""))
+            if rule:
+                saved = records.money(p.get("down_payment"))
+                down_hint = f"{p.get('insurer')} down payment: {rule}" + (f" (${saved:,.2f} saved)" if saved else "") + "."
+        try:
+            modified = folder.stat().st_mtime
+        except OSError:
+            modified = 0
+        return {"info": info, "docs": docs, "skip": skip, "rows": rows, "by_hand": by_hand, "filled": filled,
+                "warnings": warnings, "down_hint": down_hint, "modified": modified}
+
+    def _gather_thread(self, folder, kind):
+        try:
+            bundle = self._gather(folder, kind)
+        except Exception:
+            bundle = None
+        self.ui(self._gathered, folder, bundle)
+
+    def _gathered(self, folder, bundle):
+        self._gathering.discard(folder)
+        if bundle is not None:
+            self._bundles[folder] = bundle
+            while len(self._bundles) > 40:
+                self._bundles.pop(next(iter(self._bundles)))
+            if folder == self._shown_folder and self._details_showing == "body":
+                self._render_details(folder, bundle)
+        if folder in self._regather:                       # asked for again while reading: once more
+            self._regather.discard(folder)
+            if folder == self._shown_folder:
+                self._start_gather(folder)
+
+    def _start_gather(self, folder):
+        if folder in self._gathering:
+            self._regather.add(folder)
+            return
+        self._gathering.add(folder)
+        threading.Thread(target=self._gather_thread, args=(folder, self.client_type_of.get(folder, "")),
+                         daemon=True).start()
+
+    def _show_loading(self, folder):
+        """The files are slow to read (shared drive): hide the previous client's page, say so."""
+        if folder == self._shown_folder and folder not in self._bundles and self._loading:
+            for w in (self.stage_strip, self.next_card, self.facts_warn, *self.stage_pages):
+                self._show(w, False)
+            self._set(self.detail_msg, text="Loading…", text_color=MUTED)
+            self._show(self.detail_msg, True)
+
+    def show_details(self, folder, fresh=False):
+        """Show a client. The page is drawn at once from the last reading of the client's files (if there is
+        one); the files are read again in a thread and the page is updated when that is done."""
+        if not folder or folder not in self.client_type_of:
+            self._shown_folder, self._shown_stamp = None, None
             if self._details_showing != "empty":
                 self.details_body.grid_forget()
                 self.details_empty.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
@@ -2133,39 +2589,49 @@ class App(ctk.CTk):
             self.details_empty.grid_forget()
             self.details_body.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
             self._details_showing = "body"
-        if getattr(self, "_shown_folder", None) != folder:      # another client: stages back to default
+        first = self._shown_folder != folder
+        if first:                                             # another client: stages back to default
             self._shown_folder = folder
             self._stage_picked = False
+            kind = self.client_type_of.get(folder, "")
+            self._set(self.details_title, text=shorten(folder.name, 34))
+            self._set(self.details_type, text=f"  {kind}  " if kind else "")
+        bundle = None if fresh else self._bundles.get(folder)
+        self._loading = False
+        if bundle:
+            self._render_details(folder, bundle)
+        elif first:                                           # nothing to show yet: say so if it takes a moment
+            self._loading = True
+            self.after(120, lambda: self._show_loading(folder))
+        self._start_gather(folder)
 
+    def _render_details(self, folder, b):
+        """Draw the client page from a reading of the client's files. Reads nothing from the disk."""
+        self._loading = False
+        self._shown_stamp = (folder, b["modified"])
         kind = self.client_type_of.get(folder, "")
-        self.details_title.configure(text=shorten(folder.name, 34))
-        self.details_type.configure(text=f"  {kind}  " if kind else "")
-        info = mvr_email.load_client(folder)
-        docs = find_docs(folder, kind)
-        # fill missing details from the quote / DASH, and flag the ones that don't match
-        try:
-            filled, warnings = client_facts.apply(folder, docs, info, mvr_email.save_client)
-        except Exception:
-            filled, warnings = [], []
-        if filled:
-            self.note = (folder, "✓ Filled from the documents: " + ", ".join(filled), SUCCESS)
+        self._set(self.details_title, text=shorten(folder.name, 34))
+        self._set(self.details_type, text=f"  {kind}  " if kind else "")
+        info, docs, skip, warnings = b["info"], b["docs"], b["skip"], b["warnings"]
+        if b["filled"]:
+            self.note = (folder, "✓ Filled from the documents: " + ", ".join(b["filled"]), SUCCESS)
+            b["filled"] = []                                  # said once
+            self._row_cache.pop(folder, None)
             self.refresh_soon(100)           # the list line ("no phone / email") follows
         for key, label in self.contact_labels.items():
             value = info.get(key) or ""
             if key == "birth" and value:
                 value = format_birth(value)
-            label.configure(text=value or "Add…", text_color=TEXT if value else PRIMARY)
-        self.facts_warn.configure(text="⚠  Doesn't match the documents - click to edit\n"
-                                       + "\n".join("•  " + w for w in warnings))
-        self.facts_warn.grid() if warnings else self.facts_warn.grid_remove()
+            self._set(label, text=value or "Add…", text_color=TEXT if value else PRIMARY)
+        self._set(self.facts_warn, text="⚠  Doesn't match the documents - click to edit\n"
+                                        + "\n".join("•  " + w for w in warnings))
+        self._show(self.facts_warn, bool(warnings))
 
-        skip = records.docs_not_needed(folder) if kind == "Auto" else set()
-        auto = kind == "Auto"
         for label, r in self.doc_rows.items():
             if label not in docs:            # auto documents on a non-auto client
-                r["frame"].grid_remove()
+                self._show(r["frame"], False)
                 continue
-            r["frame"].grid()
+            self._show(r["frame"], True)
             files = docs[label]
             if files:
                 status, color, dot = (f"{len(files)} files" if len(files) > 1 else
@@ -2175,21 +2641,21 @@ class App(ctk.CTk):
                 status, color, dot = "Not needed", MUTED, BORDER
             else:
                 status, color, dot = "Missing", WARN, WARN
-            state = (status, bool(files), label in skip)
+            state = (status, tuple(f.name for f in files), label in skip)
             if r["state"] != state:  # only touch widgets whose content changed
                 r["dot"].configure(fg_color=dot)
                 r["status"].configure(text=status, text_color=color)
                 show = {"open"} if files else {"needed"} if label in skip else {"add", "na"}
-                for key, b in r["buttons"].items():
-                    b.grid() if key in show else b.grid_remove()
+                for key, btn in r["buttons"].items():
+                    btn.grid() if key in show else btn.grid_remove()
+                r["buttons"]["open"].configure(command=lambda fs=files: [os.startfile(f) for f in fs])
                 r["state"] = state
-            r["buttons"]["open"].configure(command=lambda fs=files: [os.startfile(f) for f in fs])
-        self._show_stages(folder, kind, docs, info, skip)
+        self._render_stages(folder, kind, docs, skip, b["rows"], b["by_hand"], b["down_hint"])
         # the consent needs only the client's name: fill it any time, DASH or not
-        self.consent_btn.configure(text="Refill consent" if docs["Client consent"] else "Fill consent")
+        self._set(self.consent_btn, text="Refill consent" if docs["Client consent"] else "Fill consent")
         note = self.note[1:] if self.note and self.note[0] == folder else ("", SUCCESS)
-        self.detail_msg.configure(text=note[0], text_color=note[1])
-        self.detail_msg.grid() if note[0] else self.detail_msg.grid_remove()
+        self._set(self.detail_msg, text=note[0], text_color=note[1])
+        self._show(self.detail_msg, bool(note[0]))
 
     def toggle_step(self, sid):
         """Tick a step, or untick one the broker ticked (or marked N/A)."""
@@ -2203,7 +2669,7 @@ class App(ctk.CTk):
             checklist.set_tick(self.selected, sid, state)
         except OSError as e:
             self.show_note(self.selected, f"Could not save the checklist: {e}", DANGER)
-        self.refresh_list(keep_scroll=True)
+        self.client_changed(self.selected)
 
     def add_doc(self, label, name):
         """Copy the chosen photos / PDFs into the client folder under a name the app recognises."""
@@ -2231,7 +2697,7 @@ class App(ctk.CTk):
                 return
         if label in records.docs_not_needed(folder):
             records.set_doc_needed(folder, label, True)
-        self.refresh_list(keep_scroll=True)
+        self.client_changed(folder)
         self.show_note(folder, f"✓ {label} saved: " + ", ".join(saved), SUCCESS)
 
     def toggle_doc_needed(self, label):
@@ -2243,7 +2709,7 @@ class App(ctk.CTk):
         except OSError as e:
             self.show_note(folder, f"Could not save: {e}", DANGER)
             return
-        self.refresh_list(keep_scroll=True)
+        self.client_changed(folder)
 
     def refill(self, folder, prefix=""):
         had = bool(find_docs(folder)["Client consent"])
@@ -2252,7 +2718,7 @@ class App(ctk.CTk):
         except Exception as e:
             self.show_note(folder, f"{prefix}Could not fill the consent: {e}", DANGER)
             return
-        self.refresh_list(keep_scroll=True)
+        self.client_changed(folder)
         self.select(folder)
         names = "\n".join(n for n, _ in drivers)
         self.show_note(folder, f"{prefix}✓ Consent {'refilled' if had else 'filled'} for:\n{names}", SUCCESS)
@@ -2335,6 +2801,7 @@ def run_finish_update(install, old_pid):
 
 if __name__ == "__main__":
     os.chdir(Path(__file__).parent)
+    sys.setswitchinterval(0.002)      # the thread reading a PDF hands over to the window more often
     if "--selftest" in sys.argv:
         selftest()
         sys.exit(0)

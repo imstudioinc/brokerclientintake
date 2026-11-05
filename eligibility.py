@@ -9,7 +9,6 @@ import json
 import re
 from pathlib import Path
 
-import pdfplumber
 
 BUILTIN_RULES = Path(__file__).parent / "templates" / "rules_ontario.json"
 
@@ -37,6 +36,13 @@ FACTS = {
     "alcohol_convictions_3y": "   of those, alcohol-related",
 }
 MANUAL = ("minor_convictions_3y", "major_convictions_3y", "serious_convictions_3y", "alcohol_convictions_3y")
+
+
+def _plumber():
+    """pdfplumber, loaded when a PDF is first opened (it takes ~0.2 s to import: not at startup)."""
+    import pdfplumber
+    return pdfplumber
+
 
 
 def _sum(facts, *keys):
@@ -83,7 +89,7 @@ def _field(block, label):
 def read_dash_facts(pdf_path, today=None, at_fault_over=25):
     """Pull the facts out of a DASH driver report. Returns (facts, details, notes)."""
     today = today or datetime.date.today()
-    with pdfplumber.open(pdf_path) as pdf:
+    with _plumber().open(pdf_path) as pdf:
         text = "\n".join((p.extract_text() or "") for p in pdf.pages)
     # Sections of page 1: summary, then the "Policies" list, then "Claims", then "Previous Inquiries"
     first, _, rest = text.partition("\nPolicies\n")

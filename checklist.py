@@ -84,6 +84,11 @@ def steps_for(kind):
     return AUTO_STEPS if kind == "Auto" else []
 
 
+def load(folder):
+    """The client's tracking.json (an empty dict when there is none)."""
+    return _load(folder)
+
+
 def _load(folder):
     try:
         return json.loads((Path(folder) / records.FILE).read_text(encoding="utf-8-sig"))
@@ -137,15 +142,16 @@ def set_tick(folder, step_id, state):
     records._write(folder, data)
 
 
-def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None):
+def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None, data=None):
     """[(step, state, note)] - state: "done", "na", "todo"; note explains auto ticks / what's missing.
 
     docs: find_docs() result; info: client.json; skip: documents marked not needed;
     read_quote: False for the client list (only uses refer messages already read);
     by_hand: a set to collect the ids whose done / N/A comes from the broker's own tick (those can
     be unticked; ones the app ticked itself can't).
+    data: the client's tracking.json if it was read already (saves a file read).
     """
-    data = _load(folder)
+    data = _load(folder) if data is None else data
     ticks = data.get("checklist", {})
     out = []
     for step in steps_for(kind):

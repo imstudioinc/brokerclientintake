@@ -9,13 +9,19 @@ as soon as a new document lands in the folder. Each PDF is read once per change 
 import datetime
 import re
 
-import pdfplumber
 
 import quote
 from fill_consent import _raw, _same_person, format_dln
 
 FIELDS = (("dln", "licence #"), ("birth", "date of birth"), ("phone", "phone"), ("email", "email"))
 _cache = {}      # (path, mtime) -> what was read
+
+
+def _plumber():
+    """pdfplumber, loaded when a PDF is first opened (it takes ~0.2 s to import: not at startup)."""
+    import pdfplumber
+    return pdfplumber
+
 
 
 def _cached(path, reader):
@@ -40,7 +46,7 @@ def _phone(text):
 
 def read_dash(path):
     """[{name, dln, birth}] - one driver per DASH report."""
-    with pdfplumber.open(path) as pdf:
+    with _plumber().open(path) as pdf:
         text = pdf.pages[0].extract_text() or ""
     name = re.search(r"DRIVER REPORT\s*\n(.+?)\s+Report Date:", text)
     if not name:
@@ -57,7 +63,7 @@ def read_dash(path):
 
 def _quote_contact(path):
     """Phone and email from the applicant's block, top right of page 1 (the left one is the brokerage)."""
-    with pdfplumber.open(path) as pdf:
+    with _plumber().open(path) as pdf:
         page = pdf.pages[0]
         words = page.extract_words()
         stop = next((w["top"] for w in words if w["text"] == "Policy" and w["x0"] < page.width / 3), 200)

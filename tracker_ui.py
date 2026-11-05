@@ -308,6 +308,10 @@ class Counter(ctk.CTkFrame):
             w.bind("<Button-1>", lambda e: command())
 
     def set(self, n, active=False):
+        state = (str(n), active)
+        if state == getattr(self, "_state", None):       # configure() redraws: only when something changed
+            return
+        self._state = state
         self.number.configure(text=str(n))
         self.configure(border_color=self.ui.PRIMARY if active else self.ui.SURFACE)
 
