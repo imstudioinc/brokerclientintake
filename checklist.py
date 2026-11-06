@@ -1,4 +1,4 @@
-"""The broker's step-by-step checklist for a client (Auto for now).
+"""The broker's step-by-step checklist for a client (Auto, Home, Tenant and Commercial).
 
 Some steps tick themselves from what is in the client folder (DASH, quote, MVR, documents) or
 in client.json (licence #, MVR request sent). The rest - PowerBroker, UW-Compass - the broker
@@ -10,6 +10,7 @@ import datetime
 import json
 from pathlib import Path
 
+import property_risk
 import quote
 import records
 import review
@@ -66,12 +67,137 @@ AUTO_STEPS = [
      "documents and the 1-year pink card(s).", None, False, "email"),
 ]
 
-# the three stages of a client's file
+# ---------- Home, Tenant and Commercial: the same three stages, their own steps ----------
+# Built from WellCare's Property Underwriting Checklist, the PowerBroker Property Completion Guide and the
+# commercial quote application (notes 01 and 39). The owner can reshape any of these; Auto stays as it was.
+_PROPERTY_COMMON_QUOTE = [
+    ("review", "Checked against the markets", "Review property shows which insurers will take it, what to refer and "
+     "which documents it needs. Run it again if the answers change.", None, False, "preview"),
+    ("uw_call", "Refer messages confirmed with the underwriter", "The quote has refer messages: call the "
+     "underwriter, confirm the client is eligible, and log the call (who, when, why, result).", "uw_call", True,
+     "uwcall"),
+]
+
+
+def _policy_steps(sign_hint, uwc_hint, sent_title="Policy documents sent to the client", sent_hint=
+                  "Confirmation email with the policy number and the policy documents."):
+    return [
+        ("approved", "Quote accepted - policy saved to the Tracker", "Pick the carrier the client chose: the policy "
+         "and premium go to the Tracker. Agree how the client pays: full payment, or a signed PAC form with a void "
+         "cheque (the Carriers page has each insurer's terms).", "policy", False, "accept"),
+        ("pb_policy", "Policy set up in PowerBroker", "Customer, Supplementary, Habitational and Risk screens: the "
+         "PowerBroker entry sheet lists every field. Province ON; phone numbers the same as in Applied Quote.", None,
+         False, "pentry"),
+        ("pb_limits", "Sewer backup and overland: full limits written", "Hand write the FULL policy limits next to "
+         "Sewer Backup and Overland Water. If the property doesn't qualify for full limits, a sign-off must go in "
+         "with the application.", "limits", True, None),
+        ("pb_app", "Application created in PowerBroker", "Print the CSIO habitational application; PowerBroker lists "
+         "anything missed. Remarks: sign / effective / EZITV and HITS dates, address verification, claim details, "
+         "UW approval.", None, False, None),
+        ("sign_docs", "Documents sent to the client to sign", sign_hint, None, False, "email"),
+        ("signed", "Signed documents and payment back from the client", "Do not bind until the signed application "
+         "with payment is back.", "signed_docs", False, None),
+        ("uploaded", "Signed documents uploaded and validated", "Upload them to the system and validate.", None, False,
+         "folder"),
+        ("uwc", "All documents submitted to head office", uwc_hint, None, False, None),
+        ("referred", "Referred (if UW-Compass shows a refer message)", "Refer to head office or the insurer - "
+         "mark N/A if there was nothing to refer.", None, True, None),
+        ("ho_confirm", "Head office confirmed the policy", "", None, False, None),
+        ("sent", sent_title, sent_hint, None, False, "email"),
+    ]
+
+
+_UWC_PROPERTY = ("Mandatory: signed consent (HITS), signed application, quote, EZITV within 30 days, PAC form + void "
+                 "cheque, credit consent. If applicable: alarm certificate, mortgage information, rented dwelling / "
+                 "sewer backup / oil tank / wood stove questionnaires, letter of experience, photos, appraisal.")
+
+HOME_STEPS = [
+    # 1. Intake: the client's details and documents
+    ("profile", "Client profile", "Name, phone and email. Occupation and marital status go in the property details "
+     "(PowerBroker needs them).", "profile_pc", False, "edit"),
+    ("property", "Property details", "Year built, updates, heating, water protection, mortgage, insurance history and "
+     "claims. The review, the documents list and the PowerBroker entry sheet all use them.", "property", False,
+     "property"),
+    ("consent", "Consent form filled", "Consent to order HITS and the credit score: fill it and have the client sign.",
+     "consent", False, "consent"),
+    ("hits", "HITS report", "Order HITS in PowerBroker once the consent is signed and save the PDF in the folder. It "
+     "gives the claims history.", "hits", True, None),
+    ("documents", "Documents from the client", "Photos, mortgage details, alarm certificate and the questionnaires "
+     "this property needs.", "documents_prop", False, None),
+    ("ezitv", "Replacement cost (EZITV) done", "Every building needs one, within 30 days of the effective date. The "
+     "amount goes on the quote and the application.", "ezitv", False, None),
+    # 2. Quote
+    ("quote", "Quote in Applied Quote", "Quote with the property details (the entry sheet lists every field) and "
+     "save the Quote Information PDF in the folder.", "quote", False, "pentry"),
+] + _PROPERTY_COMMON_QUOTE + _policy_steps(
+    "Application, consent and credit consent, PAC form with a void cheque, and the questionnaires this property "
+    "needs.", _UWC_PROPERTY)
+
+TENANT_STEPS = [
+    ("profile", "Client profile", "Name, phone and email. Occupation and marital status go in the details "
+     "(PowerBroker needs them).", "profile_pc", False, "edit"),
+    ("property", "Tenant details", "Address, unit, contents value, roommates, prior insurance and claims. The review "
+     "and the PowerBroker entry sheet use them.", "property", False, "property"),
+    ("consent", "Consent form filled", "Consent to order HITS and the credit score: fill it and have the client sign.",
+     "consent", False, "consent"),
+    ("hits", "HITS report", "Order HITS in PowerBroker once the consent is signed and save the PDF in the folder.",
+     "hits", True, None),
+    ("documents", "Documents from the client", "Alarm certificate and letter of experience if they apply.",
+     "documents_prop", False, None),
+    ("quote", "Quote in Applied Quote", "Quote with the details (the entry sheet lists every field) and save the "
+     "Quote Information PDF in the folder.", "quote", False, "pentry"),
+] + _PROPERTY_COMMON_QUOTE + _policy_steps(
+    "Application, consent and credit consent, and a PAC form with a void cheque.",
+    "Mandatory: signed consent (HITS), signed application, quote, PAC form + void cheque, credit consent. If "
+    "applicable: alarm certificate, letter of experience.")
+
+COMMERCIAL_STEPS = [
+    ("profile", "Client profile", "Business name, contact, phone and email.", "profile_pc", False, "edit"),
+    ("application", "Commercial quote application", "Fill WellCare's commercial quote application with the client "
+     "(one form per location: operations, claims, construction and updates, protection, revenue) and save it in the "
+     "folder.", "commercial_app", False, None),
+    ("consent", "Consent form filled", "Fill the consent form and have the client sign it.", "consent", False,
+     "consent"),
+    ("documents", "Documents from the client", "Photos of the location, ULC alarm certificate, prior insurance and "
+     "claims history, restaurant supplement, subcontractors' proof of insurance.", "documents", False, None),
+    ("quote", "Quote", "Submit to the markets and save the quote in the folder. The Carriers page has each insurer's "
+     "contacts and where to submit.", "quote", False, None),
+    ("uw_call", "Underwriter confirmed", "Confirm eligibility with the underwriter and log the call (who, when, why, "
+     "result).", "uw_call", True, "uwcall"),
+    ("approved", "Quote accepted - policy saved to the Tracker", "Pick the carrier the client chose. Agree how the "
+     "client pays.", "policy", False, "accept"),
+    ("pb_policy", "Policy set up in PowerBroker", "Enter the policy and attach the application.", None, False, None),
+    ("sign_docs", "Documents sent to the client to sign", "Signed application, consent and a PAC form with a void "
+     "cheque.", None, False, "email"),
+    ("signed", "Signed documents and payment back from the client", "Do not bind until the signed application with "
+     "payment is back.", "signed_docs", False, None),
+    ("uploaded", "Signed documents uploaded and validated", "Upload them to the system and validate.", None, False,
+     "folder"),
+    ("uwc", "All documents submitted to head office", "Signed application, quote, consent, PAC form + void cheque; "
+     "photos and ULC certificates if applicable.", None, False, None),
+    ("referred", "Referred (if UW-Compass shows a refer message)", "Refer to head office or the insurer - mark N/A if "
+     "there was nothing to refer.", None, True, None),
+    ("ho_confirm", "Head office confirmed the policy", "", None, False, None),
+    ("sent", "Policy documents sent to the client", "Confirmation email with the policy number and the policy "
+     "documents.", None, False, "email"),
+]
+
 STAGES = [("Intake", "Details & documents", ["profile", "consent", "dash", "mvr_request", "mvr", "documents"]),
           ("Quote", "Forms & quote", ["quote", "uw_call", "requote"]),
           ("Policy", "Bind, upload, send", ["approved", "pb_policy", "pb_app", "sign_docs", "down_payment",
                                             "signed", "paid", "billing", "uploaded", "uwc", "referred",
                                             "temp_pink", "ho_confirm", "sent"])]
+_HOME_STAGES = [("Intake", "Details & documents", ["profile", "property", "consent", "hits", "documents", "ezitv"]),
+                ("Quote", "Forms & quote", ["quote", "review", "uw_call"]),
+                ("Policy", "Bind, upload, send", ["approved", "pb_policy", "pb_limits", "pb_app", "sign_docs", "signed",
+                                                  "uploaded", "uwc", "referred", "ho_confirm", "sent"])]
+_TENANT_STAGES = [("Intake", "Details & documents", ["profile", "property", "consent", "hits", "documents"]),
+                  _HOME_STAGES[1], _HOME_STAGES[2]]
+_COMMERCIAL_STAGES = [("Intake", "Details & documents", ["profile", "application", "consent", "documents"]),
+                      ("Quote", "Forms & quote", ["quote", "uw_call"]),
+                      ("Policy", "Bind, upload, send", ["approved", "pb_policy", "sign_docs", "signed", "uploaded",
+                                                        "uwc", "referred", "ho_confirm", "sent"])]
+
 # the email template each email step opens ({type} = the client type, e.g. confirm-auto.html)
 EMAIL_FOR_STEP = {"sign_docs": "sign-auto.html", "down_payment": "down-payment.html",
                   "billing": "billing-credit-card.html", "temp_pink": "temp-pink-card.html",
@@ -79,9 +205,46 @@ EMAIL_FOR_STEP = {"sign_docs": "sign-auto.html", "down_payment": "down-payment.h
 # steps that wait on someone else: they don't hold up the next step
 WAITING = {"mvr", "documents"}
 
+PROCESSES = {
+    "Auto": {"steps": AUTO_STEPS, "stages": STAGES, "email": EMAIL_FOR_STEP, "waiting": WAITING},
+    "Home": {"steps": HOME_STEPS, "stages": _HOME_STAGES, "waiting": {"documents", "hits", "signed"},
+             "email": {"sign_docs": "sign-home.html", "sent": "confirm-home.html"}},
+    "Tenant": {"steps": TENANT_STEPS, "stages": _TENANT_STAGES, "waiting": {"documents", "hits", "signed"},
+               "email": {"sign_docs": "sign-tenant.html", "sent": "confirm-tenant.html"}},
+    "Commercial": {"steps": COMMERCIAL_STEPS, "stages": _COMMERCIAL_STAGES, "waiting": {"documents", "signed"},
+                   "email": {"sign_docs": "sign-commercial.html", "sent": "confirm-commercial.html"}},
+}
+# the optional client documents each process asks for in its "documents" step
+CLIENT_DOCS = {"Auto": ("Driver's licence", "Ownership", "Bill of sale", "Winter tire photo", "Void cheque",
+                        "Financing / lease"),
+               "Commercial": ("Photos of the location", "Alarm certificate (ULC)", "Prior insurance and claims",
+                              "Restaurant supplement", "Subcontractor insurance")}
+
+
+def process(kind):
+    """The steps / stages / emails of this client type, or None (Other: documents only)."""
+    return PROCESSES.get(kind)
+
 
 def steps_for(kind):
-    return AUTO_STEPS if kind == "Auto" else []
+    p = process(kind)
+    return p["steps"] if p else []
+
+
+def stages_for(kind):
+    """[(name, subtitle, [step ids])] - always three; Auto's when the type has no process."""
+    p = process(kind)
+    return p["stages"] if p else STAGES
+
+
+def email_for(kind, step_id):
+    p = process(kind)
+    return (p["email"] if p else EMAIL_FOR_STEP).get(step_id)
+
+
+def waiting_for(kind):
+    p = process(kind)
+    return p["waiting"] if p else WAITING
 
 
 def load(folder):
@@ -199,14 +362,57 @@ def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None, data=N
         elif auto == "mvr" and docs.get("MVR"):
             state, note = "done", "In the folder"
         elif auto == "documents":
-            wanted = [k for k in ("Driver's licence", "Ownership", "Bill of sale", "Winter tire photo", "Void cheque",
-                                  "Financing / lease") if k in docs and k not in skip]
+            wanted = [k for k in CLIENT_DOCS.get(kind, ()) if k in docs and k not in skip]
             have = [k for k in wanted if docs[k]]
             if wanted and len(have) == len(wanted):
                 state, note = "done", "All received"
             elif state == "todo":
                 missing = [k for k in wanted if not docs[k]]
                 note = "Missing: " + ", ".join(k.lower() for k in missing)
+        elif auto == "profile_pc":
+            missing = [w for w in ("phone", "email") if not info.get(w)]
+            if info.get("name") or info.get("phone") or info.get("email"):
+                state = "done" if not missing else "todo"
+            if missing:
+                note = " and ".join(missing).capitalize() + " missing"
+        elif auto == "property":
+            values = data.get(property_risk.KEY) or {}
+            filled, total, lacking = property_risk.completeness(values)
+            if values and not lacking:
+                state, note = "done", "All answered"
+            elif values:
+                note = f"{filled} of {total} answered - missing: " + ", ".join(l.lower() for l in lacking[:4]) + \
+                    ("..." if len(lacking) > 4 else "")
+            else:
+                note = "Not filled in yet"
+        elif auto == "hits" and docs.get("HITS report"):
+            state, note = "done", "In the folder"
+        elif auto == "ezitv" and docs.get("EZITV (replacement cost)"):
+            state, note = "done", "In the folder"
+        elif auto == "commercial_app" and docs.get("Commercial application"):
+            state, note = "done", "In the folder"
+        elif auto == "documents_prop":
+            values = data.get(property_risk.KEY) or {}
+            if not values:
+                note = "Fill in the property details to see what is needed"
+            else:
+                need = [k for k in property_risk.docs_needed(values) if k in docs and k not in skip]
+                have = [k for k in need if docs[k]]
+                if len(have) == len(need):
+                    state, note = "done", "All received" if need else "Nothing extra needed"
+                else:
+                    note = "Missing: " + ", ".join(k for k in need if not docs[k])
+        elif auto == "signed_docs":
+            wanted = [k for k in ("Signed application", "PAC form + void cheque") if k in docs]
+            missing = [k for k in wanted if not docs[k]]
+            if wanted and not missing:
+                state, note = "done", "In the folder"
+            elif state == "todo" and wanted:
+                note = "Missing: " + ", ".join(missing)
+        elif auto == "limits":
+            values = data.get(property_risk.KEY) or {}
+            if values.get("wants_sewer") == "No" and values.get("wants_overland") == "No" and not tick:
+                state, note = "na", "No sewer backup or overland water wanted"
         if tick in ("done", "na") and state == "todo":
             state = tick              # ticked by hand (e.g. DASH N/A for a new driver)
             if by_hand is not None:
@@ -215,26 +421,27 @@ def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None, data=N
     return out
 
 
-def next_step(rows):
+def next_step(rows, kind):
     """The first step still to do, skipping the ones that wait on someone else (MVR, client documents)."""
-    return next(((st, s, note) for st, s, note in rows if s == "todo" and st[0] not in WAITING), None)
+    waiting = waiting_for(kind)
+    return next(((st, s, note) for st, s, note in rows if s == "todo" and st[0] not in waiting), None)
 
 
-def stage_of(step_id):
-    return next(i for i, (_, _, ids) in enumerate(STAGES) if step_id in ids)
+def stage_of(step_id, kind):
+    return next(i for i, (_, _, ids) in enumerate(stages_for(kind)) if step_id in ids)
 
 
-def summary(rows):
+def summary(rows, kind):
     """(done, total, next step title or None)."""
     done = sum(1 for _, s, _ in rows if s in ("done", "na"))
-    nxt = next_step(rows)
+    nxt = next_step(rows, kind)
     return done, len(rows), nxt[0][1] if nxt else None
 
 
-def current_stage(rows):
+def current_stage(rows, kind):
     """Index of the stage the client is in (the next step's), or None when every step is done."""
-    nxt = next_step(rows)
+    nxt = next_step(rows, kind)
     if nxt:
-        return stage_of(nxt[0][0])
+        return stage_of(nxt[0][0], kind)
     todo = next((st for st, s, _ in rows if s == "todo"), None)
-    return stage_of(todo[0]) if todo else None
+    return stage_of(todo[0], kind) if todo else None

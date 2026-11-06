@@ -20,3 +20,6 @@ tracking.json
 # Underwriting notes (carrier manuals, contacts, trust account) - the repo is public
 Underwriting Knowledge/
 Rate Manuals*
+
+# carrier manuals and guides used to build the Home / Tenant / Commercial features: confidential, never in the public repo
+resources/

@@ -33,6 +33,8 @@ import ars_ui
 import carriers
 import carriers_ui
 import policy_ui
+import property_risk
+import property_ui
 import records
 import rules_ui
 import eligibility_ui
@@ -81,6 +83,62 @@ AUTO_DOCUMENTS = [
     ("Void cheque", ["*void*", "*cheque*", "*direct deposit*", "*pad form*"], "Void Cheque", True),
     ("Financing / lease", ["*financ*", "lease*", "* lease*", "*_lease*", "*-lease*", "*loan*", "*lienholder*"], "Financing Papers", True),
 ]
+# Home / Tenant / Commercial documents: same shape as AUTO_DOCUMENTS. Those in CONDITIONAL_DOCS are only listed
+# when the property details say the property needs them (property_risk.docs_needed) or a file is already there.
+_PAC = ["*void*", "*cheque*", "*direct deposit*", "*pad form*", "*pac form*", "*signed pac*"]
+_SIGNED_APP = ["*signed application*", "*application*signed*", "*habitational*application*"]
+_PROPERTY_DOCS = {
+    "ezitv": ("EZITV (replacement cost)", ["*ezitv*", "*e2value*", "*iclarify*", "*replacement cost*", "*valuation*"],
+              "EZITV", False),
+    "signed": ("Signed application", _SIGNED_APP, "Signed Application", False),
+    "pac": ("PAC form + void cheque", _PAC, "PAC Form and Void Cheque", False),
+    "photos": ("Photos", ["*photo*"], "Photos", True),
+    "mortgage": ("Mortgage information", ["*mortgage*", "*lender*"], "Mortgage Information", True),
+    "alarm": ("Alarm certificate", ["*alarm*"], "Alarm Certificate", True),
+    "sewer": ("Sewer backup questionnaire", ["*sewer*", "*backup questionnaire*"], "Sewer Backup Questionnaire", True),
+    "oil": ("Oil tank questionnaire", ["*oil tank*"], "Oil Tank Questionnaire", True),
+    "wood": ("Wood stove questionnaire", ["*wood stove*", "*woodstove*", "*solid fuel*"], "Wood Stove Questionnaire", True),
+    "rented": ("Rented dwelling questionnaire", ["*rented dwelling*", "*rental questionnaire*", "*landlord*"],
+               "Rented Dwelling Questionnaire", True),
+    "loe": ("Letter of experience", ["*letter of experience*", "*experience letter*", "loe *", "* loe *"],
+            "Letter of Experience", True),
+    "appraisal": ("Appraisal", ["*apprais*"], "Appraisal", True),
+}
+HOME_DOCUMENTS = [_PROPERTY_DOCS[k] for k in ("ezitv", "signed", "pac", "photos", "mortgage", "alarm", "sewer", "oil",
+                                              "wood", "rented", "loe", "appraisal")]
+TENANT_DOCUMENTS = [_PROPERTY_DOCS[k] for k in ("signed", "pac", "photos", "alarm", "sewer", "loe")]
+COMMERCIAL_DOCUMENTS = [
+    ("Commercial application", ["*commercial*application*", "*commercial quote application*"], "Commercial Application", False),
+    ("PAC form + void cheque", _PAC, "PAC Form and Void Cheque", False),
+    ("Photos of the location", ["*photo*"], "Photos", True),
+    ("Alarm certificate (ULC)", ["*alarm*", "*ulc*"], "Alarm Certificate", True),
+    ("Prior insurance and claims", ["*loss run*", "*claims history*", "*prior insurance*", "*previous insurance*"],
+     "Prior Insurance", True),
+    ("Restaurant supplement", ["*restaurant*"], "Restaurant Supplement", True),
+    ("Subcontractor insurance", ["*subcontract*", "*certificate of insurance*"], "Subcontractor Insurance", True),
+]
+CONDITIONAL_DOCS = {"Photos", "Mortgage information", "Alarm certificate", "Sewer backup questionnaire",
+                    "Oil tank questionnaire", "Wood stove questionnaire", "Rented dwelling questionnaire",
+                    "Letter of experience", "Appraisal"}
+_PROP_BASE = [("Client consent", ["*Client Consent*", "*Consent Form*"]), ("HITS report", ["*HITS*"]),
+              ("Quote (ARS)", ["*Quote*"])]
+BASE_DOCS = {"Home": _PROP_BASE, "Tenant": _PROP_BASE,
+             "Commercial": [("Client consent", ["*Client Consent*", "*Consent Form*"]), ("Quote (ARS)", ["*Quote*"])]}
+KIND_DOCS = {"Auto": AUTO_DOCUMENTS, "Home": HOME_DOCUMENTS, "Tenant": TENANT_DOCUMENTS,
+             "Commercial": COMMERCIAL_DOCUMENTS}
+# which documents show on which stage's page, per client type ("Other" uses Auto's page, extras hidden)
+STAGE_DOCS = {
+    "Auto": [["Client consent", "DASH report", "MVR"] + [d[0] for d in AUTO_DOCUMENTS], ["Quote (ARS)"], []],
+    "Home": [["Client consent", "HITS report", "Photos", "Mortgage information", "Alarm certificate",
+              "Sewer backup questionnaire", "Oil tank questionnaire", "Wood stove questionnaire",
+              "Rented dwelling questionnaire", "Letter of experience", "Appraisal"],
+             ["Quote (ARS)", "EZITV (replacement cost)"], ["Signed application", "PAC form + void cheque"]],
+    "Tenant": [["Client consent", "HITS report", "Photos", "Alarm certificate", "Sewer backup questionnaire",
+                "Letter of experience"], ["Quote (ARS)"], ["Signed application", "PAC form + void cheque"]],
+    "Commercial": [["Client consent", "Commercial application", "Photos of the location", "Alarm certificate (ULC)",
+                    "Prior insurance and claims", "Restaurant supplement", "Subcontractor insurance"],
+                   ["Quote (ARS)"], ["PAC form + void cheque"]],
+}
 DOC_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".tif", ".tiff", ".bmp", ".gif",
             ".doc", ".docx"}
 DOC_FILES = " ".join("*" + e for e in sorted(DOC_EXTS))
@@ -92,9 +150,14 @@ def clean_name(name):
     return name.upper()
 
 
+def base_docs(kind):
+    """[(label, patterns)] every client of this type has (consent, quote ... DASH + MVR for Auto)."""
+    return BASE_DOCS.get(kind, DOCUMENTS)
+
+
 def doc_list(kind):
     """[(label, patterns)] tracked for a client of this type."""
-    return DOCUMENTS + ([(label, pats) for label, pats, _, _ in AUTO_DOCUMENTS] if kind == "Auto" else [])
+    return base_docs(kind) + [(label, pats) for label, pats, _, _ in KIND_DOCS.get(kind, [])]
 
 
 def folder_files(folder):
@@ -118,10 +181,11 @@ def find_docs(folder, kind=""):
     folder = Path(folder)
     files = [(n, m) for n, m in folder_files(folder) if Path(n).suffix.lower() in DOC_EXTS]
     found, base = {}, set()
+    base_labels = dict(base_docs(kind))
     for label, patterns in doc_list(kind):
         hits = {n: m for n, m in files if name_matches(n, patterns)}
         names = set(hits)
-        if label in dict(DOCUMENTS):
+        if label in base_labels:
             base |= names
         else:
             names -= base            # e.g. "Client Consent" is not a lienholder paper
@@ -1449,23 +1513,32 @@ class App(ctk.CTk):
             config.update(self.cfg, clients_root=str(Path(p)))
         self.on_settings_changed()
 
-    def _prewarm(self):
-        """customtkinter draws every widget the first time it is shown (~0.4 s for the client page). Do that
-        once, off-screen, while nothing is selected, so the first click on a client is not slow."""
-        if self.selected or self._details_showing == "body":
+    def _prewarm(self, keys=("Auto", "Home", "Tenant", "Commercial")):
+        """customtkinter draws every widget the first time it is shown (~0.4 s for a client page), and the
+        Home / Tenant / Commercial pages are only built when first needed. Build and draw them once, off-screen,
+        one type at a time while nothing is selected, so the first click on any kind of client is not slow."""
+        if self.selected or self._details_showing == "body" or not keys:
             return
+        key, rest = keys[0], keys[1:]
+        previous = getattr(self, "_active_set", "Auto")
+        pages = []
         try:
-            body = self.details_body
-            for page in self.stage_pages:
+            pages = self._pageset(key)["pages"]
+            for page in pages:
                 page.grid()
             width, height = max(self.details.winfo_width(), 600), max(self.details.winfo_height(), 600)
-            body.place(x=-10 * width, y=0, width=width, height=height)
+            # CTk's own place() refuses width / height, so use Tk's directly on the scroll frame's outer frame
+            tk.Place.place_configure(self.details_body._parent_frame, x=-10 * width, y=0, width=width, height=height)
             self.update_idletasks()
-            body.place_forget()
-            for page in self.stage_pages[1:]:
-                page.grid_remove()
+            self.details_body.place_forget()
         except Exception:
             pass                                  # only an optimisation
+        finally:
+            for page in pages:                    # back to hidden, as _show() believes they are
+                page.grid_remove()
+        self._use_set(previous)
+        if rest:
+            self.after(900, lambda: self._prewarm(rest))
 
     def _wait_for_root(self):
         """Check every few seconds (off the window's thread: a dead network drive can be slow) until the
@@ -1896,14 +1969,18 @@ class App(ctk.CTk):
         """(docs found, docs needed, stage like "2. Quote" or "", contact missing) for a client's list line.
         Reads the client's files, so it runs in a thread."""
         data = checklist.load(folder)
-        skip = set(data.get("docs_not_needed", [])) if kind == "Auto" else set()
+        skip = set(data.get("docs_not_needed", [])) if checklist.process(kind) else set()
         found = find_docs(folder, kind)
         docs = {k: v for k, v in found.items() if k not in skip}
+        if kind in ("Home", "Tenant"):             # only the extra documents this property needs count
+            needed = property_risk.docs_needed(data.get(property_risk.KEY) or {})
+            docs = {k: v for k, v in docs.items() if k not in CONDITIONAL_DOCS or k in needed or v}
         info = mvr_email.load_client(folder)
         rows = checklist.status(folder, kind, found, info, skip, read_quote=False, data=data)
-        stage = checklist.current_stage(rows) if rows else None
-        steps = "" if not rows else "✓ Policy done" if stage is None else f"{stage + 1}. {checklist.STAGES[stage][0]}"
-        missing = [w for w in ("phone", "email") if not info.get(w)] if kind == "Auto" else []
+        stage = checklist.current_stage(rows, kind) if rows else None
+        steps = "" if not rows else "✓ Policy done" if stage is None else \
+            f"{stage + 1}. {checklist.stages_for(kind)[stage][0]}"
+        missing = [w for w in ("phone", "email") if not info.get(w)] if checklist.process(kind) else []
         return (sum(1 for v in docs.values() if v), len(docs), steps, missing)
 
     def _row_text(self, folder, ftype, modified):
@@ -2214,56 +2291,92 @@ class App(ctk.CTk):
 
         self._build_next_card(body, row=3, padx=p)
 
-        self.stage_pages = []
-        self.check_rows, self.doc_rows = {}, {}
-        self.stage_docs_head, self.stage_steps_head = [], []
-        steps = {st[0]: st for st in checklist.AUTO_STEPS}
-        auto = {label: (name, optional) for label, _, name, optional in AUTO_DOCUMENTS}
-        stage_docs = [["Client consent", "DASH report", "MVR"] + list(auto), ["Quote (ARS)"], []]
-        email = ("Write email", sel(lambda f: EmailDialog(self, f)))
-        stage_tools = [
-            [("consent", sel(self.refill)), ("Import DASH", sel(lambda f: ImportDashDialog(self, f))),
-             ("Request MVR", sel(lambda f: MvrDialog(self, f))), email],
-            [("ARS entry", sel(lambda f: ars_ui.ArsEntryPage(self, f))),
-             ("Review quote", sel(lambda f: eligibility_ui.EligibilityDialog(self, f))),
-             ("UW call", sel(lambda f: carriers_ui.UwCallPage(self, f))), email],
-            [("Policy details", sel(self.accept_quote)),
-             ("Carriers & payments", sel(lambda f: carriers_ui.CarrierInfoPage(self, f))), email,
-             ("Client record", sel(lambda f: tracker_ui.ClientRecordDialog(self, f)))],
-        ]
-        self.consent_btn = None
-        self.stage_doc_labels = stage_docs
-        for i, (name, _, ids) in enumerate(checklist.STAGES):
-            page = ctk.CTkFrame(body, fg_color="transparent")
-            page.grid(row=4, column=0, sticky="ew", padx=p, pady=(2 * SP, p))
-            page.grid_columnconfigure(0, weight=1)
-            self.stage_pages.append(page)
-            tools = ctk.CTkFrame(page, fg_color="transparent")
-            tools.grid(row=0, column=0, sticky="ew")
-            for c, (text, cmd) in enumerate(stage_tools[i]):
-                b = self.secondary_button(tools, "Fill consent" if text == "consent" else text, cmd, height=38,
-                                          font=font(14), width=150 if text == "Carriers & payments" else 120)
-                b.pack(side="left", padx=(0, SP))
-                if text == "consent":
-                    self.consent_btn = b
-
-            head, box = self._list_box(page, row=1, title="Steps")
-            self.stage_steps_head.append(head)
-            for j, sid in enumerate(ids):
-                self._step_row(box, j, steps[sid])
-
-            if stage_docs[i]:
-                head, box = self._list_box(page, row=2, title="Documents")
-                self.stage_docs_head.append(head)
-                for j, label in enumerate(stage_docs[i]):
-                    self._doc_row(box, j, label, auto, sel)
-            else:
-                self.stage_docs_head.append(None)
+        self._sets = {}
+        self._use_set("Auto")
+        self._pageset("Auto")           # Home / Tenant / Commercial pages are built the first time they are shown
         self._stage, self._stage_picked = 0, False
         self._details_showing = None
 
+    def _set_key(self, kind):
+        """Which page set shows this client type ("Other" has no steps: Auto's pages with the extras hidden)."""
+        return kind if kind in KIND_DOCS else "Auto"
+
+    def _use_set(self, key):
+        """Point the page attributes at one type's widgets (each type has its own steps and documents)."""
+        ps = self._sets.setdefault(key, {"pages": [], "check_rows": {}, "doc_rows": {}, "docs_head": [],
+                                         "steps_head": [], "consent_btn": None, "doc_labels": []})
+        self.stage_pages, self.check_rows, self.doc_rows = ps["pages"], ps["check_rows"], ps["doc_rows"]
+        self.stage_docs_head, self.stage_steps_head = ps["docs_head"], ps["steps_head"]
+        self.consent_btn, self.stage_doc_labels = ps["consent_btn"], ps["doc_labels"]
+        self._active_set = key
+        return ps
+
+    def _stage_tools(self, key, sel):
+        email = ("Write email", sel(lambda f: EmailDialog(self, f)))
+        consent = ("consent", sel(self.refill))
+        quote_ = ("UW call", sel(lambda f: carriers_ui.UwCallPage(self, f)))
+        carriers_ = ("Carriers & payments", sel(lambda f: carriers_ui.CarrierInfoPage(self, f)))
+        if key == "Auto":
+            return [[consent, ("Import DASH", sel(lambda f: ImportDashDialog(self, f))),
+                     ("Request MVR", sel(lambda f: MvrDialog(self, f))), email],
+                    [("ARS entry", sel(lambda f: ars_ui.ArsEntryPage(self, f))),
+                     ("Review quote", sel(lambda f: eligibility_ui.EligibilityDialog(self, f))), quote_, email],
+                    [("Policy details", sel(self.accept_quote)), carriers_, email,
+                     ("Client record", sel(lambda f: tracker_ui.ClientRecordDialog(self, f)))]]
+        if key in ("Home", "Tenant"):
+            return [[("Property details" if key == "Home" else "Tenant details", sel(self.open_property)), consent, email],
+                    [("Entry sheet", sel(self.open_entry)), ("Review property", sel(self.open_review)), quote_, email],
+                    [("Policy details", sel(self.accept_quote)), ("Entry sheet", sel(self.open_entry)), carriers_, email]]
+        return [[consent, email],
+                [quote_, email],
+                [("Policy details", sel(self.accept_quote)), carriers_, email]]
+
+    def _pageset(self, key):
+        """The three stage pages for one client type: buttons, steps and documents. Built once, the first time
+        a client of that type is shown."""
+        ps = self._sets.get(key)
+        if ps and ps["pages"]:
+            return ps
+        ps = self._use_set(key)
+        body, p, sel = self.details_body, 3 * SP, self._sel
+        steps = {st[0]: st for st in checklist.steps_for(key)}
+        extras = {label: (name, optional) for label, _, name, optional in KIND_DOCS.get(key, [])}
+        stage_docs = STAGE_DOCS[key]
+        tools = self._stage_tools(key, sel)
+        ps["doc_labels"].extend(stage_docs)
+        self.stage_doc_labels = ps["doc_labels"]
+        for i, (name, _, ids) in enumerate(checklist.stages_for(key)):
+            page = ctk.CTkFrame(body, fg_color="transparent")
+            page.grid(row=4, column=0, sticky="ew", padx=p, pady=(2 * SP, p))
+            page.grid_columnconfigure(0, weight=1)
+            page.grid_remove()
+            self._visible[page] = False
+            ps["pages"].append(page)
+            row = ctk.CTkFrame(page, fg_color="transparent")
+            row.grid(row=0, column=0, sticky="ew")
+            for text, cmd in tools[i]:
+                b = self.secondary_button(row, "Fill consent" if text == "consent" else text, cmd, height=38,
+                                          font=font(14), width=150 if len(text) > 14 else 120)
+                b.pack(side="left", padx=(0, SP))
+                if text == "consent":
+                    ps["consent_btn"] = b
+            head, box = self._list_box(page, row=1, title="Steps")
+            ps["steps_head"].append(head)
+            for j, sid in enumerate(ids):
+                if sid in steps:
+                    self._step_row(box, j, steps[sid])
+            if stage_docs[i]:
+                head, box = self._list_box(page, row=2, title="Documents")
+                ps["docs_head"].append(head)
+                for j, label in enumerate(stage_docs[i]):
+                    self._doc_row(box, j, label, extras, sel)
+            else:
+                ps["docs_head"].append(None)
+        self._use_set(key)
+        return ps
+
     def _wrap_contact(self, width):
-        cells = self.contact.winfo_children()
+        cells = [c for c in self.contact.winfo_children() if self._visible.get(c) is not False]
         need = sum(c.winfo_reqwidth() for c in cells)
         two = need > width
         for i, c in enumerate(cells):
@@ -2344,8 +2457,17 @@ class App(ctk.CTk):
 
     def _step_email(self, folder):
         """The email for the next step (documents to sign, down payment, pink slip...)."""
-        name = checklist.EMAIL_FOR_STEP.get(self._next_id)
+        name = checklist.email_for(self.client_type_of.get(folder, ""), self._next_id)
         EmailDialog(self, folder, template=name)
+
+    def open_property(self, folder):
+        property_ui.PropertyDetailsPage(self, folder)
+
+    def open_review(self, folder):
+        property_ui.PropertyReviewPage(self, folder)
+
+    def open_entry(self, folder):
+        property_ui.PropertyEntryPage(self, folder)
 
     def accept_quote(self, folder):
         def saved(msg):
@@ -2391,6 +2513,9 @@ class App(ctk.CTk):
             "payments": ctk.CTkButton(btns, text="Payment terms",
                                       command=sel(lambda f: carriers_ui.CarrierInfoPage(self, f))),
             "consent": ctk.CTkButton(btns, text="Fill consent", command=sel(self.refill)),
+            "property": ctk.CTkButton(btns, text="Property details", command=sel(self.open_property)),
+            "preview": ctk.CTkButton(btns, text="Review property", command=sel(self.open_review)),
+            "pentry": ctk.CTkButton(btns, text="Entry sheet", command=sel(self.open_entry)),
             "ars": ctk.CTkButton(btns, text="ARS entry", command=sel(lambda f: ars_ui.ArsEntryPage(self, f))),
             "folder": ctk.CTkButton(btns, text="Open folder", command=sel(os.startfile)),
             "email": ctk.CTkButton(btns, text="Write the email", command=sel(self._step_email)),
@@ -2405,16 +2530,21 @@ class App(ctk.CTk):
                                              width=130, height=38, font=font(14))
         self._next_id = None
 
-    def _render_stages(self, folder, kind, docs, skip, rows, by_hand, down_hint=""):
+    def _render_stages(self, folder, kind, docs, skip, rows, by_hand, down_hint="", shown=None):
         """Stage strip, next-step card and the chosen stage's steps / documents. Only touches the widgets
         whose content changed, and reads nothing from the disk."""
         auto_client = bool(rows)
         by_id = {st[0]: (st, s, note) for st, s, note in rows}
-        nxt = checklist.next_step(rows)
+        waiting_ids = checklist.waiting_for(kind)
+        for other, ps in self._sets.items():             # only this type's pages can show
+            if other != self._active_set:
+                for page in ps["pages"]:
+                    self._show(page, False)
+        nxt = checklist.next_step(rows, kind)
         self._next_id = nxt[0][0] if nxt else None
         self._check_state = {st[0]: s for st, s, _ in rows}
         self._by_hand = by_hand
-        current = checklist.current_stage(rows) if auto_client else (1 if docs.get("Quote (ARS)") else 0)
+        current = checklist.current_stage(rows, kind) if auto_client else (1 if docs.get("Quote (ARS)") else 0)
         if not self._stage_picked:
             self._stage = 2 if current is None else current
         needed = [k for k in docs if k not in skip]
@@ -2422,7 +2552,7 @@ class App(ctk.CTk):
 
         # the strip: each stage's progress; the chosen one is outlined
         self._show(self.stage_strip, True)
-        for i, (name, sub, ids) in enumerate(checklist.STAGES):
+        for i, (name, sub, ids) in enumerate(checklist.stages_for(kind)):
             tab, top, count, low = self.stage_tabs[i]
             if auto_client:
                 finished = sum(1 for sid in ids if by_id[sid][1] in ("done", "na"))
@@ -2439,14 +2569,15 @@ class App(ctk.CTk):
             self._show(self.stage_steps_head[i].frame, auto_client)
             head = self.stage_docs_head[i]
             if head:
-                labels = [l for l in self.stage_doc_labels[i] if l in docs and l not in skip]
+                labels = [l for l in self.stage_doc_labels[i] if l in docs and l not in skip
+                          and (shown is None or l in shown)]
                 got = sum(1 for l in labels if docs[l])
                 self._set(head, text=f"Documents   {got} of {len(labels)} received")
 
         # next step card: only on the stage it belongs to
         show_card = auto_client and (nxt is None and self._stage == 2 or nxt is not None and self._stage == current)
         self._show(self.next_card, show_card)
-        done, total, _ = checklist.summary(rows) if rows else (0, 0, None)
+        done, total, _ = checklist.summary(rows, kind) if rows else (0, 0, None)
         wanted = []                  # the buttons on the card: [(widget, padx)]
         if show_card and nxt:
             (sid, title, hint, auto, can_na, action), _, note = nxt
@@ -2476,7 +2607,7 @@ class App(ctk.CTk):
             # one short line instead of a big card
             self._show(self.next_kicker, False)
             self._show(self.next_hint, False)
-            waiting = [by_id[s][0][1] for s in checklist.WAITING if by_id[s][1] == "todo"]
+            waiting = [by_id[s][0][1] for s in waiting_ids if s in by_id and by_id[s][1] == "todo"]
             missing = len(needed) - have
             self._set(self.next_title, text="✓  Nothing left to do" + (
                 f"  ·  waiting for: {', '.join(waiting).lower()}" if waiting else
@@ -2504,7 +2635,7 @@ class App(ctk.CTk):
                       font=font(14, "bold") if is_next else font(14),
                       text_color=TEXT if is_next or state == "todo" else MUTED)
             tag = "NEXT" if is_next else "N/A" if state == "na" else \
-                "WAITING" if sid in checklist.WAITING and state == "todo" else ""
+                "WAITING" if sid in waiting_ids and state == "todo" else ""
             self._set(r["tag"], text=tag, text_color=PRIMARY if is_next else MUTED)
             warn = note if note and "issing" in note and state != "na" and sid != "documents" else ""
             self._set(r["note"], text=warn)
@@ -2521,11 +2652,12 @@ class App(ctk.CTk):
         except Exception:
             filled, warnings = [], []
         data = checklist.load(folder)
-        skip = set(data.get("docs_not_needed", [])) if kind == "Auto" else set()
+        skip = set(data.get("docs_not_needed", [])) if checklist.process(kind) else set()
         by_hand = set()
         rows = checklist.status(folder, kind, docs, info, skip, by_hand=by_hand, data=data)
+        needed = property_risk.docs_needed(data.get(property_risk.KEY) or {}) if kind in ("Home", "Tenant") else None
         down_hint = ""
-        nxt = checklist.next_step(rows)
+        nxt = checklist.next_step(rows, kind)
         if nxt and nxt[0][0] == "down_payment":
             p = records.bound_policy(data) or {}
             rule = policy_ui.down_payment_rule(self.cfg, p.get("insurer", ""))
@@ -2537,7 +2669,7 @@ class App(ctk.CTk):
         except OSError:
             modified = 0
         return {"info": info, "docs": docs, "skip": skip, "rows": rows, "by_hand": by_hand, "filled": filled,
-                "warnings": warnings, "down_hint": down_hint, "modified": modified}
+                "warnings": warnings, "down_hint": down_hint, "modified": modified, "needed": needed}
 
     def _gather_thread(self, folder, kind):
         try:
@@ -2610,6 +2742,10 @@ class App(ctk.CTk):
         self._loading = False
         self._shown_stamp = (folder, b["modified"])
         kind = self.client_type_of.get(folder, "")
+        key = self._set_key(kind)
+        if key not in self._sets or not self._sets[key]["pages"]:
+            self._pageset(key)                          # first client of this type: build its pages
+        self._use_set(key)
         self._set(self.details_title, text=shorten(folder.name, 34))
         self._set(self.details_type, text=f"  {kind}  " if kind else "")
         info, docs, skip, warnings = b["info"], b["docs"], b["skip"], b["warnings"]
@@ -2618,24 +2754,29 @@ class App(ctk.CTk):
             b["filled"] = []                                  # said once
             self._row_cache.pop(folder, None)
             self.refresh_soon(100)           # the list line ("no phone / email") follows
+        hidden = {"dln": kind in ("Home", "Tenant", "Commercial"), "birth": kind == "Commercial"}
         for key, label in self.contact_labels.items():
             value = info.get(key) or ""
             if key == "birth" and value:
                 value = format_birth(value)
             self._set(label, text=value or "Add…", text_color=TEXT if value else PRIMARY)
+            self._show(label.master, not hidden.get(key, False))
+        self._wrap_contact(self.contact.master.winfo_width())
         self._set(self.facts_warn, text="⚠  Doesn't match the documents - click to edit\n"
                                         + "\n".join("•  " + w for w in warnings))
         self._show(self.facts_warn, bool(warnings))
 
+        needed = b.get("needed")
+        shown = None if needed is None else {l for l in docs if l not in CONDITIONAL_DOCS or l in needed or docs[l]}
         for label, r in self.doc_rows.items():
-            if label not in docs:            # auto documents on a non-auto client
+            if label not in docs or (shown is not None and label not in shown):   # not this client's / not needed
                 self._show(r["frame"], False)
                 continue
             self._show(r["frame"], True)
             files = docs[label]
             if files:
                 status, color, dot = (f"{len(files)} files" if len(files) > 1 else
-                                      shorten(files[-1].name, 30) if label in dict(DOCUMENTS) else "Received"), \
+                                      shorten(files[-1].name, 30) if label in dict(base_docs(kind)) else "Received"), \
                                      MUTED, SUCCESS
             elif label in skip:
                 status, color, dot = "Not needed", MUTED, BORDER
@@ -2650,7 +2791,7 @@ class App(ctk.CTk):
                     btn.grid() if key in show else btn.grid_remove()
                 r["buttons"]["open"].configure(command=lambda fs=files: [os.startfile(f) for f in fs])
                 r["state"] = state
-        self._render_stages(folder, kind, docs, skip, b["rows"], b["by_hand"], b["down_hint"])
+        self._render_stages(folder, kind, docs, skip, b["rows"], b["by_hand"], b["down_hint"], shown)
         # the consent needs only the client's name: fill it any time, DASH or not
         self._set(self.consent_btn, text="Refill consent" if docs["Client consent"] else "Fill consent")
         note = self.note[1:] if self.note and self.note[0] == folder else ("", SUCCESS)
