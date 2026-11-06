@@ -82,6 +82,14 @@ class PropertyDetailsPage(Panel):
 
     def _load(self):
         values = risk.load(self.folder)
+        try:                                   # start from what the ARS quote already says (empty answers only)
+            import property_quote, review
+            quotes = review.find_docs(self.folder)["quote"]
+            if quotes:
+                q = property_quote.read(str(quotes[0]))
+                values = property_quote.prefill(values, q.get("answers", {}))
+        except Exception:
+            pass
         self.app.ui(self._loaded, values)
 
     def _loaded(self, values):
