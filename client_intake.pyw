@@ -820,6 +820,11 @@ class EmailDialog(Panel):
         # the bound policy's details (Tracker) fill the policy emails before the quote does
         self.policy_values = policy_ui.email_values(folder)
         self.templates = emails.load_templates()
+        ctype = app.client_type_of.get(folder, "").lower()
+        wanted = (template or "quote-{type}.html").format(type=ctype)
+        # Home / Tenant show their own emails only; "Bundle with Auto" adds the auto + home / tenant ones
+        self.bundle = tk.BooleanVar(value=bool(template) and ctype in ("home", "tenant")
+                                    and "auto" in emails.lines_of(wanted))
         self.by_label = self._labels()
 
         self.grid_columnconfigure(0, weight=2, uniform="cols")
@@ -834,8 +839,9 @@ class EmailDialog(Panel):
 
         ctk.CTkLabel(left, text="Template", font=font(13, "bold"), text_color=TEXT) \
             .grid(row=0, column=0, sticky="w", padx=p, pady=(p, SP / 2))
-        ctype = app.client_type_of.get(folder, "").lower()
-        wanted = (template or "quote-{type}.html").format(type=ctype)
+        if ctype in ("home", "tenant"):
+            ctk.CTkCheckBox(left, text="Bundle with Auto", variable=self.bundle, font=font(13), text_color=TEXT,
+                            fg_color=PRIMARY, hover_color=PRIMARY_HOVER, command=self.bundle_changed)                 .grid(row=0, column=0, sticky="e", padx=p, pady=(p, SP / 2))
         start = next((l for l, t in self.by_label.items() if t.file == wanted),
                      next((l for l, t in self.by_label.items() if t.file == f"quote-{ctype}.html"),
                           next(iter(self.by_label))))
@@ -1087,8 +1093,22 @@ class EmailDialog(Panel):
 
     def _labels(self):
         """Dropdown text for each template: "Quote accepted  ·  Auto quote accepted ..." (edited ones marked)."""
+        ctype = self.app.client_type_of.get(self.folder, "").lower()
+        shown = [t for t in self.templates if emails.fits(t.file, ctype, self.bundle.get())] or self.templates
         return {(f"{t.group[3:]}  ·  {t.name}" if t.group[:1].isdigit() else t.name) + ("  (edited)" if t.custom else ""): t
-                for t in self.templates}
+                for t in shown}
+
+    def bundle_changed(self):
+        """"Bundle with Auto" ticked / unticked: refill the template list and keep the same email if it still fits."""
+        file = self.template.file
+        self.by_label = self._labels()
+        self.template_menu.configure(values=list(self.by_label))
+        ctype = self.app.client_type_of.get(self.folder, "").lower()
+        label = next((l for l, t in self.by_label.items() if t.file == file),
+                     next((l for l, t in self.by_label.items() if t.file == f"quote-{ctype}.html"),
+                          next(iter(self.by_label))))
+        self.choice.set(label)
+        self.on_template()
 
     def edit_template(self):
         """Open the editor for the chosen template; this page picks up the new wording when it closes."""

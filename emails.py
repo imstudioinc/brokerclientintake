@@ -239,3 +239,32 @@ def save_custom(template, subject, body_html):
 def reset_custom(template):
     """Go back to the original wording: delete your edited copy."""
     (USER_DIR / template.file).unlink(missing_ok=True)
+
+
+# ---------- which templates belong to which quote ----------
+LINES = ("auto", "home", "tenant", "commercial")
+AUTO_ONLY = {"pink-card.html", "temp-pink-card.html", "ab-optional-declined.html",
+             "uw-new-driver.html", "uw-high-deductible.html"}
+
+
+def lines_of(file):
+    """The lines of business a template is about, from its file name: {"auto"}, {"tenant"}, {"auto", "tenant"} ...
+    Empty = fits any quote (down payment, billing)."""
+    if file in AUTO_ONLY:
+        return {"auto"}
+    return {w for w in re.split(r"[-.]", file) if w in LINES}
+
+
+def fits(file, kind, bundle=False):
+    """Does this template belong on a `kind` client's Write email page?
+    Auto: auto and auto + home / tenant. Home / Tenant: that line only, plus the auto bundle when `bundle`.
+    Commercial: commercial only. Other / unknown kinds see everything."""
+    kind = (kind or "").lower()
+    lines = lines_of(file)
+    if kind not in LINES or not lines:
+        return True
+    if kind == "auto":
+        return "auto" in lines
+    if kind == "commercial":
+        return lines == {"commercial"}
+    return lines == {kind} or (bundle and "auto" in lines and lines <= {"auto", kind})
