@@ -1,7 +1,7 @@
-"""The client's own details read from the quote and the DASH report.
+"""The client's own details read from the quote, the DASH report and the MVR.
 
 The quote has the name, licence #, date of birth, phone and email (top right of page 1);
-the DASH report has the name, licence # and date of birth. Missing profile details are filled
+the DASH report and the MVR have the name, licence # and date of birth (never a phone or email). Missing profile details are filled
 from them (never overwritten), and anything that doesn't match the profile - or that the quote
 and DASH disagree on - becomes a warning. Runs each time the client is shown, so details appear
 as soon as a new document lands in the folder. Each PDF is read once per change (cached).
@@ -45,20 +45,35 @@ def _phone(text):
 
 
 def read_dash(path):
-    """[{name, dln, birth}] - one driver per DASH report."""
+    """[{name, dln, birth}] - one driver per DASH report. A header that can't be read still gives the
+    licence # and birth date (the name is then empty)."""
     with _plumber().open(path) as pdf:
-        text = pdf.pages[0].extract_text() or ""
+        text = "\n".join((p.extract_text() or "") for p in pdf.pages[:2])
     name = re.search(r"DRIVER REPORT\s*\n(.+?)\s+Report Date:", text)
-    if not name:
-        return []
-    name = name.group(1).strip().upper()
+    name = name.group(1).strip().upper() if name else ""
     if "," in name:                                  # "LAST, FIRST" -> "FIRST LAST"
         last, first = name.split(",", 1)
         name = f"{first.strip()} {last.strip()}"
-    dln = re.search(r"DLN:\s*([A-Z0-9-]+)", text)
-    birth = re.search(r"Date of Birth:\s*(\d{4}-\d{2}-\d{2})", text)
+    dln = re.search(r"DLN:?\s*([A-Z][0-9-]{12,})", text)
+    birth = re.search(r"Date\s+of\s+Birth:?\s*(\d{4}-\d{2}-\d{2})", text)
+    if not (name or dln or birth):
+        return []
     return [{"name": name, "dln": format_dln(dln.group(1)) if dln else "",
              "birth": birth.group(1) if birth else ""}]
+
+
+def read_mvr(path):
+    """[{name, dln, birth}] from the MVR (text, scan or photo; read once per file)."""
+    import mvr
+    m = mvr.read(str(path))
+    name = (m.get("name") or "").upper()
+    if "," in name:
+        last, first = name.split(",", 1)
+        name = f"{first.strip()} {last.strip()}"
+    if not (name or m.get("licence") or m.get("birth")):
+        return []
+    return [{"name": name, "dln": format_dln(m.get("licence") or ""),
+             "birth": m["birth"].isoformat() if m.get("birth") else ""}]
 
 
 def _quote_contact(path):
@@ -131,10 +146,15 @@ def check(folder, docs, info):
     if person and (len(dash_people) == 1 or _same_person(name, person["name"], dln, person["dln"])):
         found.append(("DASH", person))
 
+    mvr_people = [p for f in docs.get("MVR") or [] for p in (_cached(f, read_mvr) or [])]
+    person = _the_client(mvr_people, name, dln)
+    if person and (len(mvr_people) == 1 or _same_person(name, person["name"], dln, person["dln"])):
+        found.append(("MVR", person))
+
     fill, warnings = {}, []
     differ = {}                                   # (label, shown value, profile value) -> sources
     for source, p in found:
-        if p["name"] and not _same_name(name, p["name"]):
+        if source != "MVR" and p["name"] and not _same_name(name, p["name"]):
             differ.setdefault(("Name", p["name"], name), []).append(source)
     for key, label in FIELDS:
         values = [(s, p[key]) for s, p in found if p.get(key)]
