@@ -1,7 +1,9 @@
-"""ARS entry page: the DASH report and the MVR turned into what to type into Applied Rating - the driver
-(licence number, class, G1 / G2 / G dates), the Claims form (one card per claim, Copy next to each value), the
-Convictions, and the insurance history (first insured, continuous since, lapses with months, cancellations).
-Works with only a DASH or only an MVR too. See ars.py for the rules.
+"""ARS entry page: the DASH report and the MVR turned into what to type into Applied Rating.
+
+One section at a time (tabs): Driver (licence number, class, G1 / G2 / G dates), Claims, Convictions and
+Gaps & history. Every record is a small card of label / value pairs: click a value to copy it. Amber boxes
+only where something needs checking; items too old to enter are folded away. Works with only a DASH or only
+an MVR too. See ars.py for the rules.
 """
 import sys
 import threading
@@ -18,6 +20,10 @@ from carriers_ui import copy
 from panel import Panel
 
 WARN = ("#B45309", "#FBBF24")
+WARN_SOFT = ("#FEF6E7", "#2E2717")
+DANGER_SOFT = ("#FDECEC", "#2D1A1A")
+GOOD_SOFT = ("#E8F5EC", "#16291D")
+TAB_ON = ("#FFFFFF", "#44566B")          # the open tab: clearly lighter than the others
 
 
 class ArsEntryPage(Panel):
@@ -25,45 +31,55 @@ class ArsEntryPage(Panel):
         super().__init__(app)
         self.app, self.folder = app, Path(folder)
         ui = self.ui = sys.modules[type(app).__module__]
-        self.title(f"ARS entry from DASH and MVR - {self.folder.name}")
+        self.title(f"ARS entry - {self.folder.name}")
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
-        self.text = ""
+        self.grid_rowconfigure(3, weight=1)
+        self.text, self.data, self.tab_names, self.body = "", {}, {}, None
 
+        # ----- top bar: which DASH, which MVR, and the one main action
         top = ctk.CTkFrame(self, fg_color="transparent")
-        top.grid(row=0, column=0, sticky="ew", padx=ui.SP, pady=(0, 2 * ui.SP))
+        top.grid(row=0, column=0, sticky="ew", padx=ui.SP, pady=(0, ui.SP))
         found = review.find_docs(self.folder)
         self.dashes, self.mvrs = found["dash"], found["mvr"]
-        ctk.CTkLabel(top, text="DASH report", font=ui.font(13, "bold"), text_color=ui.TEXT).pack(side="left")
+        ctk.CTkLabel(top, text="DASH", font=ui.font(13, "bold"), text_color=ui.MUTED).pack(side="left")
         self.choice = tk.StringVar(value=self.dashes[0].name if self.dashes else "(none in the folder)")
         ctk.CTkOptionMenu(top, values=[p.name for p in self.dashes] or ["(none in the folder)"],
-                          variable=self.choice, width=420, height=34, font=ui.font(12), fg_color=ui.SURFACE_ALT,
-                          button_color=ui.PRIMARY, button_hover_color=ui.PRIMARY_HOVER, text_color=ui.TEXT,
-                          dynamic_resizing=False, command=lambda _: self.load()).pack(side="left", padx=ui.SP)
-        self.copy_all = ctk.CTkButton(top, text="Copy all as text", height=34, width=150, font=ui.font(13, "bold"),
-                                      fg_color=ui.PRIMARY, hover_color=ui.PRIMARY_HOVER,
+                          variable=self.choice, width=380, height=34, font=ui.font(12), fg_color=ui.SURFACE_ALT,
+                          button_color=ui.SURFACE_ALT, button_hover_color=ui.BORDER, text_color=ui.TEXT,
+                          dynamic_resizing=False, command=lambda _: self.load()).pack(side="left", padx=(ui.SP, 2 * ui.SP))
+        self.mvr_label = ctk.CTkLabel(top, text="", font=ui.font(12), text_color=ui.MUTED)
+        self.mvr_label.pack(side="left")
+        self.copy_all = ctk.CTkButton(top, text="Copy everything as text", height=34, width=190,
+                                      font=ui.font(13, "bold"), fg_color=ui.PRIMARY, hover_color=ui.PRIMARY_HOVER,
                                       command=lambda: self.text and copy(app, self.text, self.copy_all))
         self.copy_all.pack(side="right")
-        self.mvr_label = ctk.CTkLabel(top, text="", font=ui.font(12), text_color=ui.MUTED)
-        self.mvr_label.pack(side="right", padx=ui.SP)
-        self.body = None
+
+        # ----- tabs (filled when the documents are read) and a one-line hint
+        self.tab_bar = ctk.CTkSegmentedButton(
+            self, values=["Reading…"], height=38, font=ui.font(14, "bold"), selected_color=TAB_ON,
+            selected_hover_color=TAB_ON, unselected_color=ui.SURFACE_ALT, unselected_hover_color=ui.BORDER,
+            text_color=ui.TEXT, command=self.draw_tab)
+        self.tab_bar.grid(row=1, column=0, sticky="w", padx=ui.SP, pady=(0, ui.SP))
+        self.hint = ctk.CTkLabel(self, text="", font=ui.font(12), text_color=ui.MUTED, anchor="w", justify="left")
+        self.hint.grid(row=2, column=0, sticky="ew", padx=ui.SP * 1.5, pady=(0, ui.SP))
         self.bind("<Escape>", lambda e: self.destroy())
         self.load()
 
     # ---------- loading ----------
-    def _message(self, text, color=None):
-        ui = self.ui
-        self._new_body()
-        ctk.CTkLabel(self.body, text=text, font=ui.font(13), text_color=color or ui.MUTED, justify="left",
-                     anchor="w", wraplength=760).grid(row=0, column=0, sticky="w", padx=2 * ui.SP, pady=2 * ui.SP)
-
     def _new_body(self):
         if self.body is not None:
             self.body.destroy()
         self.body = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self.body.grid(row=1, column=0, sticky="nsew")
-        self.body.grid_columnconfigure(0, weight=3, uniform="cols")
-        self.body.grid_columnconfigure(1, weight=2, uniform="cols")
+        self.body.grid(row=3, column=0, sticky="nsew")
+        self.body.grid_columnconfigure(0, weight=1)
+
+    def _message(self, text, color=None):
+        ui = self.ui
+        self.tab_bar.grid_remove()
+        self.hint.configure(text="")
+        self._new_body()
+        ctk.CTkLabel(self.body, text=text, font=ui.font(14), text_color=color or ui.MUTED, justify="left",
+                     anchor="w", wraplength=760).grid(row=0, column=0, sticky="w", padx=2 * ui.SP, pady=2 * ui.SP)
 
     def load(self):
         path = next((p for p in self.dashes if p.name == self.choice.get()), None)
@@ -103,238 +119,269 @@ class ArsEntryPage(Panel):
             self.show(**result["v"])
         wait()
 
-    # ---------- drawing ----------
-    def _card(self, parent, row, title, column=0):
+    # ---------- building blocks ----------
+    def _heading(self, row, text, sub=""):
         ui = self.ui
-        card = ctk.CTkFrame(parent, fg_color=ui.SURFACE, corner_radius=12, border_width=1, border_color=ui.BORDER)
-        card.grid(row=row, column=column, sticky="new", padx=ui.SP, pady=(0, 2 * ui.SP))
-        card.grid_columnconfigure(1, weight=1)
-        if title:
-            ctk.CTkLabel(card, text=title.upper(), font=ui.font(11, "bold"), text_color=ui.MUTED, anchor="w") \
-                .grid(row=0, column=0, columnspan=3, sticky="w", padx=2 * ui.SP, pady=(1.5 * ui.SP, ui.SP / 2))
+        box = ctk.CTkFrame(self.body, fg_color="transparent")
+        box.grid(row=row, column=0, sticky="ew", padx=ui.SP, pady=(ui.SP, ui.SP))
+        ctk.CTkLabel(box, text=text, font=ui.font(18, "bold"), text_color=ui.TEXT, anchor="w").pack(anchor="w")
+        if sub:
+            ctk.CTkLabel(box, text=sub, font=ui.font(13), text_color=ui.MUTED, anchor="w", justify="left",
+                         wraplength=800).pack(anchor="w")
+
+    def _card(self, row, parent=None):
+        ui = self.ui
+        card = ctk.CTkFrame(parent or self.body, fg_color=ui.SURFACE, corner_radius=12, border_width=1,
+                            border_color=ui.BORDER)
+        card.grid(row=row, column=0, sticky="ew", padx=ui.SP, pady=(0, ui.SP * 1.5))
+        card.grid_columnconfigure((0, 1), weight=1, uniform="cell")
         return card
 
-    def _field(self, card, row, label, value, color=None, wrap=380):
-        """Label | value | Copy."""
+    def _pill(self, parent, text, kind):
+        """A small status label: bad (red), good (green), warn (amber), plain."""
         ui = self.ui
-        ctk.CTkLabel(card, text=label, font=ui.font(13), text_color=ui.MUTED, anchor="w") \
-            .grid(row=row, column=0, sticky="w", padx=(2 * ui.SP, ui.SP), pady=1)
-        ctk.CTkLabel(card, text=value, font=ui.font(13, "bold"), text_color=color or ui.TEXT, anchor="w",
-                     justify="left", wraplength=wrap).grid(row=row, column=1, sticky="w", pady=1)
-        b = ctk.CTkButton(card, text="Copy", width=56, height=24, font=ui.font(12), fg_color="transparent",
-                          border_width=1, border_color=ui.BORDER, text_color=ui.TEXT, hover_color=ui.SURFACE_ALT)
-        b.configure(command=lambda: copy(self.app, value.replace(",", "") if label.endswith("$") else value, b))
-        b.grid(row=row, column=2, sticky="e", padx=(ui.SP, 2 * ui.SP), pady=1)
-        return row + 1
+        bg, fg = {"bad": (DANGER_SOFT, ui.DANGER), "good": (GOOD_SOFT, ui.SUCCESS),
+                  "warn": (WARN_SOFT, WARN)}.get(kind, (ui.SURFACE_ALT, ui.MUTED))
+        return ctk.CTkLabel(parent, text=f" {text} ", font=ui.font(12, "bold"), text_color=fg, fg_color=bg,
+                            corner_radius=8, height=24)
 
-    def _notes(self, card, row, notes, wrap=520):
+    def _record(self, row, title, badge=None, kind="plain", sub="", fields=(), notes=(), footer="", parent=None):
+        """One card: title + status pill, a muted line, label / value pairs (click a value to copy), amber notes."""
         ui = self.ui
-        for n in notes:
-            ctk.CTkLabel(card, text="•  " + n, font=ui.font(12), text_color=WARN, anchor="w", justify="left",
-                         wraplength=wrap).grid(row=row, column=0, columnspan=3, sticky="w", padx=2 * ui.SP, pady=1)
-            row += 1
-        return row
-
-    def show(self, claims, hist, drv, convs, susp):
-        ui = self.ui
-        self.text = ars.as_text(claims, hist, drv, convs, susp)
-        self._new_body()
-        left = ctk.CTkFrame(self.body, fg_color="transparent")
-        left.grid(row=0, column=0, sticky="new")
-        left.grid_columnconfigure(0, weight=1)
-        right = ctk.CTkFrame(self.body, fg_color="transparent")
-        right.grid(row=0, column=1, sticky="new")
-        right.grid_columnconfigure(0, weight=1)
-        row = 0
-        if claims is not None:
-            box = ctk.CTkFrame(left, fg_color="transparent")
-            box.grid(row=0, column=0, sticky="new")
-            box.grid_columnconfigure(0, weight=1)
-            self._claims(box, claims)
-            row = 1
-        else:
-            self._missing(left, 0, "No DASH report in the folder - no claims or insurance history to show.")
-            row = 1
-        if convs is not None:
-            box = ctk.CTkFrame(left, fg_color="transparent")
-            box.grid(row=row, column=0, sticky="new")
-            box.grid_columnconfigure(0, weight=1)
-            self._convictions(box, convs, susp)
-        else:
-            self._missing(left, row, "No MVR in the folder - no convictions or licence dates to show.")
-        base = 0
-        if drv is not None:
-            self._driver(right, drv)
-            base = 2
-        if hist is not None:
-            self._history(right, hist, base)
-
-    def _missing(self, parent, row, text):
-        ui = self.ui
-        ctk.CTkLabel(parent, text=text, font=ui.font(13), text_color=ui.MUTED, anchor="w", justify="left",
-                     wraplength=520).grid(row=row, column=0, sticky="w", padx=ui.SP, pady=(0, 2 * ui.SP))
-
-    def _driver(self, right, drv):
-        ui = self.ui
-        ctk.CTkLabel(right, text="Driver (from the MVR)", font=ui.font(17, "bold"), text_color=ui.TEXT, anchor="w") \
-            .grid(row=0, column=0, sticky="w", padx=ui.SP, pady=(0, ui.SP))
-        card = self._card(right, 1, "Licence details")
-        r = self._field(card, 1, "First name", drv["first"], wrap=200)
-        r = self._field(card, r, "Last name", drv["last"], wrap=200)
-        r = self._field(card, r, "Date of birth", drv["birth"] or "(not read)", wrap=200)
-        r = self._field(card, r, "Licence #", drv["licence"] or "(not read)", wrap=200)
-        r = self._field(card, r, "Licence class", drv["class"] or "(not read)", wrap=200)
-        for label, key in (("G1 date", "g1"), ("G2 date", "g2"), ("G date", "g")):
-            if drv[key]:
-                r = self._field(card, r, label, drv[key], wrap=200)
-        if drv["demerits"]:
-            ctk.CTkLabel(card, text=f"{drv['demerits']} demerit points", font=ui.font(12), text_color=WARN,
-                         anchor="w").grid(row=r, column=0, columnspan=3, sticky="w", padx=2 * ui.SP)
+        card = self._card(row, parent)
+        head = ctk.CTkFrame(card, fg_color="transparent")
+        head.grid(row=0, column=0, columnspan=2, sticky="ew", padx=2 * ui.SP, pady=(1.5 * ui.SP, 0))
+        ctk.CTkLabel(head, text=title, font=ui.font(16, "bold"), text_color=ui.TEXT, anchor="w").pack(side="left")
+        if badge:
+            self._pill(head, badge, kind).pack(side="left", padx=ui.SP)
+        r = 1
+        if sub:
+            ctk.CTkLabel(card, text=sub, font=ui.font(12), text_color=ui.MUTED, anchor="w", justify="left",
+                         wraplength=780).grid(row=r, column=0, columnspan=2, sticky="w", padx=2 * ui.SP)
             r += 1
-        r = self._notes(card, r, drv["notes"], wrap=340)
-        ctk.CTkFrame(card, fg_color="transparent", width=1, height=ui.SP).grid(row=r, column=0)
+        ctk.CTkFrame(card, fg_color=ui.BORDER, height=1).grid(row=r, column=0, columnspan=2, sticky="ew",
+                                                              padx=2 * ui.SP, pady=(ui.SP, ui.SP / 2))
+        r += 1
+        for i, (label, value, color) in enumerate(fields):
+            cell = ctk.CTkFrame(card, fg_color="transparent")
+            cell.grid(row=r + i // 2, column=i % 2, sticky="ew", padx=(2 * ui.SP, ui.SP), pady=(ui.SP / 2, 0))
+            ctk.CTkLabel(cell, text=label, font=ui.font(12), text_color=ui.MUTED, anchor="w").pack(anchor="w", padx=(6, 0))
+            self._value(cell, label, value, color).pack(anchor="w", fill="x")
+        r += (len(fields) + 1) // 2
+        if footer:
+            ctk.CTkLabel(card, text=footer, font=ui.font(12), text_color=ui.MUTED, anchor="w", justify="left",
+                         wraplength=780).grid(row=r, column=0, columnspan=2, sticky="w", padx=2 * ui.SP,
+                                              pady=(ui.SP, 0))
+            r += 1
+        if notes:
+            box = ctk.CTkFrame(card, fg_color=WARN_SOFT, corner_radius=8)
+            box.grid(row=r, column=0, columnspan=2, sticky="ew", padx=2 * ui.SP, pady=(ui.SP, 0))
+            for n in notes:
+                ctk.CTkLabel(box, text="•  " + n, font=ui.font(13), text_color=WARN, anchor="w", justify="left",
+                             wraplength=760).pack(anchor="w", padx=ui.SP * 1.5, pady=(ui.SP / 2, ui.SP / 2))
+            r += 1
+        ctk.CTkFrame(card, fg_color="transparent", height=ui.SP * 1.5, width=1).grid(row=r, column=0)
+        return card
 
-    def _convictions(self, left, convs, susp):
+    def _value(self, parent, label, value, color=None):
+        """The value is a button: click it to copy (money without commas)."""
         ui = self.ui
-        recent = [c for c in convs if not c["old"]]
-        old = [c for c in convs if c["old"]]
-        head = f"Convictions form - {len(recent)} to enter" if recent else "Convictions form - nothing to enter"
-        ctk.CTkLabel(left, text=head, font=ui.font(17, "bold"), text_color=ui.TEXT, anchor="w") \
-            .grid(row=0, column=0, sticky="w", padx=ui.SP, pady=(0, ui.SP))
-        if not recent:
-            ctk.CTkLabel(left, text=f"No convictions on the MVR in the last {ars.CONVICTION_YEARS} years.",
-                         font=ui.font(13), text_color=ui.SUCCESS, anchor="w") \
-                .grid(row=1, column=0, sticky="w", padx=ui.SP, pady=(0, 2 * ui.SP))
-        for i, c in enumerate(recent, 1):
-            card = self._card(left, i, "")
-            color = ui.DANGER if c["category"] in ("Major", "Serious") else ui.TEXT
-            ctk.CTkLabel(card, text=f"Conviction {i}", font=ui.font(15, "bold"), text_color=ui.TEXT, anchor="w") \
-                .grid(row=0, column=0, columnspan=2, sticky="w", padx=2 * ui.SP, pady=(1.5 * ui.SP, ui.SP))
-            r = self._field(card, 1, "Date (conviction)", c["date"])
-            r = self._field(card, r, "Description", c["description"])
-            r = self._field(card, r, "Seriousness", c["category"], color)
-            if c["offence"]:
-                ctk.CTkLabel(card, text=f"Offence date {c['offence']} - the conviction date is the one that counts",
-                             font=ui.font(12), text_color=ui.MUTED, anchor="w").grid(
-                    row=r, column=0, columnspan=3, sticky="w", padx=2 * ui.SP)
-                r += 1
-            r = self._notes(card, r, c["notes"])
-            ctk.CTkFrame(card, fg_color="transparent", width=1, height=ui.SP).grid(row=r, column=0)
-        n = len(recent) + 1
-        if susp:
-            card = self._card(left, n, "Licence actions on the MVR (suspensions)")
-            for j, s in enumerate(susp, 1):
-                ctk.CTkLabel(card, text=f"{s['date']}  {s['description']}", font=ui.font(13), text_color=WARN,
-                             anchor="w").grid(row=j, column=0, columnspan=3, sticky="w", padx=2 * ui.SP, pady=1)
-            ctk.CTkFrame(card, fg_color="transparent", width=1, height=ui.SP).grid(row=len(susp) + 1, column=0)
-            n += 1
-        if old:
-            card = self._card(left, n, f"Older than {ars.CONVICTION_YEARS} years - don't enter")
-            for j, c in enumerate(old, 1):
-                ctk.CTkLabel(card, text=f"{c['date']}  {c['description']} ({c['category']})", font=ui.font(12),
-                             text_color=ui.MUTED, anchor="w").grid(row=j, column=0, columnspan=3, sticky="w",
-                                                                   padx=2 * ui.SP, pady=1)
-            ctk.CTkFrame(card, fg_color="transparent", width=1, height=ui.SP).grid(row=len(old) + 1, column=0)
+        text = value or "(not read)"
+        b = ctk.CTkButton(parent, text=text, anchor="w", height=32, font=ui.font(15, "bold"),
+                          fg_color="transparent", hover_color=ui.SURFACE_ALT, text_color=color or ui.TEXT,
+                          corner_radius=6, border_width=0, cursor="hand2")
+        if value:
+            copy_text = value.replace(",", "") if label.endswith("$") else value
+            b.configure(command=lambda: copy(self.app, copy_text, b))
+        return b
 
-    def _claims(self, left, entries):
+    def _empty(self, row, text, good=True):
         ui = self.ui
+        box = ctk.CTkFrame(self.body, fg_color=GOOD_SOFT if good else ui.SURFACE_ALT, corner_radius=10)
+        box.grid(row=row, column=0, sticky="ew", padx=ui.SP, pady=(0, ui.SP * 1.5))
+        ctk.CTkLabel(box, text=text, font=ui.font(14), text_color=ui.SUCCESS if good else ui.MUTED, anchor="w",
+                     justify="left", wraplength=780).pack(anchor="w", padx=2 * ui.SP, pady=1.5 * ui.SP)
+
+    def _fold(self, row, title, lines):
+        """A closed list ('older than N years - don't enter'); click the title to open it."""
+        ui = self.ui
+        wrap = ctk.CTkFrame(self.body, fg_color="transparent")
+        wrap.grid(row=row, column=0, sticky="ew", padx=ui.SP, pady=(0, ui.SP))
+        body = ctk.CTkFrame(wrap, fg_color=ui.SURFACE, corner_radius=10, border_width=1, border_color=ui.BORDER)
+        for text in lines:
+            ctk.CTkLabel(body, text=text, font=ui.font(13), text_color=ui.MUTED, anchor="w", justify="left",
+                         wraplength=780).pack(anchor="w", padx=2 * ui.SP, pady=(ui.SP / 2, ui.SP / 2))
+        state = {"open": False}
+        head = ctk.CTkButton(wrap, text=f"▸   {title}", anchor="w", height=36, font=ui.font(13, "bold"),
+                             fg_color="transparent", hover_color=ui.SURFACE_ALT, text_color=ui.MUTED,
+                             border_width=0, cursor="hand2")
+
+        def toggle():
+            state["open"] = not state["open"]
+            head.configure(text=("▾   " if state["open"] else "▸   ") + title)
+            if state["open"]:
+                body.grid(row=1, column=0, sticky="ew")
+            else:
+                body.grid_remove()
+        head.configure(command=toggle)
+        head.grid(row=0, column=0, sticky="ew")
+        wrap.grid_columnconfigure(0, weight=1)
+
+    # ---------- the tabs ----------
+    def show(self, claims, hist, drv, convs, susp):
+        self.data = {"claims": claims, "hist": hist, "drv": drv, "convs": convs, "susp": susp}
+        self.text = ars.as_text(claims, hist, drv, convs, susp)
+        names = {}
+        if drv is not None:
+            names["Driver"] = "driver"
+        if claims is not None:
+            n = len([c for c in claims if not c["old"]])
+            names[f"Claims  {n}" if n else "Claims"] = "claims"
+        if convs is not None:
+            n = len([c for c in convs if not c["old"]])
+            names[f"Convictions  {n}" if n else "Convictions"] = "convictions"
+        if hist is not None:
+            n = len(hist["lapses"])
+            names[f"Gaps & history  {n}" if n else "Gaps & history"] = "history"
+        self.tab_names = names
+        missing = []
+        if claims is None:
+            missing.append("No DASH report in the folder, so no claims or gaps")
+        if drv is None:
+            missing.append("No MVR in the folder, so no driver details or convictions")
+        self.hint.configure(text="Click any value to copy it.   " + ("   ·   ".join(missing) if missing else ""))
+        self.tab_bar.configure(values=list(names))
+        self.tab_bar.grid()
+        first = next(iter(names))
+        self.tab_bar.set(first)
+        self.draw_tab(first)
+
+    def draw_tab(self, name):
+        key = self.tab_names.get(name)
+        self._new_body()
+        self.hint_visible = True
+        {"driver": self._tab_driver, "claims": self._tab_claims, "convictions": self._tab_convictions,
+         "history": self._tab_history}[key]()
+
+    def _tab_driver(self):
+        d = self.data["drv"]
+        self._heading(0, "Driver", "From the MVR. Type these on the ARS driver screen.")
+        fields = [("First name", d["first"], None), ("Last name", d["last"], None),
+                  ("Date of birth", d["birth"], None), ("Licence #", d["licence"], None),
+                  ("Licence class", d["class"], None)]
+        for label, key in (("G1 date", "g1"), ("G2 date", "g2"), ("G date", "g")):
+            if d[key]:
+                fields.append((label, d[key], None))
+        notes = list(d["notes"])
+        if d["demerits"]:
+            notes.insert(0, f"{d['demerits']} demerit points on the licence.")
+        self._record(1, f"{d['first']} {d['last']}".strip() or "Driver",
+                     badge=d["status"].capitalize() if d["status"] else None,
+                     kind="good" if d["status"] == "LICENCED" else "bad", fields=fields, notes=notes)
+
+    def _tab_claims(self):
+        ui = self.ui
+        entries = self.data["claims"]
         recent = [e for e in entries if not e["old"]]
         old = [e for e in entries if e["old"]]
-        head = f"Claims form - {len(recent)} to enter" if recent else "Claims form - nothing to enter"
-        ctk.CTkLabel(left, text=head, font=ui.font(17, "bold"), text_color=ui.TEXT, anchor="w") \
-            .grid(row=0, column=0, sticky="w", padx=ui.SP, pady=(0, ui.SP))
+        faults = sum(1 for e in recent if e["chargeable"] == "At-Fault")
+        self._heading(0, f"{len(recent)} claim{'s' if len(recent) != 1 else ''} to enter",
+                      (f"{faults} at-fault, {len(recent) - faults} non-responsible. " if recent else "") +
+                      f"Claims form on the ARS driver screen, last {ars.LOOKBACK_YEARS} years.")
         if not recent:
-            ctk.CTkLabel(left, text=f"No claims on the DASH in the last {ars.LOOKBACK_YEARS} years.",
-                         font=ui.font(13), text_color=ui.MUTED, anchor="w") \
-                .grid(row=1, column=0, sticky="w", padx=ui.SP, pady=(0, 2 * ui.SP))
+            self._empty(1, f"No claims on the DASH in the last {ars.LOOKBACK_YEARS} years.")
+        row = 1
         for i, e in enumerate(recent, 1):
-            card = self._card(left, i, "")
-            charge_color = ui.DANGER if e["chargeable"] == "At-Fault" else ui.SUCCESS
-            ctk.CTkLabel(card, text=f"Claim {i}", font=ui.font(15, "bold"), text_color=ui.TEXT, anchor="w") \
-                .grid(row=0, column=0, columnspan=2, sticky="w", padx=2 * ui.SP, pady=(1.5 * ui.SP, 0))
-            sub = "  ·  ".join(x for x in (e["insurer"], f"claim # {e['claim_no']}" if e["claim_no"] else "",
-                                            e["coverage"], e["status"],
-                                            f"driver {e['driver']}" if e["driver"] else "") if x)
-            ctk.CTkLabel(card, text=sub, font=ui.font(12), text_color=ui.MUTED, anchor="w", justify="left",
-                         wraplength=520).grid(row=1, column=0, columnspan=3, sticky="w", padx=2 * ui.SP,
-                                              pady=(0, ui.SP))
-            r = self._field(card, 2, "Date", e["date"])
-            r = self._field(card, r, "Description", e["description"])
-            r = self._field(card, r, "Vehicle involved", e["vehicle"] or "(not on the DASH)")
-            r = self._field(card, r, "Chargeable", e["chargeable"], charge_color)
-            filled = [(label, e["amounts"][k]) for k, label in ars.AMOUNTS if e["amounts"][k]]
-            for label, value in filled:
-                r = self._field(card, r, label, value)
+            at_fault = e["chargeable"] == "At-Fault"
+            sub = "   ·   ".join(x for x in (e["insurer"], f"claim # {e['claim_no']}" if e["claim_no"] else "",
+                                             e["coverage"], e["status"],
+                                             f"driver {e['driver']}" if e["driver"] else "") if x)
+            fields = [("Date", e["date"], None), ("Description", e["description"], None),
+                      ("Vehicle involved", e["vehicle"] or "(not on the DASH)", None),
+                      ("Chargeable", e["chargeable"], ui.DANGER if at_fault else ui.SUCCESS)]
+            fields += [(label, e["amounts"][k], None) for k, label in ars.AMOUNTS if e["amounts"][k]]
             blank = [label for k, label in ars.AMOUNTS if not e["amounts"][k]]
-            ctk.CTkLabel(card, text="Leave blank: " + ", ".join(blank), font=ui.font(12), text_color=ui.MUTED,
-                         anchor="w").grid(row=r, column=0, columnspan=3, sticky="w", padx=2 * ui.SP, pady=(2, 0))
-            r = self._notes(card, r + 1, e["notes"])
-            ctk.CTkFrame(card, fg_color="transparent", width=1, height=ui.SP).grid(row=r, column=0)
+            self._record(row, f"Claim {i}", "At-fault" if at_fault else "Non-responsible",
+                         "bad" if at_fault else "good", sub, fields, e["notes"],
+                         footer=("Leave blank: " + ", ".join(blank)) if blank else "")
+            row += 1
         if old:
-            card = self._card(left, len(recent) + 1, f"Older than {ars.LOOKBACK_YEARS} years - don't enter")
-            for j, e in enumerate(old, 1):
-                ctk.CTkLabel(card, text=f"{e['date']}  {e['description']} ({e['chargeable']}) - {e['insurer']}",
-                             font=ui.font(12), text_color=ui.MUTED, anchor="w") \
-                    .grid(row=j, column=0, columnspan=3, sticky="w", padx=2 * ui.SP, pady=1)
-            ctk.CTkFrame(card, fg_color="transparent", width=1, height=ui.SP).grid(row=len(old) + 1, column=0)
+            self._fold(row, f"Older than {ars.LOOKBACK_YEARS} years - don't enter ({len(old)})",
+                       [f"{e['date']}   {e['description']}  ({e['chargeable']})   {e['insurer']}" for e in old])
 
-
-    def _history(self, right, hist, base):
+    def _tab_convictions(self):
+        convs, susp = self.data["convs"], self.data["susp"]
+        recent = [c for c in convs if not c["old"]]
+        old = [c for c in convs if c["old"]]
+        self._heading(0, f"{len(recent)} conviction{'s' if len(recent) != 1 else ''} to enter",
+                      f"From the MVR, last {ars.CONVICTION_YEARS} years. The conviction date counts, not the offence date.")
+        if not recent:
+            self._empty(1, f"No convictions on the MVR in the last {ars.CONVICTION_YEARS} years.")
+        row = 1
         ui = self.ui
-        ctk.CTkLabel(right, text="Insurance history", font=ui.font(17, "bold"), text_color=ui.TEXT, anchor="w") \
-            .grid(row=base, column=0, sticky="w", padx=ui.SP, pady=(0, ui.SP))
-        card = self._card(right, base + 1, "For the driver / prior insurance")
+        for i, c in enumerate(recent, 1):
+            bad = c["category"] in ("Major", "Serious")
+            self._record(row, f"Conviction {i}", c["category"], "bad" if bad else "plain",
+                         sub=f"Offence date {c['offence']}" if c["offence"] else "",
+                         fields=[("Date (conviction)", c["date"], None), ("Description", c["description"], None),
+                                 ("Seriousness", c["category"], ui.DANGER if bad else None)],
+                         notes=c["notes"])
+            row += 1
+        if susp:
+            self._record(row, "Licence actions on the MVR", "check", "warn",
+                         fields=[(s["date"], s["description"], ui.TEXT) for s in susp],
+                         notes=["Suspensions and cancellations: ask the client about them."])
+            row += 1
+        if old:
+            self._fold(row, f"Older than {ars.CONVICTION_YEARS} years - don't enter ({len(old)})",
+                       [f"{c['date']}   {c['description']}  ({c['category']})" for c in old])
+
+    def _tab_history(self):
+        ui = self.ui
+        hist = self.data["hist"]
+        lapses = hist["lapses"]
+        self._heading(0, f"{len(lapses)} gap{'s' if len(lapses) != 1 else ''} in coverage" if lapses
+                      else "No gaps in coverage",
+                      "From the DASH. Enter the reason the client gives for each gap.")
+        row = 1
+        if not lapses and not hist["uninsured_since"]:
+            self._empty(row, "No gaps on the DASH.")
+            row += 1
+        for i, g in enumerate(lapses, 1):
+            self._record(row, f"Gap {i}", f"{g['days']} days", "warn",
+                         fields=[("From", g["from"], None), ("To", g["to"], None), ("Months", str(g["months"]), None)])
+            row += 1
+        if hist["uninsured_since"]:
+            self._record(row, "Not insured now", "since " + hist["uninsured_since"], "bad",
+                         notes=["The latest policy has ended. Ask when the client is insured from."])
+            row += 1
+
+        self._heading(row, "Prior insurance", "For the driver / prior insurance screen.")
+        row += 1
         cur = hist["current"]
         if not cur:
-            ctk.CTkLabel(card, text="No policies on the DASH - no insurance history (new driver).",
-                         font=ui.font(13), text_color=ui.TEXT, anchor="w", wraplength=380, justify="left") \
-                .grid(row=1, column=0, columnspan=3, sticky="w", padx=2 * ui.SP, pady=(0, ui.SP))
+            self._empty(row, "No policies on the DASH: no insurance history (treated as a new driver).", good=False)
+            row += 1
         else:
-            r = self._field(card, 1, "Prior insurer", cur["insurer"], wrap=200)
-            r = self._field(card, r, "Effective", ars.ars_date(cur["start"]), wrap=200)
-            r = self._field(card, r, "Expiry", ars.ars_date(cur["end"]), wrap=200)
-            ctk.CTkLabel(card, text=f"Status on the DASH: {cur['status'] or '?'}", font=ui.font(12),
-                         text_color=ui.MUTED, anchor="w").grid(row=r, column=0, columnspan=3, sticky="w",
-                                                               padx=2 * ui.SP, pady=(0, ui.SP))
-            r = self._field(card, r + 1, "First insured", hist["first_insured"], wrap=200)
+            fields = [("Prior insurer", cur["insurer"], None), ("Effective", ars.ars_date(cur["start"]), None),
+                      ("Expiry", ars.ars_date(cur["end"]), None), ("First insured", hist["first_insured"], None)]
             if hist["continuous_since"]:
-                r = self._field(card, r, "Continuous since", hist["continuous_since"], wrap=200)
-            if hist["uninsured_since"]:
-                r = self._field(card, r, "Not insured since", hist["uninsured_since"], ui.DANGER, wrap=200)
-            ctk.CTkFrame(card, fg_color="transparent", width=1, height=ui.SP).grid(row=r, column=0)
+                fields.append(("Continuous since", hist["continuous_since"], None))
+            active = (cur["status"] or "").lower() == "active"
+            self._record(row, cur["insurer"], cur["status"] or "status unknown", "good" if active else "plain",
+                         fields=fields)
+            row += 1
 
-        card = self._card(right, base + 2, "Lapses (gaps in coverage)")
-        r = 1
-        if not hist["lapses"] and not hist["uninsured_since"]:
-            ctk.CTkLabel(card, text="No gaps on the DASH.", font=ui.font(13), text_color=ui.SUCCESS, anchor="w") \
-                .grid(row=r, column=0, columnspan=3, sticky="w", padx=2 * ui.SP)
-            r += 1
-        for g in hist["lapses"]:
-            r = self._field(card, r, "From", g["from"], wrap=200)
-            r = self._field(card, r, "To", g["to"], wrap=200)
-            r = self._field(card, r, "Months", str(g["months"]), wrap=200)
-            ctk.CTkLabel(card, text=f"{g['days']} days - enter the reason the client gives", font=ui.font(12),
-                         text_color=WARN, anchor="w").grid(row=r, column=0, columnspan=3, sticky="w",
-                                                           padx=2 * ui.SP, pady=(0, ui.SP))
-            r += 1
-        ctk.CTkFrame(card, fg_color="transparent", width=1, height=ui.SP).grid(row=r, column=0)
-
-        card = self._card(right, base + 3, "Cancellations")
-        r = 1
-        if not hist["cancellations"]:
-            ctk.CTkLabel(card, text="None on the DASH.", font=ui.font(13), text_color=ui.SUCCESS, anchor="w") \
-                .grid(row=r, column=0, columnspan=3, sticky="w", padx=2 * ui.SP)
-            r += 1
-        for c in hist["cancellations"]:
-            bad = "non-pay" in c["reason"].lower()
-            r = self._field(card, r, c["date"], f"{c['insurer']}" + (f" - {c['reason']}" if c["reason"] else ""),
-                            ui.DANGER if bad else None, wrap=200)
-        ctk.CTkFrame(card, fg_color="transparent", width=1, height=ui.SP).grid(row=r, column=0)
-
-        card = self._card(right, base + 4, "All policies on the DASH")
-        for j, p in enumerate(hist["policies"], 1):
-            ctk.CTkLabel(card, text=f"{ars.ars_date(p['start'])} - {ars.ars_date(p['end'])}   {p['insurer']}"
-                                    f"   ({p['status'] or '?'})", font=ui.font(12), text_color=ui.TEXT, anchor="w",
-                         justify="left", wraplength=420) \
-                .grid(row=j, column=0, columnspan=3, sticky="w", padx=2 * ui.SP, pady=1)
-        ctk.CTkFrame(card, fg_color="transparent", width=1, height=ui.SP).grid(row=len(hist["policies"]) + 1, column=0)
+        cancels = hist["cancellations"]
+        if cancels:
+            self._heading(row, f"{len(cancels)} cancellation{'s' if len(cancels) != 1 else ''}")
+            row += 1
+            for c in cancels:
+                bad = "non-pay" in c["reason"].lower()
+                self._record(row, c["insurer"], c["reason"] or "cancelled", "bad" if bad else "warn",
+                             fields=[("Date", c["date"], None)])
+                row += 1
+        if hist["policies"]:
+            self._fold(row, f"All policies on the DASH ({len(hist['policies'])})",
+                       [f"{ars.ars_date(p['start'])} - {ars.ars_date(p['end'])}   {p['insurer']}   ({p['status'] or '?'})"
+                        for p in hist["policies"]])
