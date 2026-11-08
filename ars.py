@@ -8,7 +8,8 @@ Guidance only - the broker checks each entry against the DASH.
 import datetime
 import re
 
-LOOKBACK_YEARS = 6
+LOOKBACK_YEARS = 6               # claims
+CONVICTION_YEARS = 3             # convictions (the conviction date counts, not the offence date)
 AMOUNTS = (("tp_bi", "TP/BI $"), ("tp_pd", "TP/PD $"), ("ab", "AB $"), ("coll", "Coll $"), ("other_pd", "Other PD $"))
 AB_CODES = set(range(40, 50)) | set(range(80, 90))
 DCPD_CODES = {16, 18}
@@ -169,7 +170,8 @@ def history(details, today=None):
     out["continuous_since"] = ars_date(since) if active else ""
     for g in details["gaps"]:
         days = (g["to"] - g["from"]).days if g["to"] and g["from"] else 0
-        out["lapses"].append({"from": ars_date(g["from"]), "to": ars_date(g["to"]), "days": days})
+        out["lapses"].append({"from": ars_date(g["from"]), "to": ars_date(g["to"]), "days": days,
+                              "months": max(1, round(days / 30.4)) if days else 0})
     for p in pols:
         if p["status"].lower().startswith("cancel"):
             reason = p["status"].split("-", 1)[1].strip() if "-" in p["status"] else ""
@@ -177,29 +179,117 @@ def history(details, today=None):
     return out
 
 
-def as_text(entries, hist):
-    """Plain text of everything (for a note or to paste somewhere)."""
-    lines = ["CLAIMS (ARS)"]
-    for i, e in enumerate([e for e in entries if not e["old"]], 1):
-        amts = ", ".join(f"{label} {e['amounts'][k]}" for k, label in AMOUNTS if e["amounts"][k])
-        lines.append(f"{i}. {e['date']} - {e['description']} - {e['chargeable']} - {e['vehicle']}"
-                     + (f" - {amts}" if amts else "") + f" ({e['insurer']}, claim {e['claim_no'] or '?'})")
-    if len(lines) == 1:
-        lines.append("None in the last 6 years.")
-    lines.append("")
-    lines.append("INSURANCE HISTORY")
-    cur = hist["current"]
-    if cur:
-        lines.append(f"Latest policy: {cur['insurer']} {ars_date(cur['start'])} to {ars_date(cur['end'])} ({cur['status']})")
-        lines.append(f"First insured: {hist['first_insured']}")
-        if hist["continuous_since"]:
-            lines.append(f"Continuously insured since: {hist['continuous_since']}")
-        if hist["uninsured_since"]:
-            lines.append(f"Not insured since: {hist['uninsured_since']}")
+# ---------- from the MVR: the driver, the convictions, the suspensions ----------
+def _nice_name(name):
+    """'DOE, JOHN ALEX' -> ('John Alex', 'Doe')."""
+    if "," in (name or ""):
+        last, first = [x.strip() for x in name.split(",", 1)]
     else:
-        lines.append("No policies on the DASH (no insurance history).")
-    for g in hist["lapses"]:
-        lines.append(f"Lapse: {g['from']} to {g['to']} ({g['days']} days)")
-    for c in hist["cancellations"]:
-        lines.append(f"Cancelled {c['date']} by {c['insurer']}" + (f" - {c['reason']}" if c["reason"] else ""))
-    return "\n".join(lines)
+        parts = (name or "").split()
+        first, last = " ".join(parts[:-1]), parts[-1] if parts else ""
+    return first.title(), last.title()
+
+
+def licence_text(number):
+    """A1234-12345-12345 (the number as Ontario prints it)."""
+    n = re.sub(r"[^A-Z0-9]", "", (number or "").upper())
+    return f"{n[0]}{n[1:5]}-{n[5:10]}-{n[10:15]}" if len(n) == 15 else number or ""
+
+
+def driver(m, details=None):
+    """The driver's licence facts for the ARS driver screen, from the MVR (and the DASH for the name)."""
+    details = details or {}
+    first, last = _nice_name(m.get("name") or details.get("driver") or "")
+    dates = m.get("dates") or {}
+    out = {"first": first, "last": last, "birth": ars_date(m.get("birth")), "licence": licence_text(m.get("licence")),
+           "class": m.get("class") or "", "status": m.get("status") or "", "demerits": m.get("demerits"),
+           "issue": ars_date(m.get("issue")), "expiry": ars_date(m.get("expiry")),
+           "g1": ars_date(dates.get("g1")), "g2": ars_date(dates.get("g2")), "g": ars_date(dates.get("g")),
+           "notes": []}
+    if dates.get("note"):
+        out["notes"].append(dates["note"])
+    for problem in m.get("problems", []):
+        out["notes"].append(problem)
+    if out["status"] and out["status"] != "LICENCED":
+        out["notes"].append(f"MVR status is {out['status']} - not licensed.")
+    return out
+
+
+def convictions(m, today=None):
+    """One ARS Convictions entry per MVR conviction, newest first; older than 3 years = don't enter."""
+    today = today or datetime.date.today()
+    try:
+        cutoff = today.replace(year=today.year - CONVICTION_YEARS)
+    except ValueError:
+        cutoff = today.replace(year=today.year - CONVICTION_YEARS, day=28)
+    out = []
+    for c in sorted(m.get("convictions", []), key=lambda c: c["date"] or datetime.date.min, reverse=True):
+        old = bool(c["date"] and c["date"] < cutoff)
+        notes = []
+        if old:
+            notes.append(f"Older than {CONVICTION_YEARS} years - don't enter it.")
+        if old:
+            pass
+        elif c.get("alcohol"):
+            notes.append("Alcohol / drug related - insurers count these separately.")
+        if old:
+            pass
+        elif c["category"] == "major":
+            notes.append("MAJOR conviction - most standard markets refer or decline.")
+        elif c["category"] == "serious" and not old:
+            notes.append("SERIOUS conviction - refer to the underwriter.")
+        out.append({"date": ars_date(c["date"]), "description": c["description"].capitalize(),
+                    "category": c["category"].capitalize(), "offence": ars_date(c.get("offence_date")),
+                    "old": old, "notes": notes})
+    return out
+
+
+def suspensions(m):
+    """Licence actions on the MVR (suspensions, cancellations ...), for the Suspensions form."""
+    return [{"date": ars_date(a["date"]), "description": a["description"].capitalize()} for a in m.get("actions", [])]
+
+
+def as_text(entries, hist, drv=None, convs=None, susp=None):
+    """Plain text of everything (for a note or to paste somewhere). entries / hist None = no DASH,
+    drv / convs None = no MVR (those sections are left out)."""
+    lines = []
+    if drv:
+        lines += ["DRIVER (MVR)", f"{drv['first']} {drv['last']} - born {drv['birth']} - licence {drv['licence']}",
+                  f"Class {drv['class']} - G1 {drv['g1'] or '?'}, G2 {drv['g2'] or '-'}, G {drv['g'] or '-'}", ""]
+    if entries is not None:
+        lines.append("CLAIMS (ARS)")
+        shown = [e for e in entries if not e["old"]]
+        for i, e in enumerate(shown, 1):
+            amts = ", ".join(f"{label} {e['amounts'][k]}" for k, label in AMOUNTS if e["amounts"][k])
+            lines.append(f"{i}. {e['date']} - {e['description']} - {e['chargeable']} - {e['vehicle']}"
+                         + (f" - {amts}" if amts else "") + f" ({e['insurer']}, claim {e['claim_no'] or '?'})")
+        if not shown:
+            lines.append(f"None in the last {LOOKBACK_YEARS} years.")
+        lines.append("")
+    if convs is not None:
+        lines.append("CONVICTIONS (ARS)")
+        shown = [c for c in convs if not c["old"]]
+        for i, c in enumerate(shown, 1):
+            lines.append(f"{i}. {c['date']} - {c['description']} ({c['category']})")
+        if not shown:
+            lines.append(f"None in the last {CONVICTION_YEARS} years.")
+        for s in susp or []:
+            lines.append(f"Licence action {s['date']}: {s['description']}")
+        lines.append("")
+    if hist is not None:
+        lines.append("INSURANCE HISTORY")
+        cur = hist["current"]
+        if cur:
+            lines.append(f"Latest policy: {cur['insurer']} {ars_date(cur['start'])} to {ars_date(cur['end'])} ({cur['status']})")
+            lines.append(f"First insured: {hist['first_insured']}")
+            if hist["continuous_since"]:
+                lines.append(f"Continuously insured since: {hist['continuous_since']}")
+            if hist["uninsured_since"]:
+                lines.append(f"Not insured since: {hist['uninsured_since']}")
+        else:
+            lines.append("No policies on the DASH (no insurance history).")
+        for g in hist["lapses"]:
+            lines.append(f"Lapse: {g['from']} to {g['to']} ({g['months']} months, {g['days']} days)")
+        for c in hist["cancellations"]:
+            lines.append(f"Cancelled {c['date']} by {c['insurer']}" + (f" - {c['reason']}" if c["reason"] else ""))
+    return "\n".join(lines).strip()
