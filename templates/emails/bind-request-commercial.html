@@ -1,0 +1,21 @@
+<!--
+name: Commercial - request to bind
+group: 2. Quote accepted
+order: 26
+to: commercial
+subject: {branch} – Code {pb_code} – Binder{pb_binder} – REQUEST TO BIND – {coverage} ({business_name})
+fields: branch = Branch number (e.g. B01); pb_code = PowerBroker customer code; pb_binder = PowerBroker binder number (digits); coverage = Coverage being bound; business_name = Business name; insurer = Insurance company chosen; effective_date = Effective date wanted; payment = Payment (e.g. paid in full, PAC, agency bill paid)
+attach: Signed application, quote and payment confirmation
+-->
+<p>Hi {first_name},</p>
+<p>The client has accepted the quote. Please bind the coverage below.</p>
+<ul>
+  <li><b>Business:</b> {business_name} ({CLIENT_NAME})</li>
+  <li><b>PowerBroker customer code / binder:</b> {pb_code} / {pb_binder}</li>
+  <li><b>Insurance company:</b> {insurer}</li>
+  <li><b>Coverage:</b> {coverage}</li>
+  <li><b>Effective date wanted:</b> {effective_date}</li>
+  <li><b>Payment:</b> {payment}</li>
+</ul>
+<p>Attached are the signed application and consent, the quote, and the payment confirmation. All subjectivities have been reviewed with the client. Please confirm the effective date and send the binder and policy documents when they are ready.</p>
+<p>Thank you,</p>

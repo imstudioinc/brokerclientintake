@@ -1,0 +1,17 @@
+<!--
+name: Commercial - invoice and premium (agency bill)
+group: 2. Quote accepted
+order: 24
+subject: Commercial Insurance - Invoice for Your Premium | {CLIENT_NAME}
+fields: insurer = Insurance company; premium = Premium to pay (e.g. $4,250.00); effective_date = Coverage starts
+attach: Invoice
+-->
+<p>Hi {first_name},</p>
+<p>Thank you for choosing your commercial insurance with <b>{insurer}</b>. Your invoice is attached.</p>
+<ul>
+  <li><b>Premium to pay:</b> {premium}</li>
+  <li><b>Coverage starts:</b> {effective_date}</li>
+</ul>
+<p>{payment_options_html}</p>
+<p><b>We can't ask the insurance company to bind your coverage until the payment has arrived</b>, so please send it as soon as you can. Binding can't be back-dated, so the sooner it is paid, the sooner you are covered.</p>
+<p>Thank you,</p>

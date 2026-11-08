@@ -12,6 +12,7 @@ import customtkinter as ctk
 
 import carriers_ui
 import mvr_email
+import commercial_risk
 import property_risk as risk
 import records
 import tracker_ui
@@ -47,7 +48,9 @@ class PropertyDetailsPage(Panel):
         self.app, self.folder, self.on_saved = app, Path(folder), on_saved
         ui = self.ui = _ui(app)
         self.kind = _kind(app, folder)
-        self.title(("Tenant details" if self.kind == "Tenant" else "Property details") + f" - {self.folder.name}")
+        self.risk = commercial_risk if self.kind == "Commercial" else risk       # the questions asked
+        self.title({"Tenant": "Tenant details", "Commercial": "Commercial details"}.get(self.kind, "Property details")
+                   + f" - {self.folder.name}")
         self.geometry("1000x820")
         self.values, self.inputs, self.open, self.built = {}, {}, {}, {}
         self.grid_columnconfigure(0, weight=1)
@@ -56,10 +59,10 @@ class PropertyDetailsPage(Panel):
         top = ctk.CTkFrame(self, fg_color=ui.SURFACE, corner_radius=12, border_width=1, border_color=ui.BORDER)
         top.grid(row=0, column=0, sticky="ew", padx=ui.SP, pady=(0, ui.SP))
         top.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(top, text="What is being insured", font=ui.font(13, "bold"), text_color=ui.TEXT) \
+        ctk.CTkLabel(top, text=getattr(self.risk, "PICK_LABEL", "What is being insured"), font=ui.font(13, "bold"), text_color=ui.TEXT) \
             .grid(row=0, column=0, sticky="w", padx=(2 * ui.SP, ui.SP), pady=ui.SP)
         self.dwelling = tk.StringVar(value="")
-        ctk.CTkOptionMenu(top, values=risk.DWELLING, variable=self.dwelling, width=300, height=34, font=ui.font(13),
+        ctk.CTkOptionMenu(top, values=self.risk.DWELLING, variable=self.dwelling, width=300, height=34, font=ui.font(13),
                           dropdown_font=ui.font(13), fg_color=ui.SURFACE_ALT, button_color=ui.SURFACE_ALT,
                           button_hover_color=ui.BORDER, text_color=ui.TEXT, dynamic_resizing=False,
                           command=lambda _: self.kind_changed()).grid(row=0, column=1, sticky="w", pady=ui.SP)
@@ -67,7 +70,8 @@ class PropertyDetailsPage(Panel):
         self.count.grid(row=0, column=2, sticky="e", padx=2 * ui.SP)
         bar = ctk.CTkFrame(top, fg_color="transparent")
         bar.grid(row=0, column=3, sticky="e", padx=(0, 2 * ui.SP))
-        app.secondary_button(bar, "Save and review", lambda: self.save(review=True), width=140).pack(side="left", padx=(0, ui.SP))
+        if self.kind != "Commercial":
+            app.secondary_button(bar, "Save and review", lambda: self.save(review=True), width=140).pack(side="left", padx=(0, ui.SP))
         self.save_btn = ctk.CTkButton(bar, text="Save", width=100, height=36, font=ui.font(14, "bold"),
                                       fg_color=ui.PRIMARY, hover_color=ui.PRIMARY_HOVER, command=self.save)
         self.save_btn.pack(side="left")
@@ -81,10 +85,10 @@ class PropertyDetailsPage(Panel):
         threading.Thread(target=self._load, daemon=True).start()
 
     def _load(self):
-        values = risk.load(self.folder)
+        values = self.risk.load(self.folder)
         try:                                   # start from what the ARS quote already says (empty answers only)
             import property_quote, review
-            quotes = review.find_docs(self.folder)["quote"]
+            quotes = review.find_docs(self.folder)["quote"] if self.kind != "Commercial" else []
             if quotes:
                 q = property_quote.read(str(quotes[0]))
                 values = property_quote.prefill(values, q.get("answers", {}))
@@ -97,7 +101,8 @@ class PropertyDetailsPage(Panel):
             return
         self.values = values
         if not values.get("dwelling"):
-            self.values["dwelling"] = risk.DWELLING[2] if self.kind == "Tenant" else risk.DWELLING[0]
+            self.values["dwelling"] = ("" if self.kind == "Commercial" else
+                                       self.risk.DWELLING[2] if self.kind == "Tenant" else self.risk.DWELLING[0])
         self.dwelling.set(self.values["dwelling"])
         self.open = {"about": True}
         self.build()
@@ -113,8 +118,8 @@ class PropertyDetailsPage(Panel):
         for w in self.body.winfo_children():
             w.destroy()
         self.inputs, self.sections = {}, {}
-        use = risk.use_of(self.values)
-        for r, (key, title, fields) in enumerate(risk.fields_for(use)):
+        use = self.risk.use_of(self.values)
+        for r, (key, title, fields) in enumerate(self.risk.fields_for(use)):
             fields = [f for f in fields if f[0] != "dwelling"]          # the picker at the top is that question
             wrap = ctk.CTkFrame(self.body, fg_color="transparent")
             wrap.grid(row=r, column=0, sticky="ew", padx=ui.SP, pady=(0, ui.SP))
@@ -176,7 +181,7 @@ class PropertyDetailsPage(Panel):
             return kind, var.get, var.set, w
         if kind == "yn":
             var = tk.StringVar(value=value)
-            w = ctk.CTkSegmentedButton(parent, values=risk.YN, variable=var, width=150, height=32, font=ui.font(13),
+            w = ctk.CTkSegmentedButton(parent, values=self.risk.YN, variable=var, width=150, height=32, font=ui.font(13),
                                        selected_color=ui.RAISED, selected_hover_color=ui.RAISED,
                                        unselected_color=ui.SURFACE_ALT, unselected_hover_color=ui.BORDER,
                                        text_color=ui.TEXT)
@@ -211,7 +216,7 @@ class PropertyDetailsPage(Panel):
         self.values["dwelling"] = self.dwelling.get() or self.values.get("dwelling", "")
 
     def refresh_count(self):
-        done, total, missing = risk.completeness(self.values)
+        done, total, missing = self.risk.completeness(self.values)
         self.count.configure(text=f"{done} of {total} answered" + ("" if not missing else f" - still: {missing[0].lower()}"
                                                                     + (" ..." if len(missing) > 1 else "")),
                              text_color=self.ui.SUCCESS if not missing else self.ui.MUTED)
@@ -229,7 +234,7 @@ class PropertyDetailsPage(Panel):
 
         def work():
             try:
-                saved = risk.save(self.folder, values)
+                saved = self.risk.save(self.folder, values)
             except OSError as e:
                 self.app.ui(self._failed, str(e))
                 return
@@ -242,16 +247,16 @@ class PropertyDetailsPage(Panel):
             self.error.configure(text=f"Could not save (is the shared drive available?) {message}")
 
     def _saved(self, values, review):
-        done, total, _ = risk.completeness(values)
+        done, total, _ = self.risk.completeness(values)
         app, folder, callback = self.app, self.folder, self.on_saved
         if self.winfo_exists():
             self.destroy()
         app.client_changed(folder)
         app.tracker_changed()
-        app.show_note(folder, f"✓ Property details saved ({done} of {total} answered)", _ui(app).SUCCESS)
+        app.show_note(folder, f"✓ {'Commercial' if self.kind == 'Commercial' else 'Property'} details saved ({done} of {total} answered)", _ui(app).SUCCESS)
         if callback:
             callback()
-        if review:
+        if review and self.kind != "Commercial":
             PropertyReviewPage(app, folder)
 
 

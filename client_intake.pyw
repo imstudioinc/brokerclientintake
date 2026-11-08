@@ -33,6 +33,7 @@ import ars_ui
 import carriers
 import carriers_ui
 import policy_ui
+import commercial_risk
 import property_risk
 import property_ui
 import records
@@ -109,21 +110,39 @@ HOME_DOCUMENTS = [_PROPERTY_DOCS[k] for k in ("ezitv", "signed", "pac", "photos"
 TENANT_DOCUMENTS = [_PROPERTY_DOCS[k] for k in ("signed", "pac", "photos", "alarm", "sewer", "loe")]
 COMMERCIAL_DOCUMENTS = [
     ("Commercial application", ["*commercial*application*", "*commercial quote application*"], "Commercial Application", False),
-    ("PAC form + void cheque", _PAC, "PAC Form and Void Cheque", False),
+    ("Signed application", _SIGNED_APP + ["*signed*commercial*"], "Signed Application", False),
+    ("PAC form + void cheque", _PAC, "PAC Form and Void Cheque", True),
+    ("Vehicle supplement", ["*vehicle supplement*", "*cvs*", "*auto quote form*"], "Commercial Vehicle Supplement", True),
+    ("Fleet supplement", ["*fleet*supplement*"], "Fleet Supplement", True),
+    ("CVOR certificate", ["*cvor*"], "CVOR Certificate", True),
+    ("Garage form", ["*garage form*", "*automobile garage*"], "Garage Form", True),
+    ("Articles of incorporation", ["*articles*", "*incorporation*", "*master business*"], "Articles of Incorporation", True),
+    ("Restaurant questionnaire", ["*restaurant*"], "Restaurant Questionnaire", True),
+    ("Industry application", ["*allied*health*", "*cosmetolog*", "*industry application*", "*malpractice*"],
+     "Industry Application", True),
     ("Photos of the location", ["*photo*"], "Photos", True),
     ("Alarm certificate (ULC)", ["*alarm*", "*ulc*"], "Alarm Certificate", True),
     ("Prior insurance and claims", ["*loss run*", "*claims history*", "*prior insurance*", "*previous insurance*"],
      "Prior Insurance", True),
-    ("Restaurant supplement", ["*restaurant*"], "Restaurant Supplement", True),
     ("Subcontractor insurance", ["*subcontract*", "*certificate of insurance*"], "Subcontractor Insurance", True),
+    ("Mortgage information", ["*mortgage*", "*lender*"], "Mortgage Information", True),
 ]
 CONDITIONAL_DOCS = {"Photos", "Mortgage information", "Alarm certificate", "Sewer backup questionnaire",
                     "Oil tank questionnaire", "Wood stove questionnaire", "Rented dwelling questionnaire",
-                    "Letter of experience", "Appraisal"}
+                    "Letter of experience", "Appraisal", "Vehicle supplement", "Fleet supplement", "CVOR certificate",
+                    "Garage form", "Articles of incorporation", "Restaurant questionnaire", "Industry application",
+                    "Alarm certificate (ULC)", "Subcontractor insurance", "Photos of the location"}
 _PROP_BASE = [("Client consent", ["*Client Consent*", "*Consent Form*"]), ("HITS report", ["*HITS*"]),
               ("Quote (ARS)", ["*Quote*"])]
 BASE_DOCS = {"Home": _PROP_BASE, "Tenant": _PROP_BASE,
              "Commercial": [("Client consent", ["*Client Consent*", "*Consent Form*"]), ("Quote (ARS)", ["*Quote*"])]}
+def _docs_needed(kind, data):
+    """The extra documents this client's saved details ask for (Home / Tenant property answers, Commercial answers)."""
+    if kind == "Commercial":
+        return commercial_risk.docs_needed(data.get(commercial_risk.KEY) or {})
+    return property_risk.docs_needed(data.get(property_risk.KEY) or {})
+
+
 KIND_DOCS = {"Auto": AUTO_DOCUMENTS, "Home": HOME_DOCUMENTS, "Tenant": TENANT_DOCUMENTS,
              "Commercial": COMMERCIAL_DOCUMENTS}
 # which documents show on which stage's page, per client type ("Other" uses Auto's page, extras hidden)
@@ -135,9 +154,11 @@ STAGE_DOCS = {
              ["Quote (ARS)", "EZITV (replacement cost)"], ["Signed application", "PAC form + void cheque"]],
     "Tenant": [["Client consent", "HITS report", "Photos", "Alarm certificate", "Sewer backup questionnaire",
                 "Letter of experience"], ["Quote (ARS)"], ["Signed application", "PAC form + void cheque"]],
-    "Commercial": [["Client consent", "Commercial application", "Photos of the location", "Alarm certificate (ULC)",
-                    "Prior insurance and claims", "Restaurant supplement", "Subcontractor insurance"],
-                   ["Quote (ARS)"], ["PAC form + void cheque"]],
+    "Commercial": [["Client consent", "Commercial application", "Vehicle supplement", "Fleet supplement",
+                    "CVOR certificate", "Garage form", "Articles of incorporation", "Restaurant questionnaire",
+                    "Industry application", "Photos of the location", "Alarm certificate (ULC)",
+                    "Prior insurance and claims", "Subcontractor insurance", "Mortgage information"],
+                   ["Quote (ARS)"], ["Signed application", "PAC form + void cheque"]],
 }
 DOC_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".tif", ".tiff", ".bmp", ".gif",
             ".doc", ".docx"}
@@ -184,6 +205,9 @@ def find_docs(folder, kind=""):
     base_labels = dict(base_docs(kind))
     for label, patterns in doc_list(kind):
         hits = {n: m for n, m in files if name_matches(n, patterns)}
+        if label == "Quote (ARS)":         # "Commercial Quote Application", supplements, questionnaires are not the quote
+            hits = {n: m for n, m in hits.items()
+                    if not any(w in n.lower() for w in ("application", "supplement", "questionnaire"))}
         names = set(hits)
         if label in base_labels:
             base |= names
@@ -818,7 +842,9 @@ class EmailDialog(Panel):
         self.saved_fields = dict(self.info.get("email_fields", {}))
         self.quote_values, self.carrier_pick, self.touched = None, 0, {}
         # the bound policy's details (Tracker) fill the policy emails before the quote does
-        self.policy_values = policy_ui.email_values(folder)
+        self.policy_values = {**(commercial_risk.email_values(folder) if
+                                 app.client_type_of.get(folder) == "Commercial" else {}),
+                              **policy_ui.email_values(folder)}
         self.templates = emails.load_templates()
         ctype = app.client_type_of.get(folder, "").lower()
         wanted = (template or "quote-{type}.html").format(type=ctype)
@@ -1018,11 +1044,14 @@ class EmailDialog(Panel):
     def _for_billing(self):
         return self.template.to == "billing"
 
+    def _for_commercial(self):
+        return self.template.to == "commercial"
+
     def _set_recipient(self):
         """Underwriter templates go to WellCare's underwriter (address remembered in the settings),
         with the latest quote / DASH / MVR ticked; the others go to the client."""
         uw = self._for_uw()
-        mode = "uw" if uw else "billing" if self._for_billing() else "client"
+        mode = "uw" if uw else "billing" if self._for_billing() else "commercial" if self._for_commercial() else "client"
         if mode == getattr(self, "_uw_mode", "client"):
             return
         self._uw_mode = mode
@@ -1030,6 +1059,10 @@ class EmailDialog(Panel):
             insurer = self.policy_values.get("insurer", "")
             addr, name = policy_ui.billing_email(self.app.cfg, insurer), ""
             label, hint = f"To ({insurer or 'insurer'} billing) *", "billing email (Carriers & payments page)"
+        elif mode == "commercial":
+            addr = self.app.cfg.get("commercial_email", "")
+            name = emails.first_name(re.split(r"[._@]", addr)[0]) if addr else ""
+            label, hint = "To (WellCare commercial team) *", "commercial team email (typed once)"
         elif uw:
             addr = self.app.cfg.get("uw_email", "")
             name = emails.first_name(re.split(r"[._@]", addr)[0]) if addr else ""
@@ -1131,6 +1164,7 @@ class EmailDialog(Panel):
         if not re.fullmatch(r"[^@\s;]+@[^@\s;]+\.[^@\s;]+", to):
             self.error.configure(text="Enter the underwriter's email address." if self._for_uw()
                                  else "Enter the billing team's email address." if self._for_billing()
+                                 else "Enter the commercial team's email address." if self._for_commercial()
                                  else "Enter the client's email address.", text_color=DANGER)
             self.to.focus_set()
             return
@@ -1148,9 +1182,11 @@ class EmailDialog(Panel):
             policy_ui.remember_policy_numbers(self.folder, {k: e.get() for k, e in self.field_entries.items()})
         except OSError:
             pass
-        if self._for_uw() or self._for_billing():
+        if self._for_uw() or self._for_billing() or self._for_commercial():
             if self._for_uw() and to.lower() != self.app.cfg.get("uw_email", ""):
                 config.update(self.app.cfg, uw_email=to.lower())
+            if self._for_commercial() and to.lower() != self.app.cfg.get("commercial_email", ""):
+                config.update(self.app.cfg, commercial_email=to.lower())
             mvr_email.save_client(self.folder, email_fields=self.saved_fields)
         else:
             mvr_email.save_client(self.folder, email=to.lower(), email_fields=self.saved_fields)
@@ -1992,8 +2028,8 @@ class App(ctk.CTk):
         skip = set(data.get("docs_not_needed", [])) if checklist.process(kind) else set()
         found = find_docs(folder, kind)
         docs = {k: v for k, v in found.items() if k not in skip}
-        if kind in ("Home", "Tenant"):             # only the extra documents this property needs count
-            needed = property_risk.docs_needed(data.get(property_risk.KEY) or {})
+        if kind in ("Home", "Tenant", "Commercial"):    # only the extra documents this file needs count
+            needed = _docs_needed(kind, data)
             docs = {k: v for k, v in docs.items() if k not in CONDITIONAL_DOCS or k in needed or v}
         info = mvr_email.load_client(folder)
         rows = checklist.status(folder, kind, found, info, skip, read_quote=False, data=data)
@@ -2347,6 +2383,10 @@ class App(ctk.CTk):
             return [[("Property details" if key == "Home" else "Tenant details", sel(self.open_property)), consent, email],
                     [("Entry sheet", sel(self.open_entry)), ("Review property", sel(self.open_review)), quote_, email],
                     [("Policy details", sel(self.accept_quote)), ("Entry sheet", sel(self.open_entry)), carriers_, email]]
+        if key == "Commercial":
+            return [[("Commercial details", sel(self.open_property)), consent, email],
+                    [quote_, carriers_, email],
+                    [("Policy details", sel(self.accept_quote)), carriers_, email]]
         return [[consent, email],
                 [quote_, email],
                 [("Policy details", sel(self.accept_quote)), carriers_, email]]
@@ -2615,6 +2655,9 @@ class App(ctk.CTk):
                       else MUTED)
             self._show(self.next_hint, bool(text))
             if action:
+                if action == "property":
+                    self._set(self.next_buttons["property"], text={"Tenant": "Tenant details",
+                              "Commercial": "Commercial details"}.get(kind, "Property details"))
                 wanted.append((self.next_buttons[action], (0, SP)))
             if not auto or sid == "billing":           # billing: N/A by itself, done by hand
                 wanted.append((self.next_done, (0, SP)))
@@ -2675,7 +2718,7 @@ class App(ctk.CTk):
         skip = set(data.get("docs_not_needed", [])) if checklist.process(kind) else set()
         by_hand = set()
         rows = checklist.status(folder, kind, docs, info, skip, by_hand=by_hand, data=data)
-        needed = property_risk.docs_needed(data.get(property_risk.KEY) or {}) if kind in ("Home", "Tenant") else None
+        needed = _docs_needed(kind, data) if kind in ("Home", "Tenant", "Commercial") else None
         down_hint = ""
         nxt = checklist.next_step(rows, kind)
         if nxt and nxt[0][0] == "down_payment":

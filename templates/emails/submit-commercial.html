@@ -1,0 +1,19 @@
+<!--
+name: Commercial - submission to the commercial team
+group: 1. Quote requests
+order: 16
+to: commercial
+subject: {branch} – Code {pb_code} – Binder{pb_binder} – {coverage} ({business_name})
+fields: branch = Branch number (e.g. B01); pb_code = PowerBroker customer code; pb_binder = PowerBroker binder number (digits); coverage = What to quote (e.g. CGL, Property, Auto); business_name = Business name; effective_date = Coverage wanted from
+attach: Commercial application, vehicle supplement, consent and the other documents
+-->
+<p>Hi {first_name},</p>
+<p>Please quote the commercial risk below.</p>
+<ul>
+  <li><b>Business:</b> {business_name} ({CLIENT_NAME})</li>
+  <li><b>PowerBroker customer code / binder:</b> {pb_code} / {pb_binder}</li>
+  <li><b>Coverage wanted:</b> {coverage}</li>
+  <li><b>Coverage wanted from:</b> {effective_date}</li>
+</ul>
+<p>Attached: the completed application (legal name and operating name), the Commercial Vehicle Supplement if there are vehicles, the consent form, and the other supporting documents. Everything is also saved in PowerBroker. Please send the quotes back with the subjectivities.</p>
+<p>Thank you,</p>

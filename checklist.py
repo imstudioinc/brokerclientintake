@@ -10,6 +10,7 @@ import datetime
 import json
 from pathlib import Path
 
+import commercial_risk
 import property_risk
 import quote
 import records
@@ -152,34 +153,52 @@ TENANT_STEPS = [
     "applicable: alarm certificate, letter of experience.")
 
 COMMERCIAL_STEPS = [
+    # 1. Intake: the client, the PowerBroker code, the application and what the business has to hand in
     ("profile", "Client profile", "Business name, contact, phone and email.", "profile_pc", False, "edit"),
-    ("application", "Commercial quote application", "Fill WellCare's commercial quote application with the client "
-     "(one form per location: operations, claims, construction and updates, protection, revenue) and save it in the "
-     "folder.", "commercial_app", False, None),
-    ("consent", "Consent form filled", "Fill the consent form and have the client sign it.", "consent", False,
-     "consent"),
-    ("documents", "Documents from the client", "Photos of the location, ULC alarm certificate, prior insurance and "
-     "claims history, restaurant supplement, subcontractors' proof of insurance.", "documents", False, None),
-    ("quote", "Quote", "Submit to the markets and save the quote in the folder. The Carriers page has each insurer's "
-     "contacts and where to submit.", "quote", False, None),
-    ("uw_call", "Underwriter confirmed", "Confirm eligibility with the underwriter and log the call (who, when, why, "
+    ("pb_account", "PowerBroker customer code and binder", "Create the customer code (use the business operating name) "
+     "and a binder. The name must match the policyholder. Type both in Commercial details.", "pb_account", False,
+     "property"),
+    ("details", "Commercial details", "The business, operations, location, vehicles, history and coverage wanted. "
+     "They tell you which supplements the business needs.", "commercial", False, "property"),
+    ("application", "Commercial application filled", "WellCare's commercial application (legal name AND trade name) or "
+     "the quote form for vehicles; save it in the folder.", "commercial_app", False, None),
+    ("consent", "Consent form signed", "Commercial privacy consent signed by the client (or a signing officer).",
+     "consent", False, "consent"),
+    ("documents", "Supplements and documents", "Vehicle supplement (every field), CVOR for trucking, garage form, "
+     "restaurant questionnaire, articles of incorporation, ULC alarm certificate, photos, loss runs.", "documents_prop",
+     False, None),
+    # 2. Submit and quote
+    ("submit", "Submitted to the commercial team", "Email the commercial team. The subject line must have the branch, "
+     "customer code, binder number and the business type. Save the email in PowerBroker.", None, False, "email"),
+    ("quote", "Quote received", "Quotes come back through the commercial team with the subjectivities. Save them in "
+     "the folder.", "quote", False, None),
+    ("decision", "Client decision (within 3 days)", "Review the quote and every subjectivity with the client and tell the "
+     "team within 3 days. If the client doesn't go ahead, mark the PowerBroker binder cancelled.", None, False, None),
+    ("uw_call", "Underwriter confirmed", "Only if the team or the quote asks for it: log the call (who, when, "
      "result).", "uw_call", True, "uwcall"),
-    ("approved", "Quote accepted - policy saved to the Tracker", "Pick the carrier the client chose. Agree how the "
-     "client pays.", "policy", False, "accept"),
-    ("pb_policy", "Policy set up in PowerBroker", "Enter the policy and attach the application.", None, False, None),
-    ("sign_docs", "Documents sent to the client to sign", "Signed application, consent and a PAC form with a void "
-     "cheque.", None, False, "email"),
-    ("signed", "Signed documents and payment back from the client", "Do not bind until the signed application with "
-     "payment is back.", "signed_docs", False, None),
-    ("uploaded", "Signed documents uploaded and validated", "Upload them to the system and validate.", None, False,
-     "folder"),
-    ("uwc", "All documents submitted to head office", "Signed application, quote, consent, PAC form + void cheque; "
-     "photos and ULC certificates if applicable.", None, False, None),
-    ("referred", "Referred (if UW-Compass shows a refer message)", "Refer to head office or the insurer - mark N/A if "
-     "there was nothing to refer.", None, True, None),
-    ("ho_confirm", "Head office confirmed the policy", "", None, False, None),
-    ("sent", "Policy documents sent to the client", "Confirmation email with the policy number and the policy "
-     "documents.", None, False, "email"),
+    # 3. Bind and policy documents
+    ("approved", "Quote accepted - policy saved to the Tracker", "Pick the carrier the client chose.", "policy", False,
+     "accept"),
+    ("pb_policy", "Binder complete in PowerBroker", "Application, quote and every document saved in PowerBroker.", None,
+     False, None),
+    ("invoice", "Invoice sent and premium received (agency bill)", "Agency-billed policies: make the manual invoice on "
+     "WellCare's template and collect the premium first. Never ask for binding before the payment is in.", None, True,
+     "email"),
+    ("sign_docs", "Documents sent to the client to sign", "Application, consent form and the other forms for the "
+     "client to sign (a PAC form with a void cheque if they pay monthly).", None, False, "email"),
+    ("signed", "Signed documents back from the client", "Do not request binding before the signed application and "
+     "consent are back.", "signed_docs", False, None),
+    ("bind_request", "Request to bind sent (before the effective date)", "Send the formal request to bind with the "
+     "signed application, the quote and the payment confirmation if the carrier wants it. No back-dating; the "
+     "underwriter confirms the real effective date.", None, False, "email"),
+    ("subjectivities", "Subjectivities satisfied", "Follow up every subjectivity (inspection, documents, signed forms) "
+     "within the time allowed.", None, True, None),
+    ("coi", "Certificate of insurance prepared", "Prepare the COI for the in-house commercial underwriter to review "
+     "(the carrier may have to approve it too).", None, True, None),
+    ("policy_no", "Binder number changed to the policy number", "In PowerBroker, when the policy arrives.", None, False,
+     None),
+    ("sent", "Policy documents sent to the client", "Forward the formal policy documents; chase them if they don't "
+     "arrive.", None, False, "email"),
 ]
 
 STAGES = [("Intake", "Details & documents", ["profile", "consent", "dash", "mvr_request", "mvr", "documents"]),
@@ -193,10 +212,12 @@ _HOME_STAGES = [("Intake", "Details & documents", ["profile", "property", "conse
                                                   "uploaded", "uwc", "referred", "ho_confirm", "sent"])]
 _TENANT_STAGES = [("Intake", "Details & documents", ["profile", "property", "consent", "hits", "documents"]),
                   _HOME_STAGES[1], _HOME_STAGES[2]]
-_COMMERCIAL_STAGES = [("Intake", "Details & documents", ["profile", "application", "consent", "documents"]),
-                      ("Quote", "Forms & quote", ["quote", "uw_call"]),
-                      ("Policy", "Bind, upload, send", ["approved", "pb_policy", "sign_docs", "signed", "uploaded",
-                                                        "uwc", "referred", "ho_confirm", "sent"])]
+_COMMERCIAL_STAGES = [("Intake", "Details & documents", ["profile", "pb_account", "details", "application", "consent",
+                                                           "documents"]),
+                      ("Quote", "Submit & quote", ["submit", "quote", "decision", "uw_call"]),
+                      ("Policy", "Bind & policy documents", ["approved", "pb_policy", "invoice", "sign_docs", "signed",
+                                                             "bind_request", "subjectivities", "coi", "policy_no",
+                                                             "sent"])]
 
 # the email template each email step opens ({type} = the client type, e.g. confirm-auto.html)
 EMAIL_FOR_STEP = {"sign_docs": "sign-auto.html", "down_payment": "down-payment.html",
@@ -211,14 +232,16 @@ PROCESSES = {
              "email": {"sign_docs": "sign-home.html", "sent": "confirm-home.html"}},
     "Tenant": {"steps": TENANT_STEPS, "stages": _TENANT_STAGES, "waiting": {"documents", "hits", "signed"},
                "email": {"sign_docs": "sign-tenant.html", "sent": "confirm-tenant.html"}},
-    "Commercial": {"steps": COMMERCIAL_STEPS, "stages": _COMMERCIAL_STAGES, "waiting": {"documents", "signed"},
-                   "email": {"sign_docs": "sign-commercial.html", "sent": "confirm-commercial.html"}},
+    "Commercial": {"steps": COMMERCIAL_STEPS, "stages": _COMMERCIAL_STAGES,
+                   "waiting": {"documents", "signed", "decision", "subjectivities", "coi"},
+                   "email": {"submit": "submit-commercial.html", "invoice": "invoice-commercial.html",
+                             "sign_docs": "sign-commercial.html", "bind_request": "bind-request-commercial.html",
+                             "sent": "confirm-commercial.html"}},
 }
 # the optional client documents each process asks for in its "documents" step
 CLIENT_DOCS = {"Auto": ("Driver's licence", "Ownership", "Bill of sale", "Winter tire photo", "Void cheque",
                         "Financing / lease"),
-               "Commercial": ("Photos of the location", "Alarm certificate (ULC)", "Prior insurance and claims",
-                              "Restaurant supplement", "Subcontractor insurance")}
+               "Commercial": ()}
 
 
 def process(kind):
@@ -375,9 +398,16 @@ def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None, data=N
                 state = "done" if not missing else "todo"
             if missing:
                 note = " and ".join(missing).capitalize() + " missing"
-        elif auto == "property":
-            values = data.get(property_risk.KEY) or {}
-            filled, total, lacking = property_risk.completeness(values)
+        elif auto == "pb_account":
+            values = data.get(commercial_risk.KEY) or {}
+            if values.get("pb_code") and values.get("pb_binder"):
+                state, note = "done", f"Code {values['pb_code']}, binder {values['pb_binder']}"
+            else:
+                note = "Customer code and binder number not typed in yet"
+        elif auto in ("property", "commercial"):
+            mod = commercial_risk if auto == "commercial" else property_risk
+            values = data.get(mod.KEY) or {}
+            filled, total, lacking = mod.completeness(values)
             if values and not lacking:
                 state, note = "done", "All answered"
             elif values:
@@ -392,18 +422,20 @@ def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None, data=N
         elif auto == "commercial_app" and docs.get("Commercial application"):
             state, note = "done", "In the folder"
         elif auto == "documents_prop":
-            values = data.get(property_risk.KEY) or {}
+            mod = commercial_risk if kind == "Commercial" else property_risk
+            values = data.get(mod.KEY) or {}
             if not values:
-                note = "Fill in the property details to see what is needed"
+                note = "Fill in the details to see what is needed"
             else:
-                need = [k for k in property_risk.docs_needed(values) if k in docs and k not in skip]
+                need = [k for k in mod.docs_needed(values) if k in docs and k not in skip]
                 have = [k for k in need if docs[k]]
                 if len(have) == len(need):
                     state, note = "done", "All received" if need else "Nothing extra needed"
                 else:
                     note = "Missing: " + ", ".join(k for k in need if not docs[k])
         elif auto == "signed_docs":
-            wanted = [k for k in ("Signed application", "PAC form + void cheque") if k in docs]
+            wanted = [k for k in (("Signed application",) if kind == "Commercial"
+                                  else ("Signed application", "PAC form + void cheque")) if k in docs]
             missing = [k for k in wanted if not docs[k]]
             if wanted and not missing:
                 state, note = "done", "In the folder"
