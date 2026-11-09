@@ -81,8 +81,12 @@ class SignInPage(Panel):
         self.finish()
 
     def new_broker(self):
-        self.destroy()
-        ProfilePage(self.app, None, on_done=self.on_done, first=True)
+        """Stays underneath: Back from the new profile returns here, never to the client list."""
+        ProfilePage(self.app, None, on_done=self.after_profile, first=True)
+
+    def after_profile(self):
+        if self.winfo_exists():
+            self.finish()
 
     def finish(self):
         app, done = self.app, self.on_done

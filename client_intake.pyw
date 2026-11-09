@@ -1601,6 +1601,7 @@ class App(ctk.CTk):
     def start_sign_in(self):
         """Switch broker / sign out."""
         brokers.sign_out(self.cfg)
+        panel.close_all(self)            # whatever page was open closes: no client data stays on screen
         self.broker_changed()
         if brokers.names(self.cfg):
             broker_ui.SignInPage(self)
@@ -1734,7 +1735,7 @@ class App(ctk.CTk):
         self.root_label = ctk.CTkLabel(titles, text=shorten_path(self.cfg["clients_root"]) if self.cfg["clients_root"] else "No Clients folder set",
                                        font=font(12), text_color=MUTED, height=18)
         self.root_label.pack(anchor="w")
-        self.secondary_button(bar, "Settings", lambda: SettingsDialog(self), width=96) \
+        self.secondary_button(bar, "Settings", lambda: None if self.locked() else SettingsDialog(self), width=96) \
             .pack(side="right")
         self.broker_btn = self.secondary_button(bar, self.cfg.get("current_broker") or "Sign in", self.broker_menu,
                                                 width=150)
@@ -1845,6 +1846,9 @@ class App(ctk.CTk):
 
     def show_view(self, name, _from_panel=False):
         """Switch between the Clients, Tracker and Rules views inside this window."""
+        if self.locked():                # nobody signed in: nothing opens
+            self.view_var.set("Clients")
+            return
         if not _from_panel:
             panel.close_all(self)        # an open page (New client, Review quote, ...) closes first
         for view in (self.clients_view, self.tracker_win, self.rules_view):
@@ -1913,7 +1917,13 @@ class App(ctk.CTk):
 
     # ---------- column 1: new client ----------
     # ---------- new / edit client ----------
+    def locked(self):
+        """Broker profiles exist and nobody has signed in: the sign-in page is all that shows."""
+        return bool(brokers.names(self.cfg)) and not self.cfg.get("current_broker")
+
     def new_client(self):
+        if self.locked():
+            return
         self.show_view("Clients")
         ClientDialog(self)
 
