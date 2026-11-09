@@ -93,8 +93,7 @@ class SignInPage(Panel):
 
 
 class ProfilePage(Panel):
-    """Create or edit a broker profile."""
-    FORM = True
+    """Create or edit a broker profile (two columns so it fits the window without scrolling)."""
 
     def __init__(self, app, name=None, on_done=None, first=False):
         super().__init__(app)
@@ -102,42 +101,45 @@ class ProfilePage(Panel):
         ui = self.ui = _ui(app)
         editing = bool(name)
         self.title("Broker profile" if editing else "New broker profile")
-        self.geometry("560x820")
+        self.geometry("1000x700")
         if first and not brokers.names(app.cfg):
             _hide_back(self)
         profile = dict(brokers.profiles(app.cfg).get(name) or {}) if editing else self.starting_values(app)
-        body = ctk.CTkScrollableFrame(self, fg_color=ui.SURFACE, corner_radius=12, border_width=1, border_color=ui.BORDER)
+        body = ctk.CTkFrame(self, fg_color=ui.SURFACE, corner_radius=12, border_width=1, border_color=ui.BORDER)
         body.pack(fill="both", expand=True, padx=2 * ui.SP, pady=(2 * ui.SP, 0))
-        body.grid_columnconfigure(0, weight=1)
+        body.grid_columnconfigure((0, 1, 2), weight=1, uniform="cols")
         p = 2 * ui.SP
         ctk.CTkLabel(body, text=("Your details are saved on this computer only. They fill the email signature, the MVR "
                                  "request and the broker name / branch number on forms such as the commercial application."),
-                     font=ui.font(12), text_color=ui.MUTED, justify="left", wraplength=470, anchor="w") \
-            .grid(row=0, column=0, sticky="w", padx=p, pady=(p, 0))
+                     font=ui.font(12), text_color=ui.MUTED, justify="left", wraplength=880, anchor="w") \
+            .grid(row=0, column=0, columnspan=3, sticky="w", padx=p, pady=(p, 0))
+
+        def field(i, label, widget_factory):
+            row, col = 1 + 2 * (i // 3), i % 3
+            ctk.CTkLabel(body, text=label, font=ui.font(13, "bold"), text_color=ui.TEXT) \
+                .grid(row=row, column=col, sticky="w", padx=p, pady=(1.5 * ui.SP, ui.SP / 2))
+            w = widget_factory()
+            w.grid(row=row + 1, column=col, sticky="ew", padx=p)
+            return w
+
         self.entries = {}
         for i, (key, label, hint) in enumerate(brokers.FIELDS):
-            ctk.CTkLabel(body, text=label + (" *" if key == "name" else ""), font=ui.font(13, "bold"),
-                         text_color=ui.TEXT).grid(row=1 + 2 * i, column=0, sticky="w", padx=p, pady=(1.5 * ui.SP, ui.SP / 2))
-            e = ctk.CTkEntry(body, height=36, font=ui.font(13), border_color=ui.BORDER, placeholder_text=hint)
-            e.grid(row=2 + 2 * i, column=0, sticky="ew", padx=p)
+            e = field(i, label + (" *" if key == "name" else ""), lambda hint=hint: ctk.CTkEntry(
+                body, height=36, font=ui.font(13), border_color=ui.BORDER, placeholder_text=hint))
             if profile.get(key):
                 e.insert(0, profile[key])
             self.entries[key] = e
-        r = 2 + 2 * len(brokers.FIELDS)
+        n = len(brokers.FIELDS)
         had_pin = brokers.has_pin(profile)
-        ctk.CTkLabel(body, text="New PIN" + (" (leave empty to keep the current one)" if had_pin else " (optional)"),
-                     font=ui.font(13, "bold"), text_color=ui.TEXT).grid(row=r, column=0, sticky="w", padx=p, pady=(2 * ui.SP, ui.SP / 2))
-        self.pin = ctk.CTkEntry(body, show="•", height=36, font=ui.font(13), border_color=ui.BORDER)
-        self.pin.grid(row=r + 1, column=0, sticky="ew", padx=p)
-        ctk.CTkLabel(body, text="Repeat the PIN", font=ui.font(13, "bold"), text_color=ui.TEXT) \
-            .grid(row=r + 2, column=0, sticky="w", padx=p, pady=(1.5 * ui.SP, ui.SP / 2))
-        self.pin2 = ctk.CTkEntry(body, show="•", height=36, font=ui.font(13), border_color=ui.BORDER)
-        self.pin2.grid(row=r + 3, column=0, sticky="ew", padx=p)
+        self.pin = field(n, "New PIN" + (" (empty = keep the current one)" if had_pin else " (optional)"),
+                         lambda: ctk.CTkEntry(body, show="•", height=36, font=ui.font(13), border_color=ui.BORDER))
+        self.pin2 = field(n + 1, "Repeat the PIN",
+                          lambda: ctk.CTkEntry(body, show="•", height=36, font=ui.font(13), border_color=ui.BORDER))
         self.no_pin = tk.BooleanVar(value=False)
         if had_pin:
             ctk.CTkCheckBox(body, text="Remove the PIN", variable=self.no_pin, font=ui.font(13), text_color=ui.TEXT,
                             fg_color=ui.PRIMARY, hover_color=ui.PRIMARY_HOVER) \
-                .grid(row=r + 4, column=0, sticky="w", padx=p, pady=(ui.SP, 0))
+                .grid(row=1 + 2 * ((n + 2) // 3 + 1), column=0, sticky="w", padx=p, pady=(ui.SP, p))
         self.error = ctk.CTkLabel(self, text="", font=ui.font(13), text_color=ui.DANGER, anchor="w", wraplength=500, justify="left")
         self.error.pack(fill="x", padx=3 * ui.SP)
         btns = ctk.CTkFrame(self, fg_color="transparent")
