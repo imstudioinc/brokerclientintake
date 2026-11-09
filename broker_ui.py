@@ -33,6 +33,7 @@ class SignInPage(Panel):
         self.title("Sign in")
         self.geometry("480x420")
         _hide_back(self)
+        self.bind("<Escape>", lambda e: None)   # a gate: Escape must not skip it
         names = brokers.names(app.cfg)
         last = app.cfg.get("current_broker")
         body = ctk.CTkFrame(self, fg_color=ui.SURFACE, corner_radius=12, border_width=1, border_color=ui.BORDER)
@@ -108,6 +109,7 @@ class ProfilePage(Panel):
         self.geometry("1000x700")
         if first and not brokers.names(app.cfg):
             _hide_back(self)
+            self.bind("<Escape>", lambda e: None)   # the first-run gate: Escape must not skip it
         profile = dict(brokers.profiles(app.cfg).get(name) or {}) if editing else self.starting_values(app)
         body = ctk.CTkFrame(self, fg_color=ui.SURFACE, corner_radius=12, border_width=1, border_color=ui.BORDER)
         body.pack(fill="both", expand=True, padx=2 * ui.SP, pady=(2 * ui.SP, 0))

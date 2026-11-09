@@ -1491,14 +1491,12 @@ class App(ctk.CTk):
             self.refresh_soon(300)
 
     def _startup(self):
-        """Sign in first (when there are broker profiles), then the Clients folder."""
+        """Sign in first, every launch, until a broker is signed in (profiles exist) or one is created."""
         if brokers.names(self.cfg):
             broker_ui.SignInPage(self, on_done=self._after_signin)
-        elif not self.cfg.get("broker_prompted"):
-            config.update(self.cfg, broker_prompted=True)
-            broker_ui.ProfilePage(self, None, on_done=self._after_signin, first=True)   # once: make your profile
         else:
-            self._after_signin()
+            config.update(self.cfg, broker_prompted=True)
+            broker_ui.ProfilePage(self, None, on_done=self._after_signin, first=True)   # make your profile
 
     def _after_signin(self):
         self._first_run()
@@ -1856,8 +1854,8 @@ class App(ctk.CTk):
     # ---------- column 1: new client ----------
     # ---------- new / edit client ----------
     def locked(self):
-        """Broker profiles exist and nobody has signed in: the sign-in page is all that shows."""
-        return bool(brokers.names(self.cfg)) and not self.cfg.get("current_broker")
+        """Nobody is signed in (no profile created yet, or none chosen): the sign-in page is all that shows."""
+        return not self.cfg.get("current_broker")
 
     def new_client(self):
         if self.locked():
