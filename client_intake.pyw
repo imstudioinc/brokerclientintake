@@ -223,7 +223,7 @@ def parse_birth(text):
     text = (text or "").strip()
     if not text:
         return ""
-    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"):
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d", "%b %d, %Y", "%b %d %Y"):
         try:
             return datetime.datetime.strptime(text, fmt).date().isoformat()
         except ValueError:
@@ -1346,8 +1346,12 @@ class ClientDialog(Panel):
         self.name = self._entry(body, 5, 0, folder.name if editing else "", "e.g. JOHN SMITH", span=2, upper=True)
         self._label(body, 6, 0, "Driver's licence #" + ("" if editing else " *"))
         self._label(body, 6, 1, "Date of birth")
-        self.dln = self._entry(body, 7, 0, info.get("dln", ""), "A1234-12345-12345", upper=True)
-        self.birth = self._entry(body, 7, 1, info.get("birth", ""), "YYYY-MM-DD", padx=(SP, p))
+        self.dln = self._entry(body, 7, 0, format_dln(info.get("dln", "")), "A1234-12345-12345", upper=True, dln=True)
+        self.birth = tracker_ui.DateField(body, sys.modules[type(app).__module__], compact=True)      # date picker
+        self.birth.grid(row=7, column=1, sticky="ew", padx=(SP, p))
+        if info.get("birth"):
+            self.birth.insert(0, info["birth"])
+        self.birth.bind("<KeyRelease>", lambda ev: (self.error.configure(text=""), self.update_changes()))
         self._label(body, 8, 0, "Phone")
         self._label(body, 8, 1, "Email")
         self.phone = self._entry(body, 9, 0, info.get("phone", ""), "optional")
@@ -1387,14 +1391,21 @@ class ClientDialog(Panel):
         ctk.CTkLabel(parent, text=text, font=font(13, "bold"), text_color=TEXT) \
             .grid(row=row, column=col, sticky="w", padx=(3 * SP, 0) if col == 0 else (SP, 0), pady=(1.5 * SP, SP / 2))
 
-    def _entry(self, parent, row, col, value, placeholder, span=1, upper=False, padx=None):
+    def _entry(self, parent, row, col, value, placeholder, span=1, upper=False, padx=None, dln=False):
         e = ctk.CTkEntry(parent, height=38, font=font(14), border_color=BORDER, placeholder_text=placeholder)
         e.grid(row=row, column=col, columnspan=span, sticky="ew", padx=padx or ((3 * SP, 3 * SP) if span == 2 else (3 * SP, 0)))
         if value:
             e.insert(0, value)
 
         def typed(ev):
-            if upper and ev.keysym != "Return" and e.get() != e.get().upper():
+            if dln and ev.keysym not in ("Return", "Left", "Right", "Home", "End", "Tab"):   # A1234-12345-12345 as you type
+                raw = re.sub(r"[^A-Za-z0-9]", "", e.get()).upper()[:15]
+                text = "-".join(p for p in (raw[:5], raw[5:10], raw[10:]) if p)
+                if text != e.get():
+                    e.delete(0, "end")
+                    e.insert(0, text)
+                    e._entry.icursor("end")
+            elif upper and ev.keysym != "Return" and e.get() != e.get().upper():
                 pos = e._entry.index("insert")
                 text = e.get().upper()
                 e.delete(0, "end")
@@ -1449,7 +1460,7 @@ class ClientDialog(Panel):
         if dln and not is_valid_dln(dln):
             return self._fail(self.dln, "Licence # must be 1 letter + 14 digits, e.g. A1234-12345-12345.")
         if birth is None:
-            return self._fail(self.birth, "Date of birth: use YYYY-MM-DD, e.g. 1984-09-04.")
+            return self._fail(self.birth.entry, "Date of birth: pick it from the calendar (or type it, e.g. Sep 4, 1984).")
         if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
             return self._fail(self.email, "That email address doesn't look right.")
         kind = self.type_var.get()

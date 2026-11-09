@@ -148,7 +148,9 @@ class CalendarPopup(ctk.CTkToplevel):
         head.pack(fill="x", padx=8, pady=(8, 4))
         nav = dict(width=32, height=30, font=ui.font(16, "bold"), fg_color="transparent",
                    hover_color=ui.SURFACE_ALT, text_color=ui.TEXT)
+        ctk.CTkButton(head, text="«", command=lambda: self.shift(-12), **nav).pack(side="left")      # a year back
         ctk.CTkButton(head, text="‹", command=lambda: self.shift(-1), **nav).pack(side="left")
+        ctk.CTkButton(head, text="»", command=lambda: self.shift(12), **nav).pack(side="right")
         ctk.CTkButton(head, text="›", command=lambda: self.shift(1), **nav).pack(side="right")
         self.title_label = ctk.CTkLabel(head, text="", font=ui.font(14, "bold"), text_color=ui.TEXT)
         self.title_label.pack(side="left", expand=True)
@@ -207,7 +209,7 @@ class CalendarPopup(ctk.CTkToplevel):
 
     def shift(self, months):
         m = self.month.month - 1 + months
-        self.month = self.month.replace(year=self.month.year + m // 12, month=m % 12 + 1)
+        self.month = self.month.replace(year=self.month.year + m // 12, month=m % 12 + 1)   # works for negative m too
         self.draw()
 
     def draw(self):
@@ -250,7 +252,7 @@ class DateField(ctk.CTkFrame):
     """Text box + calendar button. Typing still works; the button opens the calendar.
     Behaves like a CTkEntry for get/insert/delete/bind."""
 
-    def __init__(self, parent, ui, on_change=None):
+    def __init__(self, parent, ui, on_change=None, compact=False):
         super().__init__(parent, fg_color="transparent")
         self.ui, self.on_change = ui, on_change
         self.grid_columnconfigure(0, weight=1)
@@ -259,7 +261,7 @@ class DateField(ctk.CTkFrame):
         self.entry.grid(row=0, column=0, sticky="ew")
         self.entry.bind("<Button-1>", lambda e: self.after(10, self.open) if not self.entry.get() else None)
         self.entry.bind("<Alt-Down>", lambda e: self.open())
-        ctk.CTkButton(self, text="▾  Calendar", width=104, height=34, font=ui.font(12),
+        ctk.CTkButton(self, text="▾" if compact else "▾  Calendar", width=40 if compact else 104, height=34, font=ui.font(12),
                       fg_color="transparent", border_width=1, border_color=ui.BORDER, text_color=ui.TEXT,
                       hover_color=ui.SURFACE_ALT, command=self.open).grid(row=0, column=1, padx=(6, 0))
 
