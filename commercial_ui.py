@@ -66,8 +66,77 @@ class CommercialDetailsPage(property_ui.PropertyDetailsPage):
         self.liab_note = ctk.CTkLabel(row, text="", font=ui.font(12), text_color=ui.MUTED, anchor="w", justify="left")
         self.liab_note.pack(side="left", padx=(2 * ui.SP, 0))
         bar = self.save_btn.master
+        app.secondary_button(bar, "Read business registration", self.read_registration, width=210).pack(
+            side="left", padx=(0, ui.SP), before=self.save_btn)
         app.secondary_button(bar, "Save and fill application", self.save_and_fill, width=200).pack(
             side="left", padx=(0, ui.SP), before=self.save_btn)
+
+    # ----- the business registration (Ministry PDF): fills EMPTY answers only
+    def _load(self):
+        values = self.risk.load(self.folder)
+        try:                                   # a registration already in the client folder fills what is still empty
+            import business_registration as reg
+            found = reg.find(self.folder)
+            if found:
+                values, _filled = reg.prefill(values, reg.read(found))
+        except Exception:
+            pass
+        self.app.ui(self._loaded, values)
+
+    def read_registration(self):
+        from tkinter import filedialog
+        found = None
+        try:
+            import business_registration as reg
+            found = reg.find(self.folder)
+        except Exception:
+            pass
+        path = filedialog.askopenfilename(
+            parent=self, title="Business registration (Registration Information PDF)",
+            initialdir=str(self.folder), initialfile=found.name if found else "",
+            filetypes=[("PDF", "*.pdf"), ("All files", "*.*")])
+        if not path:
+            return
+        self.collect()
+        self.error.configure(text="Reading the registration…", text_color=self.ui.MUTED)
+        values, folder = dict(self.values), self.folder
+
+        def work():
+            import shutil
+            import business_registration as reg
+            try:
+                src = Path(path)
+                if src.parent.resolve() != Path(folder).resolve():       # keep a copy with the client
+                    dest = Path(folder) / f"Business Registration - {Path(folder).name}.pdf"
+                    tmp = dest.with_name(dest.name + ".tmp")
+                    shutil.copyfile(src, tmp)
+                    os.replace(tmp, dest)
+                    src = dest
+                facts = reg.read(src)
+            except Exception as e:
+                self.app.ui(self._registration_done, None, [], f"Could not read that file: {e}")
+                return
+            if not facts:
+                self.app.ui(self._registration_done, None, [],
+                            "That does not look like a business registration (no business name or NAICS code found).")
+                return
+            new, filled = reg.prefill(values, facts)
+            self.app.ui(self._registration_done, new, filled, "")
+        threading.Thread(target=work, daemon=True).start()
+
+    def _registration_done(self, values, filled, problem):
+        if not self.winfo_exists():
+            return
+        ui = self.ui
+        if problem:
+            self.error.configure(text=problem, text_color=ui.DANGER)
+            return
+        self.values = values
+        self.build()
+        self.error.configure(
+            text=("✓ Filled from the registration: " + ", ".join(filled) + ". Check it, then Save.") if filled else
+                 "Everything the registration holds is already filled in.",
+            text_color=ui.SUCCESS if filled else ui.MUTED)
 
     # ----- loading
     def _loaded(self, values):

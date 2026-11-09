@@ -197,6 +197,10 @@ SECTIONS = [
         F("effective_date", "Effective date of coverage", "date", None, "Binding can never be back-dated"),
         F("legal_name", "Registered name of the business", "text", None, "Must match the PowerBroker customer name and the policyholder"),
         F("trade_name", "Trade / operating name"),
+        F("bin", "Business Identification Number (BIN)", "text", None, "From the business name registration"),
+        F("ocn", "Ontario Corporation Number (OCN)"),
+        F("naics", "NAICS code", "text", None, "The business activity code on the registration"),
+        F("naics_title", "Business activity (NAICS)"),
         F("address", "Postal address", "text", None, "Street address"),
         F("city", "City"), F("province", "Province", "choice", PROVINCES), F("country", "Country"), F("postal", "Postal code"),
         F("phone", "Phone", "text"), F("email", "E-mail", "text"), F("website", "Website", "text"),
@@ -548,6 +552,8 @@ def email_values(folder):
         out["pb_binder"] = v["pb_binder"]
     if v.get("trade_name") or v.get("legal_name"):
         out["business_name"] = v.get("trade_name") or v["legal_name"]
+    if v.get("naics"):
+        out["naics"] = v["naics"] + (f" - {v['naics_title']}" if v.get("naics_title") else "")
     if v.get("effective_date"):
         day = records.parse_date(v["effective_date"])
         if day:

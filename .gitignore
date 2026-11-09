@@ -23,3 +23,7 @@ Rate Manuals*
 
 # carrier manuals and guides used to build the Home / Tenant / Commercial features: confidential, never in the public repo
 resources/
+
+# Ministry business registrations (client documents)
+Business Registration*.pdf
+Registration Information*.pdf
