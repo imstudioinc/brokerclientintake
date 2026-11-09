@@ -98,10 +98,26 @@ def _quote_contact(path):
     return phone, email
 
 
+def _property_applicant(path):
+    """{name, dln, birth} from a property quote's 'Insured Information' block ("Mr AGHAYEV RAUF 01/31/1990 Male No")."""
+    with _plumber().open(path) as pdf:
+        text = pdf.pages[0].extract_text() or ""
+    block = text.split("Insured Information", 1)
+    if len(block) < 2:
+        return None
+    m = re.search(r"^(?:(?:Mr|Mrs|Ms|Miss|Dr|Mx)\.?\s+)?(.+?)\s+(\d{2})/(\d{2})/(\d{4})", block[1], re.M)
+    if not m:
+        return None
+    return {"name": m.group(1).strip().upper(), "dln": "", "birth": f"{m.group(4)}-{m.group(2)}-{m.group(3)}"}
+
+
 def read_quote(path):
     """[{name, dln, birth, phone, email}] - one per driver; phone / email belong to the applicant (driver 1)."""
     q = quote.read(str(path))
     phone, email = _quote_contact(path)
+    if not q.get("drivers"):                       # a Home / Tenant quote has no drivers: "Insured Information" has the applicant
+        person = _property_applicant(path)
+        return [dict(person, phone=phone, email=email)] if person else []
     out = []
     for i, d in enumerate(q.get("drivers", [])):
         out.append({"name": (d.get("name") or "").upper(), "dln": format_dln(d.get("licence") or ""),

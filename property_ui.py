@@ -185,7 +185,13 @@ class PropertyDetailsPage(Panel):
                                        selected_color=ui.RAISED, selected_hover_color=ui.RAISED,
                                        unselected_color=ui.SURFACE_ALT, unselected_hover_color=ui.BORDER,
                                        text_color=ui.TEXT)
-            return kind, var.get, var.set, w
+
+            def paint(_=None):                 # Yes is green, No is amber, so a glance tells them apart
+                color = {"Yes": ui.SUCCESS, "No": ui.WARN}.get(var.get(), ui.RAISED)
+                w.configure(selected_color=color, selected_hover_color=color)
+            w.configure(command=paint)
+            paint()
+            return kind, var.get, lambda v: (var.set(v), paint()), w
         if kind == "date":
             w = tracker_ui.DateField(parent, ui)
             day = records.parse_date(value) if value else None

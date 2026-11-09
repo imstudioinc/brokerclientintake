@@ -173,6 +173,10 @@ class ProfilePage(Panel):
         if name != self.name and name in brokers.profiles(self.app.cfg):
             self.error.configure(text=f"There is already a broker called {name}.")
             return
+        import re
+        if values.get("email") and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", values["email"]):
+            self.error.configure(text="Email doesn't look like an email address.")
+            return
         pin, pin2 = self.pin.get(), self.pin2.get()
         if pin != pin2:
             self.error.configure(text="The two PINs are different.")

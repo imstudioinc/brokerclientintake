@@ -151,6 +151,8 @@ class CommercialDetailsPage(property_ui.PropertyDetailsPage):
                              wraplength=760 if wide else 380).grid(row=0, column=0, sticky="w")
                 self.inputs[k] = self.control(cell, kind, options, self.values.get(k, ""))
                 self.inputs[k][3].grid(row=1, column=0, sticky="w", pady=(2, 0))
+                if k in risk.UPPER_KEYS:                          # codes and postal codes are always capitals
+                    self.make_upper(self.inputs[k][3])
                 if hint:
                     ctk.CTkLabel(cell, text=hint, font=ui.font(12), text_color=ui.MUTED, anchor="w", justify="left",
                                  wraplength=760 if wide else 380).grid(row=2, column=0, sticky="w")
@@ -178,6 +180,13 @@ class CommercialDetailsPage(property_ui.PropertyDetailsPage):
             var = tk.BooleanVar(value=value == "Yes")
             w = ctk.CTkCheckBox(parent, text="", variable=var, width=24, checkbox_width=22, checkbox_height=22)
             return kind, lambda: "Yes" if var.get() else "", lambda v: var.set(v == "Yes"), w
+        if kind == "date":                                        # a date picker in a grid cell (small ▾ button)
+            import tracker_ui
+            w = tracker_ui.DateField(parent, self.ui, compact=True)
+            w.entry.configure(width=max(80, width - 44), height=30)
+            if value:
+                w.insert(0, value)
+            return kind, w.get, lambda v: (w.delete(0, "end"), w.insert(0, v)), w
         if kind == "choice":
             var = tk.StringVar(value=value)
             w = ctk.CTkOptionMenu(parent, values=[""] + list(options), variable=var, width=width, height=30,
@@ -203,7 +212,7 @@ class CommercialDetailsPage(property_ui.PropertyDetailsPage):
                          width=120 if labelled else 18).grid(row=r, column=0, sticky="w", padx=(0, 4), pady=1)
             for c, (suffix, _h, kind, options, width) in enumerate(item["cols"], start=1):
                 k = f"{item['table']}{rk}_{suffix}"
-                self.inputs[k] = self.cell(frame, "text" if kind in ("money", "date") else kind, options,
+                self.inputs[k] = self.cell(frame, "text" if kind == "money" else kind, options,
                                            self.values.get(k, ""), width)
                 self.inputs[k][3].grid(row=r, column=c, padx=2, pady=1, sticky="w")
 
@@ -261,9 +270,31 @@ class CommercialDetailsPage(property_ui.PropertyDetailsPage):
             return kind, get, put, frame
         return super().control(parent, kind, options, value)
 
+    def make_upper(self, entry):
+        def typed(_event):
+            text = entry.get()
+            if text != text.upper():
+                pos = entry._entry.index("insert")
+                entry.delete(0, "end")
+                entry.insert(0, text.upper())
+                entry._entry.icursor(pos)
+        entry.bind("<KeyRelease>", typed)
+
     def collect(self):
         super().collect()
         self.values["liability_only"] = "Yes" if self.liab.get() else ""
+        for k in risk.UPPER_KEYS:
+            if self.values.get(k):
+                self.values[k] = self.values[k].upper()
+
+    def save(self, review=False):
+        self.collect()
+        bad = risk.bad_emails(self.values)
+        if bad:
+            self.fill_after = False
+            self.error.configure(text="That doesn't look like an email address: " + ", ".join(bad))
+            return
+        super().save(review)
 
     # ----- save (and fill)
     def save_and_fill(self):

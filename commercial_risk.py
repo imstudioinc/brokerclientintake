@@ -25,6 +25,10 @@ OWN_OR_RENT = ["Owns the building", "Rents the premises"]
 CLEANING = ["Monthly", "Quarterly", "Semi-annual", "Annual", "Not cleaned"]
 RADIUS = ["Within 40 km", "41-80 km", "81-160 km", "161-400 km", "Over 400 km"]
 
+PROVINCES = ["ON", "AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "PE", "QC", "SK", "YT"]
+UPPER_KEYS = {"pb_code", "pb_binder", "branch", "postal", "loc_postal", "l2_loc_postal", "l3_loc_postal"}
+EMAIL_KEYS = ["email"] + [f"contact{i}_email" for i in range(1, 5)]
+
 # the boxes printed on the application (the wording of the form)
 OCCUPANCY = ["Retail strip plaza", "Industrial plaza", "Enclosed mall"]      # "Other" is typed in (occupancy_other)
 EXPOSURE_TYPES = ["Licensed restaurants / bars / clubs", "Manufacturing"]
@@ -160,7 +164,7 @@ def location_fields(n):
         F(p + "loc_visited", "Location visited by producer", "yn"),
         F(p + "loc_visit_date", "Date visited by producer", "date"),
         F(p + "loc_address", "Address", "text", None, "Left empty = the business address is used" if n == 1 else ""),
-        F(p + "loc_city", "City"), F(p + "loc_province", "Province"), F(p + "loc_country", "Country"),
+        F(p + "loc_city", "City"), F(p + "loc_province", "Province", "choice", PROVINCES), F(p + "loc_country", "Country"),
         F(p + "loc_postal", "Postal code"),
         F(p + "loc_not_inspected", "This risk was not inspected", "yn"),
         F(p + "loc_inspect_date", "Date risk was inspected", "date"),
@@ -194,13 +198,12 @@ SECTIONS = [
         F("legal_name", "Registered name of the business", "text", None, "Must match the PowerBroker customer name and the policyholder"),
         F("trade_name", "Trade / operating name"),
         F("address", "Postal address", "text", None, "Street address"),
-        F("city", "City"), F("province", "Province"), F("country", "Country"), F("postal", "Postal code"),
+        F("city", "City"), F("province", "Province", "choice", PROVINCES), F("country", "Country"), F("postal", "Postal code"),
         F("phone", "Phone", "text"), F("email", "E-mail", "text"), F("website", "Website", "text"),
         F("entity", "Client is", "choice", ENTITY, "Corporation: articles of incorporation"),
         F("description", "Description of business operations", "long", None,
           "Be descriptive. If you own the building: who the tenants are and what they do"),
-        F("known_month", "Broker has known the client since - month"),
-        F("known_year", "Broker has known the client since - year", "year"),
+        F("known_since", "Broker has known the client since", "date"),
         F("supporting_business", "Supporting business"),
     ], {}),
     ("contacts", "Client contacts (decision makers / owners)", [
@@ -234,7 +237,7 @@ SECTIONS = [
         F("no_claims", "No losses or claims in the last 5 years", "yn"),
         F("claims_unknown", "Prior claims unknown", "yn"),
         table("claim", "Claims information (dates as mm/dd/yyyy)", [(str(i), f"Claim {i}") for i in range(1, 6)], [
-            ("date", "Loss date", "text", None, 130), ("type", "Type", "text", None, 120),
+            ("date", "Loss date", "date", None, 150), ("type", "Type", "text", None, 120),
             ("description", "Description", "text", None, 260), ("paid", "Amt paid", "money", None, 80),
             ("reserve", "Reserve", "money", None, 80), ("status", "Status", "choice", CLAIM_STATUS, 90)]),
         F("claims_notes", "Claims notes", "long"),
@@ -367,6 +370,13 @@ PICK_LABEL = "Type of business"
 REQUIRED = ["dwelling", "legal_name", "description", "effective_date", "address", "in_business_since", "receipts"]
 REQUIRED_PROPERTY = ["year_built", "sq_ft"]            # not asked of a liability-only application
 MULTI_SEP = "; "
+
+
+def bad_emails(values):
+    """Labels of the email boxes that are filled in but don't look like an email address."""
+    import re
+    return [LABELS[k] for k in EMAIL_KEYS
+            if values.get(k) and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", values[k].strip())]
 
 
 def is_liability_only(values):

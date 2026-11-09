@@ -457,6 +457,9 @@ def build(values, template=TEMPLATE):
     from pypdf.generic import ArrayObject, DictionaryObject, NameObject, NumberObject
     tpl = Template(template)
     values = dict(values)
+    day = records.parse_date(values.get("known_since", ""))        # "known since" is one date; the form has month + year
+    if day:
+        values["known_month"], values["known_year"] = day.strftime("%B"), str(day.year)
     writer = pypdf.PdfWriter()
     order = pages_for(values)
     extra = 0

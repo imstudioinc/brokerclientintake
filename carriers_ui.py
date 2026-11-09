@@ -241,7 +241,10 @@ class UwCallPage(Panel):
         now = datetime.datetime.now()
         self._label(form, 4, 0, "Date")
         self._label(form, 4, 1, "Time")
-        self.date = self._entry(form, 5, 0, now.strftime("%Y-%m-%d"), "YYYY-MM-DD")
+        import tracker_ui
+        self.date = tracker_ui.DateField(form, ui)                       # date picker
+        self.date.grid(row=5, column=0, sticky="ew", padx=(2 * ui.SP, ui.SP / 2))
+        self.date.insert(0, now.strftime("%Y-%m-%d"))
         self.time = self._entry(form, 5, 1, now.strftime("%I:%M %p").lstrip("0"), "2:30 PM")
         self._label(form, 6, 0, "Underwriter's name *")
         self._label(form, 6, 1, "Called on")
@@ -405,7 +408,8 @@ class UwCallPage(Panel):
         self.show_side()
 
     def save(self):
-        at = _parse_when(self.date.get(), self.time.get())
+        day = records.parse_date(self.date.get())
+        at = _parse_when(day.isoformat() if day else self.date.get(), self.time.get())
         item = {"carrier": self.carrier.get().strip(), "underwriter": self.underwriter.get().strip(),
                 "contact": self.contact.get().strip(), "reason": self.reason.get("1.0", "end").strip(),
                 "result": self.result.get(), "notes": self.notes.get("1.0", "end").strip()}
