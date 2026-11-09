@@ -95,10 +95,18 @@ class PropertyDetailsPage(Panel):
         main.grid_rowconfigure(0, weight=1)
         self.current = None
         self.nav = ui_kit.SectionNav(main, ui, self.select)
-        self.nav.grid(row=0, column=0, sticky="ns", padx=(ui.SP, 0), pady=(0, ui.SP))
+        self.nav.grid(row=0, column=0, rowspan=2, sticky="ns", padx=(ui.SP, 0), pady=(0, ui.SP))
         self.body = ctk.CTkScrollableFrame(main, fg_color="transparent")
         self.body.grid(row=0, column=1, sticky="nsew")
         self.body.grid_columnconfigure(0, weight=1)
+        foot = ctk.CTkFrame(main, fg_color="transparent", height=1)       # Previous / Next: fixed, never scrolls away
+        foot.grid(row=1, column=1, sticky="ew", padx=2 * ui.SP + 8, pady=(ui.SP, ui.SP))
+        foot.grid_columnconfigure(1, weight=1)
+        self.prev_btn = app.secondary_button(foot, "←  Previous", lambda: self.step(-1), width=140)
+        self.prev_btn.grid(row=0, column=0, sticky="w")
+        self.next_btn = ctk.CTkButton(foot, text="Next  →", width=150, height=36, font=ui.font(14, "bold"),
+                                      command=lambda: self.step(1))
+        self.next_btn.grid(row=0, column=2, sticky="e")
         self.error = ctk.CTkLabel(self, text="", font=ui.font(13), text_color=ui.DANGER, anchor="w")
         self.error.grid(row=2, column=0, sticky="ew", padx=ui.SP * 2)
         self.bind("<Escape>", lambda e: self.destroy())
@@ -209,14 +217,6 @@ class PropertyDetailsPage(Panel):
         self.title_lbl.grid(row=0, column=0, sticky="w")
         self.sub_lbl = ctk.CTkLabel(head, text="", font=ui.font(13), text_color=ui.MUTED, anchor="w")
         self.sub_lbl.grid(row=1, column=0, sticky="w")
-        foot = ctk.CTkFrame(self.body, fg_color="transparent", height=1)
-        foot.grid(row=2, column=0, sticky="ew", padx=2 * ui.SP, pady=(ui.SP, 2 * ui.SP))
-        foot.grid_columnconfigure(1, weight=1)
-        self.prev_btn = self.app.secondary_button(foot, "←  Previous", lambda: self.step(-1), width=140)
-        self.prev_btn.grid(row=0, column=0, sticky="w")
-        self.next_btn = ctk.CTkButton(foot, text="Next  →", width=150, height=36, font=ui.font(14, "bold"),
-                                      command=lambda: self.step(1))
-        self.next_btn.grid(row=0, column=2, sticky="e")
 
     def _add_section(self, key, title, **extra):
         ui = self.ui
