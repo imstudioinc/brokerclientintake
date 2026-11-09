@@ -18,6 +18,7 @@ import records
 import tracker_ui
 from panel import Panel
 
+FIELD_W = 380            # every text box and drop-down in a form column is this wide, so the edges line up
 LEVEL_WORD = {"decline": "Won't take it", "refer": "Refer", "caution": "Check"}
 
 
@@ -157,7 +158,7 @@ class PropertyDetailsPage(Panel):
         s["built"] = True
         for i, (k, label, kind, options, _uses, hint) in enumerate(s["fields"]):
             cell = ctk.CTkFrame(s["box"], fg_color="transparent")
-            cell.grid(row=i // 2, column=i % 2, sticky="ew", padx=(2 * ui.SP, ui.SP), pady=(ui.SP, 0))
+            cell.grid(row=i // 2, column=i % 2, sticky="new", padx=(2 * ui.SP, 2 * ui.SP), pady=(1.5 * ui.SP, 0))
             cell.grid_columnconfigure(0, weight=1)
             ctk.CTkLabel(cell, text=label, font=ui.font(13), text_color=ui.TEXT, anchor="w", justify="left",
                          wraplength=380).grid(row=0, column=0, sticky="w")
@@ -174,24 +175,15 @@ class PropertyDetailsPage(Panel):
         ui = self.ui
         if kind == "choice":
             var = tk.StringVar(value=value)
-            w = ctk.CTkOptionMenu(parent, values=[""] + list(options), variable=var, width=300, height=34,
-                                  font=ui.font(13), dropdown_font=ui.font(13), fg_color=ui.SURFACE_ALT,
+            w = ctk.CTkOptionMenu(parent, values=[""] + list(options), variable=var, width=FIELD_W, height=36,
+                                  corner_radius=8, font=ui.font(13), dropdown_font=ui.font(13), fg_color=ui.SURFACE_ALT,
                                   button_color=ui.SURFACE_ALT, button_hover_color=ui.BORDER, text_color=ui.TEXT,
                                   dynamic_resizing=False)
             return kind, var.get, var.set, w
         if kind == "yn":
-            var = tk.StringVar(value=value)
-            w = ctk.CTkSegmentedButton(parent, values=self.risk.YN, variable=var, width=150, height=32, font=ui.font(13),
-                                       selected_color=ui.RAISED, selected_hover_color=ui.RAISED,
-                                       unselected_color=ui.SURFACE_ALT, unselected_hover_color=ui.BORDER,
-                                       text_color=ui.TEXT)
-
-            def paint(_=None):                 # Yes is green, No is amber, so a glance tells them apart
-                color = {"Yes": ui.SUCCESS, "No": ui.WARN}.get(var.get(), ui.RAISED)
-                w.configure(selected_color=color, selected_hover_color=color)
-            w.configure(command=paint)
-            paint()
-            return kind, var.get, lambda v: (var.set(v), paint()), w
+            import ui_kit
+            w = ui_kit.YesNo(parent, ui, value)               # Yes green with a tick, No slate with a cross
+            return kind, w.get, w.set, w
         if kind == "date":
             w = tracker_ui.DateField(parent, ui)
             day = records.parse_date(value) if value else None
@@ -203,8 +195,8 @@ class PropertyDetailsPage(Panel):
                                wrap="word")
             w.insert("1.0", value)
             return kind, lambda: w.get("1.0", "end").strip(), lambda v: (w.delete("1.0", "end"), w.insert("1.0", v)), w
-        width = {"text": 380, "num": 120, "year": 120, "money": 150}.get(kind, 200)
-        w = ctk.CTkEntry(parent, width=width, height=34, font=ui.font(13), border_color=ui.BORDER)
+        width = {"text": FIELD_W, "num": 150, "year": 150, "money": 190}.get(kind, 200)
+        w = ctk.CTkEntry(parent, width=width, height=36, corner_radius=8, font=ui.font(13), border_color=ui.BORDER)
         if value:
             w.insert(0, value)
         return kind, lambda: w.get().strip(), lambda v: (w.delete(0, "end"), w.insert(0, v)), w

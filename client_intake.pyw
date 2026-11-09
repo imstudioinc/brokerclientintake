@@ -70,6 +70,17 @@ TEXT_SIZES = {"Normal": 1.0, "Large": 1.15, "Extra large": 1.3}
 FONT = "Segoe UI"
 SP = 8  # spacing unit
 
+
+def _pick_font(root):
+    """Segoe UI Variable Text (Windows 11's UI font: sharper small text) when installed, else plain Segoe UI."""
+    global FONT
+    try:
+        import tkinter.font as tkfont
+        if "Segoe UI Variable Text" in set(tkfont.families(root)):
+            FONT = "Segoe UI Variable Text"
+    except Exception:
+        pass
+
 # Documents tracked per client: (label, glob patterns)
 # (any extension in DOC_EXTS: a signed consent or an MVR can come back as a photo)
 DOCUMENTS = [
@@ -1506,6 +1517,7 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.cfg = config.load()
+        _pick_font(self)                  # Windows 11's own UI font when this PC has it
         ctk.set_appearance_mode(self.cfg["appearance"])
         ctk.set_widget_scaling(TEXT_SIZES.get(self.cfg.get("text_size") or "Large", 1.15))
         icon = Path(__file__).parent / "templates" / "app.ico"

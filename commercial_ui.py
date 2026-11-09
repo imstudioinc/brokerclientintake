@@ -144,8 +144,8 @@ class CommercialDetailsPage(property_ui.PropertyDetailsPage):
                 if wide and col:
                     row, col = row + 1, 0
                 cell = ctk.CTkFrame(box, fg_color="transparent")
-                cell.grid(row=row, column=col, columnspan=2 if wide else 1, sticky="ew",
-                          padx=(2 * ui.SP, ui.SP), pady=(ui.SP, 0))
+                cell.grid(row=row, column=col, columnspan=2 if wide else 1, sticky="new",
+                          padx=(2 * ui.SP, 2 * ui.SP), pady=(1.5 * ui.SP, 0))
                 cell.grid_columnconfigure(0, weight=1)
                 ctk.CTkLabel(cell, text=label, font=ui.font(13), text_color=ui.TEXT, anchor="w", justify="left",
                              wraplength=760 if wide else 380).grid(row=0, column=0, sticky="w")
