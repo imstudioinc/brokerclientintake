@@ -18,6 +18,9 @@ from pathlib import Path
 
 
 DEFAULT_TEMPLATE = Path(__file__).parent / "templates" / "WellCare Consent Form.pdf"
+# Commercial clients sign a different form: the same Information Client Consent, worded for a business, with rows for
+# the insured individuals (owners / employees) that the signing officer gives verbal consent for
+COMMERCIAL_TEMPLATE = Path(__file__).parent / "templates" / "WellCare Commercial Consent.pdf"
 
 
 def _plumber():
@@ -64,7 +67,7 @@ def read_consent(pdf_path):
     except Exception:
         return None
     value = lambda k: str((fields.get(k) or {}).get("/V") or "").strip()  # noqa: E731
-    name, dln = value("Name 1") or value("Client(s) Name"), value("Driver License 1")
+    name, dln = value("Name 1") or value("Client(s) Name") or value("Client Name"), value("Driver License 1")
     if not name:   # flattened WellCare form: "AND: JOHN SMITH (the "Client")"
         try:
             with _plumber().open(pdf_path) as pdf:     # reads by position: name sits between AND: and (the
@@ -72,6 +75,9 @@ def read_consent(pdf_path):
             name = m.group(1).strip() if m else ""
         except Exception:
             name = ""
+    if name and not re.search(r"[A-Za-z0-9]", name):    # the commercial form: the name sits over a blank line
+        stem = Path(pdf_path).stem
+        name = stem.split(" - ", 1)[1].strip() if stem.lower().startswith("client consent - ") else ""
     return (name.upper(), format_dln(dln)) if name or dln else None
 
 
@@ -80,6 +86,46 @@ def read_consent(pdf_path):
 # printed on the form; the others are drawn only when used, at the same weight (0.75 pt as printed).
 EXTRA_ROWS = {2: 568.6, 3: 594.6, 4: 620.6}
 ROW_COLUMNS = [(44.0, 233.1), (243.1, 453.2), (463.2, 558.0)]
+
+
+def is_commercial(folder):
+    """A client filed under Clients / Commercial gets the business consent form, not the auto one."""
+    return Path(folder).parent.name.strip().lower() == "commercial"
+
+
+def fill_commercial(folder):
+    """Fill WellCare's commercial Information Client Consent: the business name, today's date and the owners / contacts
+    from the Commercial details as the insured individuals (up to 3). Flattened, like the auto consent."""
+    import commercial_risk
+    folder = Path(folder)
+    if not COMMERCIAL_TEMPLATE.exists():
+        raise FileNotFoundError(f"Consent template not found: {COMMERCIAL_TEMPLATE}")
+    answers = commercial_risk.load(folder)
+    business = (answers.get("legal_name") or folder.name).strip().upper()
+    people = []
+    for i in range(1, 5):
+        name = f"{answers.get(f'contact{i}_first', '')} {answers.get(f'contact{i}_last', '')}".strip()
+        if name:
+            people.append(name.upper())
+    people = people[:3]
+    reader = _pypdf().PdfReader(COMMERCIAL_TEMPLATE)
+    values = {"Client Name": business, "Date_af_date": datetime.date.today().strftime("%B %d, %Y").replace(" 0", " ")}
+    for i, name in enumerate(people, start=1):
+        values[f"Client Name {i}"] = name
+    writer = _pypdf().PdfWriter(clone_from=reader)
+    writer.update_page_form_field_values(writer.pages[0], values, auto_regenerate=False, flatten=True)
+    for page in writer.pages:
+        if "/Annots" in page:
+            del page["/Annots"]
+    if "/AcroForm" in writer._root_object:
+        del writer._root_object["/AcroForm"]
+    out = folder / f"Client Consent - {folder.name.upper()}.pdf"
+    tmp = out.with_name(out.name + ".tmp")
+    with open(tmp, "wb") as f:
+        writer.write(f)
+    import os
+    os.replace(tmp, out)
+    return out, [(business, "")] + [(p, "") for p in people]
 
 
 def _same_person(a, b, dln_a="", dln_b=""):
@@ -101,6 +147,8 @@ def _raw(dln):
 
 def fill(client_folder, dln=None, template=None):
     folder = Path(client_folder)
+    if is_commercial(folder):
+        return fill_commercial(folder)
     # Empty or missing custom template -> the built-in form
     template = Path(template) if template and Path(template).exists() else DEFAULT_TEMPLATE
     if not template.exists():

@@ -34,6 +34,7 @@ import carriers
 import carriers_ui
 import policy_ui
 import commercial_risk
+import commercial_ui
 import property_risk
 import property_ui
 import records
@@ -2384,7 +2385,8 @@ class App(ctk.CTk):
                     [("Entry sheet", sel(self.open_entry)), ("Review property", sel(self.open_review)), quote_, email],
                     [("Policy details", sel(self.accept_quote)), ("Entry sheet", sel(self.open_entry)), carriers_, email]]
         if key == "Commercial":
-            return [[("Commercial details", sel(self.open_property)), consent, email],
+            return [[("Commercial details", sel(self.open_property)),
+                     ("Fill application", sel(lambda f: commercial_ui.fill_application(self, f))), consent, email],
                     [quote_, carriers_, email],
                     [("Policy details", sel(self.accept_quote)), carriers_, email]]
         return [[consent, email],
@@ -2521,7 +2523,10 @@ class App(ctk.CTk):
         EmailDialog(self, folder, template=name)
 
     def open_property(self, folder):
-        property_ui.PropertyDetailsPage(self, folder)
+        if self.client_type_of.get(Path(folder)) == "Commercial":
+            commercial_ui.CommercialDetailsPage(self, folder)
+        else:
+            property_ui.PropertyDetailsPage(self, folder)
 
     def open_review(self, folder):
         property_ui.PropertyReviewPage(self, folder)
@@ -2574,6 +2579,8 @@ class App(ctk.CTk):
                                       command=sel(lambda f: carriers_ui.CarrierInfoPage(self, f))),
             "consent": ctk.CTkButton(btns, text="Fill consent", command=sel(self.refill)),
             "property": ctk.CTkButton(btns, text="Property details", command=sel(self.open_property)),
+            "capp": ctk.CTkButton(btns, text="Fill application",
+                                  command=sel(lambda f: commercial_ui.fill_application(self, f))),
             "preview": ctk.CTkButton(btns, text="Review property", command=sel(self.open_review)),
             "pentry": ctk.CTkButton(btns, text="Entry sheet", command=sel(self.open_entry)),
             "ars": ctk.CTkButton(btns, text="ARS entry", command=sel(lambda f: ars_ui.ArsEntryPage(self, f))),

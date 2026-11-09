@@ -160,9 +160,12 @@ COMMERCIAL_STEPS = [
      "property"),
     ("details", "Commercial details", "The business, operations, location, vehicles, history and coverage wanted. "
      "They tell you which supplements the business needs.", "commercial", False, "property"),
-    ("application", "Commercial application filled", "WellCare's commercial application (legal name AND trade name) or "
-     "the quote form for vehicles; save it in the folder.", "commercial_app", False, None),
-    ("consent", "Consent form signed", "Commercial privacy consent signed by the client (or a signing officer).",
+    ("application", "Commercial application filled", "Every commercial client needs WellCare's Commercial Insurance "
+     "Application (legal name AND trade name). Fill application writes it from Commercial details into the folder "
+     "(the Liability only switch drops the property pages). Check it, then print and sign.", "commercial_app", False,
+     "capp"),
+    ("consent", "Commercial privacy consent signed", "WellCare's commercial privacy consent (not the auto form): Fill "
+     "consent makes it with the business name and the owners; the client or a signing officer signs it.",
      "consent", False, "consent"),
     ("documents", "Supplements and documents", "Vehicle supplement (every field), CVOR for trucking, garage form, "
      "restaurant questionnaire, articles of incorporation, ULC alarm certificate, photos, loss runs.", "documents_prop",
