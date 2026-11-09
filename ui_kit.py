@@ -45,20 +45,79 @@ class YesNo(ctk.CTkFrame):
                 b.configure(text=name, fg_color="transparent", hover_color=ui.BORDER, text_color=ui.MUTED)
 
 
-class Segmented(ctk.CTkSegmentedButton):
-    """CTkSegmentedButton whose segments have room to breathe: each one is as wide as its text plus padding (plain
-    customtkinter sizes them to the bare text, which looks cramped and leaves hairlines at the rounded corners)."""
+class Segmented(ctk.CTkFrame):
+    """A row of choices in one rounded track (tabs / filters / small selectors). Replaces customtkinter's
+    CTkSegmentedButton, whose bare-text segments, hairline borders and square corner pixels looked rough.
 
-    def __init__(self, *args, **kw):
-        super().__init__(*args, **kw)
-        self.pad_segments()
+    Same calls the app already uses: values, variable, command, height, font, selected_color / selected_hover_color,
+    set(), get(), configure(values=...), cget("values")."""
 
-    def pad_segments(self):
-        try:
-            import tkinter.font as tkfont
-            font = tkfont.Font(font=self.cget("font")) if self.cget("font") else None
-        except Exception:
-            font = None
-        for text, button in self._buttons_dict.items():
-            measure = font.measure(text) if font else len(text) * 8
-            button.configure(width=max(52, int(measure / max(self._get_widget_scaling(), 1)) + 20))
+    def __init__(self, parent, values=(), variable=None, command=None, height=36, font=None, selected_color=None,
+                 selected_hover_color=None, unselected_color=None, unselected_hover_color=None, text_color=None,
+                 width=None, **_ignored):
+        import sys
+        app = parent.winfo_toplevel()
+        self.ui = ui = sys.modules[type(app).__module__]
+        super().__init__(parent, fg_color=ui.SURFACE_ALT, corner_radius=10, border_width=1, border_color=ui.BORDER)
+        self.values, self.command, self.variable = list(values), command, variable
+        self.seg_height = max(28, height - 8)
+        self.font = font or ui.font(13, "bold")
+        self.on_fill = selected_color or ui.ACCENT
+        self.on_hover = selected_hover_color or ui.ACCENT_HOVER
+        self.value = variable.get() if variable is not None else (self.values[0] if self.values else "")
+        self.buttons = {}
+        if variable is not None:
+            variable.trace_add("write", lambda *a: self.sync())
+        self.build()
+
+    def build(self):
+        ui = self.ui
+        for b in self.buttons.values():
+            b.destroy()
+        self.buttons = {}
+        for i, name in enumerate(self.values):
+            b = ctk.CTkButton(self, text=name, height=self.seg_height, corner_radius=7, font=self.font,
+                              fg_color="transparent", hover_color=ui.BORDER, text_color=ui.MUTED, border_width=0,
+                              width=max(56, 9 * len(name) + 26), command=lambda n=name: self.pick(n))
+            b.grid(row=0, column=i, padx=(4 if i == 0 else 2, 4 if i == len(self.values) - 1 else 0), pady=4)
+            self.buttons[name] = b
+        self.paint()
+
+    def pick(self, name):
+        self.set(name)
+        if self.command:
+            self.command(name)
+
+    def sync(self):
+        if self.variable is not None and self.variable.get() != self.value:
+            self.value = self.variable.get()
+            self.paint()
+
+    def paint(self):
+        ui = self.ui
+        for name, b in self.buttons.items():
+            if name == self.value:
+                b.configure(fg_color=self.on_fill, hover_color=self.on_hover, text_color="#FFFFFF")
+            else:
+                b.configure(fg_color="transparent", hover_color=ui.BORDER, text_color=ui.MUTED)
+
+    def set(self, value):
+        self.value = value
+        if self.variable is not None and self.variable.get() != value:
+            self.variable.set(value)
+        self.paint()
+
+    def get(self):
+        return self.value
+
+    def cget(self, key):
+        return list(self.values) if key == "values" else super().cget(key)
+
+    def configure(self, require_redraw=False, **kw):
+        if "values" in kw:
+            self.values = list(kw.pop("values"))
+            if self.value not in self.values and self.values:
+                self.value = self.values[0]
+            self.build()
+        if kw:
+            super().configure(require_redraw=require_redraw, **kw)
