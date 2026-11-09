@@ -35,6 +35,7 @@ import carriers_ui
 import policy_ui
 import broker_ui
 import brokers
+import settings_ui
 import commercial_risk
 import commercial_ui
 import property_risk
@@ -307,128 +308,7 @@ def font(size=14, weight="normal"):
     return ctk.CTkFont(family=FONT, size=size, weight=weight)
 
 
-class SettingsDialog(Panel):
-    FORM = True  # short page: scrolls inside the window when needed
-
-    def __init__(self, app):
-        super().__init__(app)
-        self.app = app
-        self.title("Settings")
-        self.geometry("600x790")
-        self.resizable(False, False)
-        self.configure(fg_color=BG)
-        self.transient(app)
-        self.grab_set()
-
-        body = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=12, border_width=1, border_color=BORDER)
-        body.pack(fill="both", expand=True, padx=2 * SP, pady=2 * SP)
-        body.grid_columnconfigure(0, weight=1)
-
-        self.root_var = tk.StringVar(value=app.cfg["clients_root"])
-        self.tpl_var = tk.StringVar(value=app.cfg["consent_template"])
-        self.mode_var = tk.StringVar(value=app.cfg["appearance"])
-        self.size_var = tk.StringVar(value=app.cfg.get("text_size") or "Large")
-        self.to_var = tk.StringVar(value=app.cfg["mvr_to"])
-        self.cc_var = tk.StringVar(value=app.cfg["mvr_cc"])
-
-        self._path_row(body, 0, "Clients folder", self.root_var, folder=True)
-        self._path_row(body, 2, "Consent form template (empty = built-in form)", self.tpl_var, folder=False)
-
-        ctk.CTkLabel(body, text="Appearance", font=font(13, "bold"), text_color=TEXT) \
-            .grid(row=4, column=0, sticky="w", padx=2 * SP, pady=(2 * SP, SP / 2))
-        ctk.CTkSegmentedButton(body, values=["System", "Light", "Dark"], variable=self.mode_var,
-                               font=font(13), selected_color=ACCENT, selected_hover_color=ACCENT_HOVER) \
-            .grid(row=5, column=0, sticky="w", padx=2 * SP)
-        ctk.CTkLabel(body, text="Text size", font=font(13, "bold"), text_color=TEXT) \
-            .grid(row=4, column=0, sticky="e", padx=2 * SP, pady=(2 * SP, SP / 2))
-        ctk.CTkSegmentedButton(body, values=list(TEXT_SIZES), variable=self.size_var,
-                               font=font(13), selected_color=ACCENT, selected_hover_color=ACCENT_HOVER) \
-            .grid(row=5, column=0, sticky="e", padx=2 * SP)
-
-        self._text_row(body, 6, "MVR request: To", self.to_var, "branch manager's email")
-        self._text_row(body, 8, "MVR request: CC", self.cc_var, "optional; separate several with ;")
-
-        self.mail_var = tk.StringVar(value=app.cfg.get("email_app", "New Outlook"))
-        ctk.CTkLabel(body, text="Email app", font=font(13, "bold"), text_color=TEXT) \
-            .grid(row=10, column=0, sticky="w", padx=2 * SP, pady=(2 * SP, SP / 2))
-        ctk.CTkSegmentedButton(body, values=["New Outlook", "Classic Outlook"], variable=self.mail_var,
-                               font=font(13), selected_color=ACCENT, selected_hover_color=ACCENT_HOVER) \
-            .grid(row=11, column=0, sticky="w", padx=2 * SP)
-        app.secondary_button(body, "Email signature…", lambda: SignatureDialog(self, app), width=150) \
-            .grid(row=11, column=0, sticky="e", padx=2 * SP)
-
-        self.types_var = tk.StringVar(value=app.cfg.get("client_types", ""))
-        self._text_row(body, 12, "Client types", self.types_var, "folders inside Clients, separated by commas")
-
-        self.autosave_var = tk.BooleanVar(value=app.cfg.get("mvr_autosave", True))
-        ctk.CTkSwitch(body, text="Auto-save MVRs: file MVR PDFs from Downloads into the client's folder",
-                      variable=self.autosave_var, font=font(13), text_color=TEXT, progress_color=ACCENT) \
-            .grid(row=14, column=0, sticky="w", padx=2 * SP, pady=(2 * SP, 0))
-
-        sample = ctk.CTkFrame(body, fg_color="transparent")
-        sample.grid(row=15, column=0, sticky="ew", padx=2 * SP, pady=(2 * SP, 0))
-        if app.cfg.get("sample_prev_root") is not None:
-            text, cmd = "Back to my Clients folder", lambda: (self.destroy(), app.leave_sample())
-        else:
-            text, cmd = "Try with sample clients", lambda: (self.destroy(), app.use_sample())
-        app.secondary_button(sample, text, cmd, width=200).pack(side="left")
-        ctk.CTkLabel(sample, text="Your real clients are not touched.",
-                     font=font(12), text_color=MUTED).pack(side="left", padx=SP)
-
-        btns = ctk.CTkFrame(body, fg_color="transparent")
-        btns.grid(row=16, column=0, sticky="e", padx=2 * SP, pady=2 * SP)
-        ctk.CTkButton(btns, text="Cancel", width=96, height=36, font=font(13), fg_color="transparent",
-                      border_width=1, border_color=BORDER, text_color=TEXT, hover_color=SURFACE_ALT,
-                      command=self.destroy).pack(side="left", padx=(0, SP))
-        ctk.CTkButton(btns, text="Save", width=96, height=36, font=font(13, "bold"),
-                      fg_color=PRIMARY, hover_color=PRIMARY_HOVER, command=self.save).pack(side="left")
-        self.bind("<Escape>", lambda e: self.destroy())
-
-    def _text_row(self, parent, row, label, var, hint):
-        ctk.CTkLabel(parent, text=label, font=font(13, "bold"), text_color=TEXT) \
-            .grid(row=row, column=0, sticky="w", padx=2 * SP, pady=(2 * SP, SP / 2))
-        ctk.CTkLabel(parent, text=hint, font=font(12), text_color=MUTED) \
-            .grid(row=row, column=0, sticky="e", padx=2 * SP, pady=(2 * SP, SP / 2))
-        ctk.CTkEntry(parent, textvariable=var, height=36, font=font(13), border_color=BORDER) \
-            .grid(row=row + 1, column=0, sticky="ew", padx=2 * SP)
-
-    def _path_row(self, parent, row, label, var, folder):
-        ctk.CTkLabel(parent, text=label, font=font(13, "bold"), text_color=TEXT) \
-            .grid(row=row, column=0, sticky="w", padx=2 * SP, pady=(2 * SP, SP / 2))
-        line = ctk.CTkFrame(parent, fg_color="transparent")
-        line.grid(row=row + 1, column=0, sticky="ew", padx=2 * SP)
-        line.grid_columnconfigure(0, weight=1)
-        ctk.CTkEntry(line, textvariable=var, height=36, font=font(13), border_color=BORDER) \
-            .grid(row=0, column=0, sticky="ew", padx=(0, SP))
-
-        def browse():
-            if folder:
-                p = filedialog.askdirectory(parent=self, title=label, initialdir=var.get() or None)
-            else:
-                p = filedialog.askopenfilename(parent=self, title=label, filetypes=[("PDF", "*.pdf")])
-            if p:
-                var.set(str(Path(p)))
-
-        ctk.CTkButton(line, text="Browse", width=88, height=36, font=font(13), fg_color="transparent",
-                      border_width=1, border_color=BORDER, text_color=TEXT, hover_color=SURFACE_ALT,
-                      command=browse).grid(row=0, column=1)
-
-    def save(self):
-        config.update(self.app.cfg,
-                      clients_root=self.root_var.get().strip(),
-                      consent_template=self.tpl_var.get().strip(),
-                      appearance=self.mode_var.get(),
-                      text_size=self.size_var.get(),
-                      mvr_to=self.to_var.get().strip(),
-                      mvr_cc=self.cc_var.get().strip(),
-                      email_app=self.mail_var.get(),
-                      mvr_autosave=self.autosave_var.get(),
-                      client_types=", ".join(parse_types(self.types_var.get())) or config.DEFAULTS["client_types"])
-        ctk.set_appearance_mode(self.app.cfg["appearance"])
-        ctk.set_widget_scaling(TEXT_SIZES.get(self.app.cfg["text_size"], 1.15))
-        self.app.on_settings_changed()
-        self.app.reload_types()
-        self.destroy()
+SettingsDialog = settings_ui.SettingsDialog      # the Settings page lives in settings_ui.py
 
 
 class SignatureDialog(Panel):
@@ -1558,6 +1438,7 @@ class App(ctk.CTk):
         self.row_buttons = {}
 
         self._build_topbar()
+        self._build_setup_bar()
         body = self.clients_view = ctk.CTkFrame(self, fg_color="transparent")
         body.pack(fill="both", expand=True, padx=3 * SP, pady=(0, 3 * SP))
         body.grid_columnconfigure(0, weight=1, minsize=340, uniform="cols")   # client list
@@ -1610,13 +1491,48 @@ class App(ctk.CTk):
     def _startup(self):
         """Sign in first (when there are broker profiles), then the Clients folder."""
         if brokers.names(self.cfg):
-            broker_ui.SignInPage(self, on_done=self._first_run)
+            broker_ui.SignInPage(self, on_done=self._after_signin)
         elif not self.cfg.get("broker_prompted"):
             config.update(self.cfg, broker_prompted=True)
-            broker_ui.ProfilePage(self, None, on_done=self._first_run, first=True)   # once: make your profile
+            broker_ui.ProfilePage(self, None, on_done=self._after_signin, first=True)   # once: make your profile
         else:
-            self._first_run()
+            self._after_signin()
 
+    def _after_signin(self):
+        self._first_run()
+        self.refresh_setup_bar()
+        self.after(700, self._maybe_guide)
+
+    def _maybe_guide(self):
+        """A new broker sees the Setup guide once, by itself."""
+        if settings_ui.setup_left(self) and not self.cfg.get("setup_seen") and not self.locked():
+            settings_ui.SetupGuidePage(self)
+
+    def _build_setup_bar(self):
+        """A slim banner under the top bar until the setup is finished (or dismissed)."""
+        bar = self.setup_bar = ctk.CTkFrame(self, fg_color=WARN_SOFT, corner_radius=10, border_width=1, border_color=BORDER)
+        self.setup_text = ctk.CTkLabel(bar, text="", font=font(13), text_color=TEXT, anchor="w")
+        self.setup_text.pack(side="left", padx=(2 * SP, SP), pady=SP)
+        ctk.CTkButton(bar, text="Open setup guide", width=150, height=32, font=font(13, "bold"), fg_color=ACCENT,
+                      hover_color=ACCENT_HOVER, command=lambda: settings_ui.SetupGuidePage(self)).pack(side="left", pady=SP)
+        self.secondary_button(bar, "Not now", self._dismiss_setup, width=90, height=32).pack(side="right", padx=SP, pady=SP)
+        self._setup_shown = False
+
+    def _dismiss_setup(self):
+        config.update(self.cfg, setup_dismissed=True)
+        self.refresh_setup_bar()
+
+    def refresh_setup_bar(self):
+        left = settings_ui.setup_left(self)
+        show = bool(left) and not self.cfg.get("setup_dismissed") and not self.locked()
+        if show:
+            self.setup_text.configure(text=f"Finish setting up: {len(left)} thing{'s' if len(left) > 1 else ''} left "
+                                           f"({left[0][1].lower()}).")
+            if not self._setup_shown:
+                self.setup_bar.pack(fill="x", padx=3 * SP, pady=(0, SP), after=self.topbar)
+        elif self._setup_shown:
+            self.setup_bar.pack_forget()
+        self._setup_shown = show
     def start_sign_in(self):
         """Switch broker / sign out."""
         brokers.sign_out(self.cfg)
@@ -1632,6 +1548,8 @@ class App(ctk.CTk):
         name = self.cfg.get("current_broker") or ""
         if getattr(self, "broker_btn", None) is not None:
             self.broker_btn.configure(text=name or "Sign in")
+        if getattr(self, "setup_bar", None) is not None:
+            self.refresh_setup_bar()
 
     def broker_menu(self):
         menu = tk.Menu(self, tearoff=0)
@@ -1739,7 +1657,7 @@ class App(ctk.CTk):
 
     # ---------- top bar ----------
     def _build_topbar(self):
-        bar = ctk.CTkFrame(self, fg_color="transparent", height=64)
+        bar = self.topbar = ctk.CTkFrame(self, fg_color="transparent", height=64)
         bar.pack(fill="x", padx=3 * SP, pady=(2 * SP, 2 * SP))
         mark = ctk.CTkFrame(bar, width=10, height=28, corner_radius=3, fg_color=PRIMARY)
         mark.pack(side="left", padx=(0, 1.5 * SP))

@@ -27,6 +27,8 @@ DEFAULTS = {
     "knowledge_dir": "",      # Rules tab notes; empty = found by notes_search.notes_dir()
     "brokers": {},            # broker profiles (brokers.py): name -> details + salted PIN hash
     "current_broker": "",     # who signed in last / is signed in now
+    "setup_seen": False,       # the Setup guide has been shown once
+    "setup_dismissed": False,  # the "finish setting up" banner was dismissed
     "broker_prompted": False,  # the "make your profile" page has been shown once
 }
 
