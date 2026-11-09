@@ -503,6 +503,19 @@ def save(folder, values):
     return clean
 
 
+def save_contact(folder, name):
+    """Put a person's name in the first empty contact row (used when a commercial client is created with an owner)."""
+    name = " ".join(str(name or "").split())
+    if not name:
+        return
+    values = load(folder)
+    if any(values.get(f"contact{i}_first") or values.get(f"contact{i}_last") for i in range(1, 5)):
+        return
+    first, _, last = name.rpartition(" ")
+    values["contact1_first"], values["contact1_last"] = (first, last) if first else ("", last)
+    save(folder, values)
+
+
 def subject_line(values, kind_text=None):
     """The submission subject the in-house commercial team wants: B01 – Code XXXXXX – Binder1234 – CGL (Bubble Tea Shop)."""
     parts = [values.get("branch", ""), f"Code {values['pb_code']}" if values.get("pb_code") else "",

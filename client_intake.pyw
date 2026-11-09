@@ -1317,7 +1317,7 @@ class ClientDialog(Panel):
         self.old_name = folder.name if editing else ""
         self.old_type = app.client_type_of.get(folder, "") if editing else ""
         self.title(f"Edit client - {folder.name}" if editing else "New client")
-        self.geometry("480x700" if editing else "480x540")
+        self.geometry("480x700" if editing else "480x660")
         self.resizable(False, True)
         self.configure(fg_color=BG)
         self.transient(app)
@@ -1339,12 +1339,12 @@ class ClientDialog(Panel):
         self.type_var = tk.StringVar(value=self.old_type or (last if last in types else types[0]))
         ctk.CTkSegmentedButton(body, values=types, variable=self.type_var, font=font(13), height=34,
                                selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER,
-                               command=lambda _: self.update_changes()) \
+                               command=lambda _: (self.update_changes(), self.type_changed())) \
             .grid(row=3, column=0, columnspan=2, sticky="ew", padx=p)
 
         self._label(body, 4, 0, "Client name *")
         self.name = self._entry(body, 5, 0, folder.name if editing else "", "e.g. JOHN SMITH", span=2, upper=True)
-        self._label(body, 6, 0, "Driver's licence #" + ("" if editing else " *"))
+        self.dln_label = self._label(body, 6, 0, "Driver's licence #" + ("" if editing else " *"))
         self._label(body, 6, 1, "Date of birth")
         self.dln = self._entry(body, 7, 0, format_dln(info.get("dln", "")), "A1234-12345-12345", upper=True, dln=True)
         self.birth = tracker_ui.DateField(body, sys.modules[type(app).__module__], compact=True)      # date picker
@@ -1358,7 +1358,13 @@ class ClientDialog(Panel):
         self.email = self._entry(body, 9, 1, info.get("email", ""), "optional", padx=(SP, p))
         self.error = ctk.CTkLabel(body, text="", font=font(12), text_color=DANGER, justify="left", anchor="w",
                                   wraplength=400)
-        self.error.grid(row=10, column=0, columnspan=2, sticky="w", padx=p, pady=(SP, 0))
+        self.error.grid(row=14, column=0, columnspan=2, sticky="w", padx=p, pady=(SP, 0))
+        # Commercial: the owner / contact whose name goes on the commercial consent (new clients only)
+        self.contact_label = self._label(body, 12, 0, "Owner / contact name (goes on the consent)")
+        self.contact = self._entry(body, 13, 0, "", "e.g. JORDAN EXAMPLE", span=2, upper=True)
+        if editing:
+            self.contact_label.grid_remove()
+            self.contact.grid_remove()
 
         self.renames, self.rename_var, self.refill_var = [], tk.BooleanVar(value=True), tk.BooleanVar(value=True)
         if editing:
@@ -1385,11 +1391,21 @@ class ClientDialog(Panel):
             e.bind("<Return>", lambda ev: self.save())
         self.bind("<Escape>", lambda e: self.destroy())
         self.update_changes()
+        self.type_changed()
         self.after(100, self.name.focus_set)
 
     def _label(self, parent, row, col, text):
-        ctk.CTkLabel(parent, text=text, font=font(13, "bold"), text_color=TEXT) \
-            .grid(row=row, column=col, sticky="w", padx=(3 * SP, 0) if col == 0 else (SP, 0), pady=(1.5 * SP, SP / 2))
+        label = ctk.CTkLabel(parent, text=text, font=font(13, "bold"), text_color=TEXT)
+        label.grid(row=row, column=col, sticky="w", padx=(3 * SP, 0) if col == 0 else (SP, 0), pady=(1.5 * SP, SP / 2))
+        return label
+
+    def type_changed(self):
+        """Commercial: the licence # is optional and an owner / contact name is asked for."""
+        commercial = self.type_var.get() == "Commercial"
+        self.dln_label.configure(text="Driver's licence #" + (" (optional)" if commercial or self.folder else " *"))
+        if self.folder is None:
+            for w in (self.contact_label, self.contact):
+                w.grid() if commercial else w.grid_remove()
 
     def _entry(self, parent, row, col, value, placeholder, span=1, upper=False, padx=None, dln=False):
         e = ctk.CTkEntry(parent, height=38, font=font(14), border_color=BORDER, placeholder_text=placeholder)
@@ -1455,7 +1471,7 @@ class ClientDialog(Panel):
         birth = parse_birth(self.birth.get())
         if not name:
             return self._fail(self.name, "Enter the client's name.")
-        if self.folder is None and not dln:
+        if self.folder is None and not dln and self.type_var.get() != "Commercial":
             return self._fail(self.dln, "Enter the driver's licence #.")
         if dln and not is_valid_dln(dln):
             return self._fail(self.dln, "Licence # must be 1 letter + 14 digits, e.g. A1234-12345-12345.")
@@ -1468,7 +1484,8 @@ class ClientDialog(Panel):
         self.update_idletasks()
         try:
             if self.folder is None:
-                folder, message, ok = self.app.create_client(name, kind, dln, phone, email, birth)
+                folder, message, ok = self.app.create_client(name, kind, dln, phone, email, birth,
+                                                             clean_name(self.contact.get()) if kind == "Commercial" else "")
             else:
                 folder, message, ok = self.app.edit_client(
                     self.folder, name, kind, dln, phone, email, birth,
@@ -1857,7 +1874,7 @@ class App(ctk.CTk):
         self.show_view("Clients")
         ClientDialog(self)
 
-    def create_client(self, name, client_type, dln, phone, email, birth=""):
+    def create_client(self, name, client_type, dln, phone, email, birth="", contact=""):
         """Make the folder (or reuse an existing one), save the details, fill the consent.
 
         Returns (folder, message, ok). Raises when the Clients folder isn't set.
@@ -1877,6 +1894,8 @@ class App(ctk.CTk):
             if find_docs(folder)["Client consent"]:
                 return folder, f"{name} already exists in {client_type} - opened it.", True
             try:
+                if contact:
+                    commercial_risk.save_contact(folder, contact)
                 fill(folder, dln, self.cfg["consent_template"])
                 return folder, f"✓ {name} already existed in {client_type}.\nIt had no consent form - one was filled.", True
             except Exception as e:
@@ -1891,6 +1910,8 @@ class App(ctk.CTk):
         if elsewhere:
             lines.append(f"(also has a folder in {', '.join(elsewhere)})")
         try:
+            if contact:
+                commercial_risk.save_contact(folder, contact)
             fill(folder, dln, self.cfg["consent_template"])
             lines.append("Consent form filled")
         except Exception as e:

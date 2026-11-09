@@ -112,6 +112,13 @@ def fill_commercial(folder):
     values = {"Client Name": business, "Date_af_date": datetime.date.today().strftime("%B %d, %Y").replace(" 0", " ")}
     for i, name in enumerate(people, start=1):
         values[f"Client Name {i}"] = name
+    try:                                            # the first person's licence #, when one was typed (never required)
+        import mvr_email
+        dln = mvr_email.load_client(folder).get("dln", "")
+    except Exception:
+        dln = ""
+    if people and dln:
+        values["Driver license 1"] = format_dln(dln)
     writer = _pypdf().PdfWriter(clone_from=reader)
     writer.update_page_form_field_values(writer.pages[0], values, auto_regenerate=False, flatten=True)
     for page in writer.pages:
