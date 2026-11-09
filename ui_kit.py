@@ -247,3 +247,54 @@ class Chips(ctk.CTkFrame):
             self.build()
         if kw:
             super().configure(require_redraw=require_redraw, **kw)
+
+
+class NavTabs(ctk.CTkFrame):
+    """Main navigation: plain text tabs, the current one dark / bold with a short red bar under it. No track, no fill.
+    Same calls as Segmented: values, variable, command, set(), get()."""
+
+    def __init__(self, parent, values=(), variable=None, command=None, font=None, **_ignored):
+        import sys
+        app = parent.winfo_toplevel()
+        self.ui = ui = sys.modules[type(app).__module__]
+        super().__init__(parent, fg_color="transparent")
+        self.values, self.command, self.variable = list(values), command, variable
+        self.font = font or ui.font(15, "bold")
+        self.value = variable.get() if variable is not None else (self.values[0] if self.values else "")
+        self.tabs = {}
+        for i, name in enumerate(self.values):
+            b = ctk.CTkButton(self, text=name, width=10, height=34, corner_radius=8, font=self.font, fg_color="transparent",
+                              hover_color=ui.SURFACE_ALT, text_color=ui.MUTED, command=lambda n=name: self.pick(n))
+            b.grid(row=0, column=i, padx=(0 if i == 0 else 2, 2))
+            bar = ctk.CTkFrame(self, width=1, height=3, corner_radius=2, fg_color="transparent")
+            bar.grid(row=1, column=i, sticky="ew", padx=14, pady=(1, 0))
+            self.tabs[name] = (b, bar)
+        if variable is not None:
+            variable.trace_add("write", lambda *a: self.sync())
+        self.paint()
+
+    def paint(self):
+        ui = self.ui
+        for name, (b, bar) in self.tabs.items():
+            on = name == self.value
+            b.configure(text_color=ui.TEXT if on else ui.MUTED)
+            bar.configure(fg_color=ui.PRIMARY if on else "transparent")
+
+    def pick(self, name):
+        self.set(name)
+        if self.command:
+            self.command(name)
+
+    def sync(self):
+        if self.variable is not None and self.variable.get() != self.value:
+            self.value = self.variable.get()
+            self.paint()
+
+    def set(self, value):
+        self.value = value
+        if self.variable is not None and self.variable.get() != value:
+            self.variable.set(value)
+        self.paint()
+
+    def get(self):
+        return self.value

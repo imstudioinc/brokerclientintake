@@ -1681,9 +1681,8 @@ class App(ctk.CTk):
         self.broker_btn.pack(side="right", padx=(0, SP))
         # Clients | Tracker | Rules: three views in this one window
         self.view_var = tk.StringVar(value="Clients")
-        ui_kit.Segmented(bar, values=["Clients", "Tracker", "Rules"], variable=self.view_var, height=36,
-                               font=font(13, "bold"), selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER,
-                               command=self.show_view).pack(side="right", padx=(0, 2 * SP))
+        ui_kit.NavTabs(bar, values=["Clients", "Tracker", "Rules"], variable=self.view_var, font=font(15, "bold"),
+                       command=self.show_view).pack(side="right", padx=(0, 2 * SP))
         self.sample_btn = self.secondary_button(bar, "Back to my Clients folder", self.leave_sample, width=190)
         if self.cfg.get("sample_prev_root") is not None:
             self.root_label.configure(text="Sample clients - not your real files", text_color=DANGER)
