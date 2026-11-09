@@ -88,8 +88,16 @@ class PropertyDetailsPage(Panel):
                                       fg_color=ui.PRIMARY, hover_color=ui.PRIMARY_HOVER, command=self.save)
         self.save_btn.pack(side="left")
 
-        self.body = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self.body.grid(row=1, column=0, sticky="nsew")
+        import ui_kit
+        main = ctk.CTkFrame(self, fg_color="transparent", height=1)       # side list of sections | the open section
+        main.grid(row=1, column=0, sticky="nsew")
+        main.grid_columnconfigure(1, weight=1)
+        main.grid_rowconfigure(0, weight=1)
+        self.current = None
+        self.nav = ui_kit.SectionNav(main, ui, self.select)
+        self.nav.grid(row=0, column=0, sticky="ns", padx=(ui.SP, 0), pady=(0, ui.SP))
+        self.body = ctk.CTkScrollableFrame(main, fg_color="transparent")
+        self.body.grid(row=0, column=1, sticky="nsew")
         self.body.grid_columnconfigure(0, weight=1)
         self.error = ctk.CTkLabel(self, text="", font=ui.font(13), text_color=ui.DANGER, anchor="w")
         self.error.grid(row=2, column=0, sticky="ew", padx=ui.SP * 2)
@@ -187,44 +195,98 @@ class PropertyDetailsPage(Panel):
         self.values["dwelling"] = self.dwelling.get()
         self.build()
 
-    def build(self):
+    # ----- sections: a list on the left, the open section on the right (one at a time)
+    def _begin_build(self):
         ui = self.ui
         for w in self.body.winfo_children():
             w.destroy()
+        self.nav.clear()
         self.inputs, self.sections = {}, {}
-        use = self.risk.use_of(self.values)
-        for r, (key, title, fields) in enumerate(self.risk.fields_for(use)):
-            fields = [f for f in fields if f[0] != "dwelling"]          # the picker at the top is that question
-            wrap = ctk.CTkFrame(self.body, fg_color="transparent")
-            wrap.grid(row=r, column=0, sticky="ew", padx=ui.SP, pady=(0, ui.SP))
-            wrap.grid_columnconfigure(0, weight=1)
-            head = ctk.CTkButton(wrap, text="", anchor="w", height=40, font=ui.font(14, "bold"), text_color=ui.TEXT,
-                                 fg_color=ui.SURFACE, hover_color=ui.SURFACE_ALT, border_width=1,
-                                 border_color=ui.BORDER, corner_radius=10,
-                                 command=lambda k=key: self.toggle(k))
-            head.grid(row=0, column=0, sticky="ew")
-            box = ctk.CTkFrame(wrap, fg_color=ui.SURFACE, corner_radius=10, border_width=1, border_color=ui.BORDER)
-            box.grid_columnconfigure((0, 1), weight=1, uniform="cell")
-            self.sections[key] = {"head": head, "box": box, "title": title, "fields": fields, "built": False}
-            self.show_section(key)
+        head = ctk.CTkFrame(self.body, fg_color="transparent", height=1)
+        head.grid(row=0, column=0, sticky="ew", padx=2 * ui.SP, pady=(ui.SP, 0))
+        head.grid_columnconfigure(0, weight=1)
+        self.title_lbl = ctk.CTkLabel(head, text="", font=ui.font(20, "bold"), text_color=ui.TEXT, anchor="w")
+        self.title_lbl.grid(row=0, column=0, sticky="w")
+        self.sub_lbl = ctk.CTkLabel(head, text="", font=ui.font(13), text_color=ui.MUTED, anchor="w")
+        self.sub_lbl.grid(row=1, column=0, sticky="w")
+        foot = ctk.CTkFrame(self.body, fg_color="transparent", height=1)
+        foot.grid(row=2, column=0, sticky="ew", padx=2 * ui.SP, pady=(ui.SP, 2 * ui.SP))
+        foot.grid_columnconfigure(1, weight=1)
+        self.prev_btn = self.app.secondary_button(foot, "←  Previous", lambda: self.step(-1), width=140)
+        self.prev_btn.grid(row=0, column=0, sticky="w")
+        self.next_btn = ctk.CTkButton(foot, text="Next  →", width=150, height=36, font=ui.font(14, "bold"),
+                                      command=lambda: self.step(1))
+        self.next_btn.grid(row=0, column=2, sticky="e")
+
+    def _add_section(self, key, title, **extra):
+        ui = self.ui
+        box = ctk.CTkFrame(self.body, fg_color=ui.SURFACE, corner_radius=12, border_width=1, border_color=ui.BORDER)
+        box.grid_columnconfigure((0, 1), weight=1, uniform="cell")
+        self.sections[key] = {"box": box, "title": title, "built": False, **extra}
+        self.nav.add(key, title, *self.progress(key))
+
+    def _finish_build(self):
+        keys = self.visible_keys()
+        self.select(self.current if self.current in keys else (keys[0] if keys else None), collect=False)
         self.refresh_count()
 
-    def toggle(self, key):
-        self.collect()
-        self.open[key] = not self.open.get(key, False)
-        self.show_section(key)
+    def build(self):
+        self._begin_build()
+        use = self.risk.use_of(self.values)
+        for key, title, fields in self.risk.fields_for(use):
+            fields = [f for f in fields if f[0] != "dwelling"]          # the picker at the top is that question
+            self._add_section(key, title, fields=fields)
+        self._finish_build()
 
-    def show_section(self, key):
-        ui, s = self.ui, self.sections[key]
-        opened = self.open.get(key, False)
-        answered = sum(1 for f in s["fields"] if self.values.get(f[0]) not in (None, ""))
-        s["head"].configure(text=f"{'▾' if opened else '▸'}   {s['title']}      {answered} of {len(s['fields'])}")
-        if opened:
-            if not s["built"]:
-                self.fill_section(key)
-            s["box"].grid(row=1, column=0, sticky="ew", pady=(ui.SP / 2, 0))
-        else:
-            s["box"].grid_remove()
+    def visible_keys(self):
+        return list(self.sections)
+
+    def progress(self, key):
+        """(answered, total) for one section."""
+        if key not in self.sections:
+            return 0, 0
+        fields = self.sections[key]["fields"]
+        return sum(1 for f in fields if self.values.get(f[0]) not in (None, "")), len(fields)
+
+    def refresh_nav(self):
+        for key in self.sections:
+            self.nav.update(key, *self.progress(key))
+        if self.current in self.sections:
+            done, total = self.progress(self.current)
+            self.sub_lbl.configure(text=f"{done} of {total} answered")
+
+    def select(self, key, collect=True):
+        if key not in self.sections:
+            return
+        ui = self.ui
+        if collect and self.inputs:
+            self.collect()
+        if self.current in self.sections:
+            self.sections[self.current]["box"].grid_remove()
+        self.current = key
+        s = self.sections[key]
+        if not s["built"]:
+            self.fill_section(key)
+        s["box"].grid(row=1, column=0, sticky="ew", padx=2 * ui.SP, pady=(ui.SP, 0))
+        self.title_lbl.configure(text=s["title"])
+        self.nav.select(key)
+        self.refresh_nav()
+        keys = self.visible_keys()
+        i = keys.index(key) if key in keys else 0
+        self.prev_btn.grid() if i > 0 else self.prev_btn.grid_remove()
+        last = i >= len(keys) - 1
+        self.next_btn.configure(text="Save" if last else "Next  →", fg_color=ui.PRIMARY if last else ui.ACCENT,
+                                hover_color=ui.PRIMARY_HOVER if last else ui.ACCENT_HOVER,
+                                command=self.save if last else (lambda: self.step(1)))
+        try:
+            self.body._parent_canvas.yview_moveto(0)
+        except Exception:
+            pass
+
+    def step(self, delta):
+        keys = self.visible_keys()
+        if self.current in keys:
+            self.select(keys[max(0, min(len(keys) - 1, keys.index(self.current) + delta))])
 
     def fill_section(self, key):
         ui, s = self.ui, self.sections[key]
@@ -287,6 +349,8 @@ class PropertyDetailsPage(Panel):
         self.values["dwelling"] = self.dwelling.get() or self.values.get("dwelling", "")
 
     def refresh_count(self):
+        if getattr(self, "sections", None):
+            self.refresh_nav()
         done, total, missing = self.risk.completeness(self.values)
         self.count.configure(text=f"{done} of {total} answered" + ("" if not missing else f" - still: {missing[0].lower()}"
                                                                     + (" ..." if len(missing) > 1 else "")),

@@ -298,3 +298,68 @@ class NavTabs(ctk.CTkFrame):
 
     def get(self):
         return self.value
+
+
+class SectionNav(ctk.CTkScrollableFrame):
+    """The list of sections on a long form (Property / Commercial details): one row per section with a status mark
+    (✓ done, ● started, ○ empty) and "3/5"; the open section is tinted. One section is shown at a time, so the
+    form reads as a short checklist instead of a wall of folded rows.
+
+    SectionNav(parent, ui, command): add(key, title, answered, total), update(key, answered, total), select(key),
+    show(key, visible), clear()."""
+    SELECTED = ("#E8F0FE", "#1F2D45")
+
+    def __init__(self, parent, ui, command, width=270):
+        super().__init__(parent, fg_color=ui.SURFACE, corner_radius=12, border_width=1, border_color=ui.BORDER,
+                         width=width)
+        self.ui, self.command = ui, command
+        self.rows, self.current = {}, None
+        self.grid_columnconfigure(0, weight=1)
+
+    def clear(self):
+        for w in self.winfo_children():
+            w.destroy()
+        self.rows, self.current = {}, None
+
+    def add(self, key, title, answered, total):
+        ui = self.ui
+        f = ctk.CTkFrame(self, fg_color="transparent", corner_radius=8)
+        f.grid(row=len(self.rows), column=0, sticky="ew", padx=2, pady=1)
+        f.grid_columnconfigure(1, weight=1)
+        mark = ctk.CTkLabel(f, text="", width=24, font=ui.font(15, "bold"))
+        mark.grid(row=0, column=0, padx=(8, 2), pady=9)
+        name = ctk.CTkLabel(f, text=title, anchor="w", justify="left", wraplength=165, font=ui.font(13, "bold"),
+                            text_color=ui.TEXT)
+        name.grid(row=0, column=1, sticky="w", pady=6)
+        count = ctk.CTkLabel(f, text="", font=ui.font(12), text_color=ui.MUTED)
+        count.grid(row=0, column=2, padx=(4, 10))
+        self.rows[key] = {"frame": f, "mark": mark, "name": name, "count": count}
+        for w in (f, mark, name, count):
+            w.bind("<Button-1>", lambda e, k=key: self.command(k))
+            w.bind("<Enter>", lambda e, k=key: self.hover(k, True))
+            w.bind("<Leave>", lambda e, k=key: self.hover(k, False))
+            w.configure(cursor="hand2")
+        self.update(key, answered, total)
+
+    def hover(self, key, on):
+        if key != self.current and key in self.rows:
+            self.rows[key]["frame"].configure(fg_color=self.ui.SURFACE_ALT if on else "transparent")
+
+    def update(self, key, answered, total):
+        r, ui = self.rows.get(key), self.ui
+        if not r:
+            return
+        done = total > 0 and answered >= total
+        r["mark"].configure(text="✓" if done else "●" if answered else "○",
+                            text_color=ui.SUCCESS if done else ui.ACCENT if answered else ui.MUTED)
+        r["count"].configure(text=f"{answered}/{total}" if total else "")
+
+    def select(self, key):
+        for k, r in self.rows.items():
+            r["frame"].configure(fg_color=self.SELECTED if k == key else "transparent")
+        self.current = key
+
+    def show(self, key, visible):
+        r = self.rows.get(key)
+        if r:
+            r["frame"].grid() if visible else r["frame"].grid_remove()

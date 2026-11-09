@@ -158,49 +158,34 @@ class CommercialDetailsPage(property_ui.PropertyDetailsPage):
     def apply_liability(self):
         on = risk.is_liability_only(self.values)
         for key, s in self.sections.items():
-            if risk.section_visible(s["flags"], self.values):
-                s["wrap"].grid()
-            else:
-                s["wrap"].grid_remove()
+            self.nav.show(key, risk.section_visible(s["flags"], self.values))
         self.liab_note.configure(
             text=("Locations, construction, renovations, protection, property coverage and items are hidden and left off "
                   "the application (it keeps the cover page, the liability page and the liability schedule)." if on else
                   "Tick this when only liability is being insured: the application then has no property pages."))
+        if self.current in self.sections and self.current not in self.visible_keys():
+            keys = self.visible_keys()
+            self.select(keys[0] if keys else None, collect=False)
+        elif self.current in self.sections:
+            self.select(self.current, collect=False)          # the Next / Save button depends on what is visible
 
-    # ----- sections
+    def visible_keys(self):
+        return [k for k, s in self.sections.items() if risk.section_visible(s["flags"], self.values)]
+
+    def progress(self, key):
+        s = self.sections.get(key)
+        if not s:
+            return 0, 0
+        return sum(1 for k in s["keys"] if risk.is_answered(self.values, k)), len(s["keys"])
+
+    # ----- sections (the side list and the open section come from property_ui.PropertyDetailsPage)
     def build(self):
-        ui = self.ui
-        for w in self.body.winfo_children():
-            w.destroy()
-        self.inputs, self.sections = {}, {}
-        for r, (key, title, items, flags) in enumerate(risk.SECTIONS):
+        self._begin_build()
+        for key, title, items, flags in risk.SECTIONS:
             items = [i for i in items if not (isinstance(i, tuple) and i[0] == "dwelling")]   # the picker at the top
-            wrap = ctk.CTkFrame(self.body, fg_color="transparent")
-            wrap.grid(row=r, column=0, sticky="ew", padx=ui.SP, pady=(0, ui.SP))
-            wrap.grid_columnconfigure(0, weight=1)
-            head = ctk.CTkButton(wrap, text="", anchor="w", height=40, font=ui.font(14, "bold"), text_color=ui.TEXT,
-                                 fg_color=ui.SURFACE, hover_color=ui.SURFACE_ALT, border_width=1,
-                                 border_color=ui.BORDER, corner_radius=10, command=lambda k=key: self.toggle(k))
-            head.grid(row=0, column=0, sticky="ew")
-            box = ctk.CTkFrame(wrap, fg_color=ui.SURFACE, corner_radius=10, border_width=1, border_color=ui.BORDER)
-            box.grid_columnconfigure((0, 1), weight=1, uniform="cell")
-            self.sections[key] = {"head": head, "box": box, "title": title, "items": items, "flags": flags,
-                                  "wrap": wrap, "keys": risk.section_keys(items), "built": False}
-            self.show_section(key)
+            self._add_section(key, title, items=items, flags=flags, keys=risk.section_keys(items))
+        self._finish_build()
         self.apply_liability()
-        self.refresh_count()
-
-    def show_section(self, key):
-        ui, s = self.ui, self.sections[key]
-        opened = self.open.get(key, False)
-        answered = sum(1 for k in s["keys"] if risk.is_answered(self.values, k))
-        s["head"].configure(text=f"{'▾' if opened else '▸'}   {s['title']}      {answered} of {len(s['keys'])}")
-        if opened:
-            if not s["built"]:
-                self.fill_section(key)
-            s["box"].grid(row=1, column=0, sticky="ew", pady=(ui.SP / 2, 0))
-        else:
-            s["box"].grid_remove()
 
     def fill_section(self, key):
         ui, s = self.ui, self.sections[key]
