@@ -66,9 +66,12 @@ class Segmented(ctk.CTkFrame):
         self.on_hover = selected_hover_color or ui.ACCENT_HOVER
         self.value = variable.get() if variable is not None else (self.values[0] if self.values else "")
         self.buttons = {}
+        self.base_size = int(self.font.cget("size"))
+        self.fitting = False
         if variable is not None:
             variable.trace_add("write", lambda *a: self.sync())
         self.build()
+        self.bind("<Configure>", lambda e: self.after_idle(self.fit))
 
     def build(self):
         ui = self.ui
@@ -76,12 +79,39 @@ class Segmented(ctk.CTkFrame):
             b.destroy()
         self.buttons = {}
         for i, name in enumerate(self.values):
-            b = ctk.CTkButton(self, text=name, height=self.seg_height, corner_radius=7, font=self.font,
+            try:
+                natural = int(self.font.measure(name)) + 6          # the text plus a little air; never clipped
+            except Exception:
+                natural = 9 * len(name) + 16
+            b = ctk.CTkButton(self, text=name, height=self.seg_height, corner_radius=5, font=self.font,
                               fg_color="transparent", hover_color=ui.BORDER, text_color=ui.MUTED, border_width=0,
-                              width=max(56, 9 * len(name) + 26), command=lambda n=name: self.pick(n))
-            b.grid(row=0, column=i, padx=(4 if i == 0 else 2, 4 if i == len(self.values) - 1 else 0), pady=4)
+                              border_spacing=0, width=max(40, natural), command=lambda n=name: self.pick(n))
+            b.grid(row=0, column=i, sticky="ew", padx=(3 if i == 0 else 1, 3 if i == len(self.values) - 1 else 1), pady=3)
+            self.grid_columnconfigure(i, weight=1)                  # spare room is shared out; a tight row still fits
             self.buttons[name] = b
         self.paint()
+
+    def fit(self):
+        """When the row is wider than the room it was given (a narrow window), use a smaller font so every tab shows."""
+        if self.fitting or not self.winfo_exists():
+            return
+        self.fitting = True
+        try:
+            room = self.winfo_width()
+            if room <= 1:
+                return
+            size = self.base_size
+            while True:
+                if size != int(self.font.cget("size")):
+                    self.font = ctk.CTkFont(family=self.font.cget("family"), size=size, weight=self.font.cget("weight"))
+                    for b in self.buttons.values():
+                        b.configure(font=self.font)
+                    self.update_idletasks()
+                if self.winfo_reqwidth() <= room + 1 or size <= 9:
+                    break
+                size -= 1
+        finally:
+            self.fitting = False
 
     def pick(self, name):
         self.set(name)
