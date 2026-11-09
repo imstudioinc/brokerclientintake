@@ -1973,11 +1973,11 @@ class App(ctk.CTk):
         self.search_entry.bind("<KeyRelease>", lambda e: self.refresh_soon(150, reset_page=True, rescan=False))
 
         self.filter_var = tk.StringVar(value="All")
-        self.filter_buttons = ui_kit.Segmented(c, values=["All"] + self.client_types,
-                                                     variable=self.filter_var, font=font(12, "bold"), height=34,
+        self.filter_buttons = ui_kit.Chips(c, values=["All"] + self.client_types,
+                                                     variable=self.filter_var, font=font(13, "bold"), height=30,
                                                      selected_color=ACCENT, selected_hover_color=ACCENT_HOVER,
                                                      command=lambda _: self.refresh_soon(0, reset_page=True, rescan=False))
-        self.filter_buttons.grid(row=2, column=0, sticky="ew", padx=SP + 2, pady=(0, SP))
+        self.filter_buttons.grid(row=2, column=0, sticky="ew", padx=p, pady=(0, 2))
 
         self.list_frame = ctk.CTkScrollableFrame(c, fg_color="transparent")
         self.list_frame.grid(row=3, column=0, sticky="nsew", padx=SP, pady=(0, SP))
