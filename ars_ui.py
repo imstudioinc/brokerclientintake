@@ -12,6 +12,8 @@ from pathlib import Path
 
 import customtkinter as ctk
 
+import ui_kit
+
 import ars
 import eligibility
 import mvr
@@ -55,7 +57,7 @@ class ArsEntryPage(Panel):
         self.copy_all.pack(side="right")
 
         # ----- tabs (filled when the documents are read) and a one-line hint
-        self.tab_bar = ctk.CTkSegmentedButton(
+        self.tab_bar = ui_kit.Segmented(
             self, values=["Reading…"], height=38, font=ui.font(14, "bold"), selected_color=TAB_ON,
             selected_hover_color=TAB_ON, unselected_color=ui.SURFACE_ALT, unselected_hover_color=ui.BORDER,
             text_color=ui.TEXT, command=self.draw_tab)

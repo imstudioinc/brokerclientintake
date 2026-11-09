@@ -43,3 +43,22 @@ class YesNo(ctk.CTkFrame):
                 b.configure(text=mark + name, fg_color=fill, hover_color=hover, text_color=ON_FILL_TEXT)
             else:
                 b.configure(text=name, fg_color="transparent", hover_color=ui.BORDER, text_color=ui.MUTED)
+
+
+class Segmented(ctk.CTkSegmentedButton):
+    """CTkSegmentedButton whose segments have room to breathe: each one is as wide as its text plus padding (plain
+    customtkinter sizes them to the bare text, which looks cramped and leaves hairlines at the rounded corners)."""
+
+    def __init__(self, *args, **kw):
+        super().__init__(*args, **kw)
+        self.pad_segments()
+
+    def pad_segments(self):
+        try:
+            import tkinter.font as tkfont
+            font = tkfont.Font(font=self.cget("font")) if self.cget("font") else None
+        except Exception:
+            font = None
+        for text, button in self._buttons_dict.items():
+            measure = font.measure(text) if font else len(text) * 8
+            button.configure(width=max(52, int(measure / max(self._get_widget_scaling(), 1)) + 20))

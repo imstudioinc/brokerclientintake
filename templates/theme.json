@@ -270,7 +270,7 @@
   },
   "CTkSegmentedButton": {
     "corner_radius": 8,
-    "border_width": 2,
+    "border_width": 0,
     "fg_color": [
       "#F8FAFC",
       "#202832"

@@ -40,7 +40,7 @@ def main():
                             button_hover_color=MUTED, text_color=TEXT)
     t["CTkOptionMenu"].update(corner_radius=8, fg_color=FIELD, button_color=BORDER, button_hover_color=MUTED,
                               text_color=TEXT)
-    t["CTkSegmentedButton"].update(corner_radius=8, border_width=2, fg_color=SURFACE_ALT, selected_color=ACCENT,
+    t["CTkSegmentedButton"].update(corner_radius=8, border_width=0, fg_color=SURFACE_ALT, selected_color=ACCENT,
                                    selected_hover_color=ACCENT_HOVER, unselected_color=SURFACE_ALT,
                                    unselected_hover_color=HOVER, text_color=TEXT)
     t["CTkCheckBox"].update(corner_radius=5, border_width=2, fg_color=ACCENT, hover_color=ACCENT_HOVER,

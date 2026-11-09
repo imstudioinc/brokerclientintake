@@ -14,6 +14,8 @@ from pathlib import Path
 
 import customtkinter as ctk
 
+import ui_kit
+
 import carriers
 import client_facts
 import quote
@@ -203,7 +205,7 @@ class AcceptQuotePage(Panel):
         self.premium = self._entry(card, 7, 0, "e.g. 2666.00")
         self.premium.bind("<FocusOut>", lambda e: self.fill_money())
         self.plan = tk.StringVar(value="Monthly")
-        ctk.CTkSegmentedButton(card, values=records.PLANS, variable=self.plan, height=36, font=ui.font(13),
+        ui_kit.Segmented(card, values=records.PLANS, variable=self.plan, height=36, font=ui.font(13),
                                command=lambda _: self.fill_money()) \
             .grid(row=7, column=1, sticky="ew", padx=(ui.SP / 2, p))
         self._label(card, 8, 0, "Monthly payment ($)")

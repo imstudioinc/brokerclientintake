@@ -13,6 +13,8 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
+import ui_kit
+
 import brokers
 import config
 from panel import Panel
@@ -33,15 +35,16 @@ def _card(parent, ui, title=None, row=0):
 
 
 def _setting(card, ui, index, title, help_text, build):
-    """One setting: bold name, a sentence about it, then its control (build(frame) fills the frame)."""
+    """One setting: bold name, a sentence about it, then its control (build(frame) fills the frame).
+    Four grid rows each (separator, name, help, control) so nothing is drawn on top of anything else."""
+    base = 4 * index
     if index:
-        ctk.CTkFrame(card, height=1, fg_color=ui.BORDER).grid(row=3 * index - 1, column=0, sticky="ew", padx=2 * ui.SP)
-    ctk.CTkLabel(card, text=title, font=ui.font(14, "bold"), text_color=ui.TEXT, anchor="w") \
-        .grid(row=3 * index, column=0, sticky="w", padx=2 * ui.SP, pady=(1.5 * ui.SP, 0))
+        ctk.CTkFrame(card, height=1, fg_color=ui.BORDER).grid(row=base, column=0, sticky="ew", padx=2 * ui.SP)
+    ctk.CTkLabel(card, text=title, font=ui.font(14, "bold"), text_color=ui.TEXT, anchor="w")         .grid(row=base + 1, column=0, sticky="w", padx=2 * ui.SP, pady=(1.5 * ui.SP, 0))
     ctk.CTkLabel(card, text=help_text, font=ui.font(12), text_color=ui.MUTED, anchor="w", justify="left",
-                 wraplength=680).grid(row=3 * index + 1, column=0, sticky="w", padx=2 * ui.SP, pady=(2, ui.SP))
+                 wraplength=680).grid(row=base + 2, column=0, sticky="w", padx=2 * ui.SP, pady=(2, ui.SP))
     box = ctk.CTkFrame(card, fg_color="transparent")
-    box.grid(row=3 * index + 2, column=0, sticky="ew", padx=2 * ui.SP, pady=(0, 1.5 * ui.SP))
+    box.grid(row=base + 3, column=0, sticky="ew", padx=2 * ui.SP, pady=(0, 1.5 * ui.SP))
     box.grid_columnconfigure(0, weight=1)
     build(box)
 
@@ -101,7 +104,7 @@ class SettingsDialog(Panel):
         _setting(c, ui, 0, "Email program",
                  "Which Outlook the app uses to make email drafts. Not sure? Pick New Outlook; if drafts do not open, try "
                  "Classic Outlook.",
-                 lambda f: ctk.CTkSegmentedButton(f, values=["New Outlook", "Classic Outlook"], variable=self.mail_var,
+                 lambda f: ui_kit.Segmented(f, values=["New Outlook", "Classic Outlook"], variable=self.mail_var,
                                                   font=ui.font(13), height=34).grid(row=0, column=0, sticky="w"))
         _setting(c, ui, 1, "MVR requests go to",
                  "The email address that receives your MVR requests (usually your branch manager).",
@@ -115,10 +118,10 @@ class SettingsDialog(Panel):
         # ---- look
         c = _card(page, ui, "How the app looks", 6)
         _setting(c, ui, 0, "Appearance", "Light, dark, or follow Windows.",
-                 lambda f: ctk.CTkSegmentedButton(f, values=["System", "Light", "Dark"], variable=self.mode_var,
+                 lambda f: ui_kit.Segmented(f, values=["System", "Light", "Dark"], variable=self.mode_var,
                                                   font=ui.font(13), height=34).grid(row=0, column=0, sticky="w"))
         _setting(c, ui, 1, "Text size", "Make everything bigger if the text is hard to read.",
-                 lambda f: ctk.CTkSegmentedButton(f, values=list(ui.TEXT_SIZES), variable=self.size_var,
+                 lambda f: ui_kit.Segmented(f, values=list(ui.TEXT_SIZES), variable=self.size_var,
                                                   font=ui.font(13), height=34).grid(row=0, column=0, sticky="w"))
 
         # ---- advanced

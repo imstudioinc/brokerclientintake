@@ -14,6 +14,8 @@ from pathlib import Path
 
 import customtkinter as ctk
 
+import ui_kit
+
 import carriers
 import checklist
 import records
@@ -260,7 +262,7 @@ class UwCallPage(Panel):
         self.reason.grid(row=9, column=0, columnspan=2, sticky="ew", padx=p)
         self._label(form, 10, 0, "Result *")
         self.result = tk.StringVar(value="")
-        ctk.CTkSegmentedButton(form, values=list(checklist.RESULTS), variable=self.result, height=34,
+        ui_kit.Segmented(form, values=list(checklist.RESULTS), variable=self.result, height=34,
                                font=ui.font(12), selected_color=ui.ACCENT, selected_hover_color=ui.ACCENT_HOVER) \
             .grid(row=11, column=0, columnspan=2, sticky="ew", padx=p)
         self._label(form, 12, 0, "Notes (conditions, what the underwriter said)", span=2)

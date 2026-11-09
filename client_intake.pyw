@@ -18,6 +18,8 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
+import ui_kit
+
 import config
 from fill_consent import fill, format_dln, is_valid_dln, read_consent, read_dash
 import dash_import
@@ -1238,7 +1240,7 @@ class ClientDialog(Panel):
         types = app.client_types + ([self.old_type] if self.old_type and self.old_type not in app.client_types else [])
         last = app.cfg.get("last_type")
         self.type_var = tk.StringVar(value=self.old_type or (last if last in types else types[0]))
-        ctk.CTkSegmentedButton(body, values=types, variable=self.type_var, font=font(13), height=34,
+        ui_kit.Segmented(body, values=types, variable=self.type_var, font=font(13), height=34,
                                selected_color=ACCENT, selected_hover_color=ACCENT_HOVER,
                                command=lambda _: (self.update_changes(), self.type_changed())) \
             .grid(row=3, column=0, columnspan=2, sticky="ew", padx=p)
@@ -1679,7 +1681,7 @@ class App(ctk.CTk):
         self.broker_btn.pack(side="right", padx=(0, SP))
         # Clients | Tracker | Rules: three views in this one window
         self.view_var = tk.StringVar(value="Clients")
-        ctk.CTkSegmentedButton(bar, values=["Clients", "Tracker", "Rules"], variable=self.view_var, height=36,
+        ui_kit.Segmented(bar, values=["Clients", "Tracker", "Rules"], variable=self.view_var, height=36,
                                font=font(13, "bold"), selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER,
                                command=self.show_view).pack(side="right", padx=(0, 2 * SP))
         self.sample_btn = self.secondary_button(bar, "Back to my Clients folder", self.leave_sample, width=190)
@@ -1971,7 +1973,7 @@ class App(ctk.CTk):
         self.search_entry.bind("<KeyRelease>", lambda e: self.refresh_soon(150, reset_page=True, rescan=False))
 
         self.filter_var = tk.StringVar(value="All")
-        self.filter_buttons = ctk.CTkSegmentedButton(c, values=["All"] + self.client_types,
+        self.filter_buttons = ui_kit.Segmented(c, values=["All"] + self.client_types,
                                                      variable=self.filter_var, font=font(13), height=34,
                                                      selected_color=ACCENT, selected_hover_color=ACCENT_HOVER,
                                                      command=lambda _: self.refresh_soon(0, reset_page=True, rescan=False))
