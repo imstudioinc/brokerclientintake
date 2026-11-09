@@ -126,6 +126,14 @@ def read_quote(path):
     return out
 
 
+def read_application(path):
+    """[{name, dln, birth, phone, email}] from a CSIO habitational application (the applicant)."""
+    import csio_application
+    c = csio_application.read(str(path)).get("client") or {}
+    return [{"name": c["name"], "dln": "", "birth": c.get("birth", ""), "phone": c.get("phone", ""),
+             "email": c.get("email", "")}] if c.get("name") else []
+
+
 def _the_client(people, name, dln):
     """The client among a document's drivers: same licence #, else a matching name, else the
     applicant (first) when nothing else fits."""
@@ -157,6 +165,17 @@ def check(folder, docs, info):
         person = _the_client(_cached(quotes[-1], read_quote) or [], name, dln)
         if person:
             found.append(("quote", person))
+    other_app = ""
+    try:                                          # a filled CSIO habitational application: name, phone, email, birth date
+        import csio_application
+        app_pdf = csio_application.find(folder)
+        people = (_cached(app_pdf, read_application) or []) if app_pdf else []
+        if people and _same_name(name, people[0]["name"]):
+            found.append(("application", people[0]))
+        elif people:
+            other_app = f"The application in this folder is for {people[0]['name'].title()}, not {name.title()}."
+    except Exception:
+        pass
     dash_people = [p for f in docs.get("DASH report") or [] for p in (_cached(f, read_dash) or [])]
     person = _the_client(dash_people, name, dln)
     if person and (len(dash_people) == 1 or _same_person(name, person["name"], dln, person["dln"])):
@@ -191,6 +210,8 @@ def check(folder, docs, info):
                                     f"{s} says {_show(key, v)}")
     warnings = [f"{label} on the {' and '.join(sources)}: {theirs}  (profile: {mine})"
                 for (label, theirs, mine), sources in differ.items()] + warnings
+    if other_app:
+        warnings.append(other_app)
     return fill, warnings
 
 

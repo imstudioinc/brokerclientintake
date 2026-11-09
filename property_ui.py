@@ -3,6 +3,7 @@
 All three read the client's saved answers (tracking.json "property_intake", see property_risk.py) in a thread -
 the window never reads client files itself.
 """
+import os
 import sys
 import threading
 import tkinter as tk
@@ -24,6 +25,15 @@ LEVEL_WORD = {"decline": "Won't take it", "refer": "Refer", "caution": "Check"}
 
 def _ui(app):
     return sys.modules[type(app).__module__]
+
+
+def application_note(folder, data):
+    """A warning line when the application is for someone else than the client folder (empty when the names agree)."""
+    import client_facts
+    name = (data.get("client") or {}).get("name", "")
+    if name and not client_facts._same_name(Path(folder).name, name):
+        return f"Careful: this application is for {name}, but the client folder is {Path(folder).name}."
+    return ""
 
 
 def _kind(app, folder):
@@ -72,6 +82,7 @@ class PropertyDetailsPage(Panel):
         bar = ctk.CTkFrame(top, fg_color="transparent")
         bar.grid(row=0, column=3, sticky="e", padx=(0, 2 * ui.SP))
         if self.kind != "Commercial":
+            app.secondary_button(bar, "Read application", self.read_application, width=150).pack(side="left", padx=(0, ui.SP))
             app.secondary_button(bar, "Save and review", lambda: self.save(review=True), width=140).pack(side="left", padx=(0, ui.SP))
         self.save_btn = ctk.CTkButton(bar, text="Save", width=100, height=36, font=ui.font(14, "bold"),
                                       fg_color=ui.PRIMARY, hover_color=ui.PRIMARY_HOVER, command=self.save)
@@ -87,8 +98,18 @@ class PropertyDetailsPage(Panel):
 
     def _load(self):
         values = self.risk.load(self.folder)
-        try:                                   # start from what the ARS quote already says (empty answers only)
-            import property_quote, review
+        note = ""
+        try:                                   # the filled CSIO application in the folder, then the ARS quote (empty answers only)
+            import csio_application, property_quote, review
+            if self.kind != "Commercial":
+                found = csio_application.find(self.folder)
+                if found:
+                    data = csio_application.read(found)
+                    note = application_note(self.folder, data)
+                    if note:                           # someone else's application: only the button fills from it
+                        note += " Nothing was filled from it automatically; use Read application if it is right."
+                    else:
+                        values = csio_application.prefill(values, data.get("answers", {}))
             quotes = review.find_docs(self.folder)["quote"] if self.kind != "Commercial" else []
             if quotes:
                 q = property_quote.read(str(quotes[0]))
@@ -96,6 +117,58 @@ class PropertyDetailsPage(Panel):
         except Exception:
             pass
         self.app.ui(self._loaded, values)
+        if note:
+            self.app.ui(lambda: self.winfo_exists() and self.error.configure(text=note, text_color=self.ui.WARN))
+
+    def read_application(self):
+        """Pick a filled CSIO habitational application and fill the EMPTY answers from it."""
+        from tkinter import filedialog
+        import csio_application
+        found = csio_application.find(self.folder)
+        path = filedialog.askopenfilename(
+            parent=self, title="Habitational insurance application (PDF)", initialdir=str(self.folder),
+            initialfile=found.name if found else "", filetypes=[("PDF", "*.pdf"), ("All files", "*.*")])
+        if not path:
+            return
+        self.collect()
+        self.error.configure(text="Reading the application…", text_color=self.ui.MUTED)
+        values, folder = dict(self.values), self.folder
+
+        def work():
+            import shutil
+            try:
+                src = Path(path)
+                if src.parent.resolve() != Path(folder).resolve():          # keep a copy with the client
+                    dest = Path(folder) / f"Habitational Application - {Path(folder).name}.pdf"
+                    tmp = dest.with_name(dest.name + ".tmp")
+                    shutil.copyfile(src, tmp)
+                    os.replace(tmp, dest)
+                    src = dest
+                data = csio_application.read(src)
+            except Exception as e:
+                self.app.ui(self._application_done, None, 0, f"Could not read that file: {e}")
+                return
+            if not data:
+                self.app.ui(self._application_done, None, 0,
+                            "That does not look like a CSIO Habitational Insurance Application.")
+                return
+            new = csio_application.prefill(values, data.get("answers", {}))
+            filled = sum(1 for k in new if new[k] != values.get(k))
+            self.app.ui(self._application_done, new, filled, application_note(folder, data))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _application_done(self, values, filled, note):
+        if not self.winfo_exists():
+            return
+        ui = self.ui
+        if values is None:
+            self.error.configure(text=note, text_color=ui.DANGER)
+            return
+        self.values = values
+        self.build()
+        text = (f"✓ Filled {filled} answers from the application. Check them, then Save." if filled else
+                "Everything the application holds is already filled in.")
+        self.error.configure(text=text + (f"\n{note}" if note else ""), text_color=ui.WARN if note else ui.SUCCESS)
 
     def _loaded(self, values):
         if not self.winfo_exists():
