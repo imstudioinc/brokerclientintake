@@ -14,6 +14,7 @@ from pathlib import Path
 
 import customtkinter as ctk
 
+import brokers
 import commercial_app
 import commercial_risk as risk
 import property_ui
@@ -26,7 +27,7 @@ def fill_application(app, folder, values=None):
 
     def work():
         try:
-            data = risk.load(folder) if values is None else values
+            data = brokers.apply_defaults(app.cfg, risk.load(folder) if values is None else values)
             path = commercial_app.fill(folder, data)
         except Exception as e:                                   # a locked file, the shared drive gone ...
             app.ui(lambda: app.show_note(folder, f"Could not fill the application: {e}", ui.DANGER))
@@ -72,7 +73,7 @@ class CommercialDetailsPage(property_ui.PropertyDetailsPage):
     def _loaded(self, values):
         if not self.winfo_exists():
             return
-        self.values = values
+        self.values = brokers.apply_defaults(self.app.cfg, values)       # broker name / branch number from the profile
         self.dwelling.set(values.get("dwelling", ""))
         self.liab.set(risk.is_liability_only(values))
         self.open = {"about": True}

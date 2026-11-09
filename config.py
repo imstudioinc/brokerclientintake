@@ -25,6 +25,9 @@ DEFAULTS = {
     "last_type": "Auto",
     "mvr_autosave": True,     # file MVR PDFs from Downloads into client folders
     "knowledge_dir": "",      # Rules tab notes; empty = found by notes_search.notes_dir()
+    "brokers": {},            # broker profiles (brokers.py): name -> details + salted PIN hash
+    "current_broker": "",     # who signed in last / is signed in now
+    "broker_prompted": False,  # the "make your profile" page has been shown once
 }
 
 

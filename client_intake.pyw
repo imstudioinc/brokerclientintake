@@ -33,6 +33,8 @@ import ars_ui
 import carriers
 import carriers_ui
 import policy_ui
+import broker_ui
+import brokers
 import commercial_risk
 import commercial_ui
 import property_risk
@@ -462,6 +464,7 @@ class SignatureDialog(Panel):
 
     def save(self):
         config.update(self.app.cfg, **{f"sig_{k}": e.get().strip() for k, e in self.entries.items()})
+        brokers.sync_signature(self.app.cfg)
         self.destroy()
 
 
@@ -1551,7 +1554,7 @@ class App(ctk.CTk):
         self.bind("<F5>", lambda e: (setattr(self, "_shown_stamp", None), self.refresh_soon(0)))
         self.bind("<FocusIn>", self._on_focus)
 
-        self.after(100, self._first_run)
+        self.after(100, self._startup)
         self.after(700, self._prewarm)
 
     # ---------- helpers ----------
@@ -1584,6 +1587,43 @@ class App(ctk.CTk):
         # Refresh when returning to the app, so files saved elsewhere show up
         if event.widget is self and time.monotonic() - self._scan_time > 8:    # not on every click back
             self.refresh_soon(300)
+
+    def _startup(self):
+        """Sign in first (when there are broker profiles), then the Clients folder."""
+        if brokers.names(self.cfg):
+            broker_ui.SignInPage(self, on_done=self._first_run)
+        elif not self.cfg.get("broker_prompted"):
+            config.update(self.cfg, broker_prompted=True)
+            broker_ui.ProfilePage(self, None, on_done=self._first_run, first=True)   # once: make your profile
+        else:
+            self._first_run()
+
+    def start_sign_in(self):
+        """Switch broker / sign out."""
+        brokers.sign_out(self.cfg)
+        self.broker_changed()
+        if brokers.names(self.cfg):
+            broker_ui.SignInPage(self)
+        else:
+            broker_ui.ProfilePage(self, None, first=True)
+
+    def broker_changed(self):
+        """A broker signed in / out / edited their profile: show who it is."""
+        name = self.cfg.get("current_broker") or ""
+        if getattr(self, "broker_btn", None) is not None:
+            self.broker_btn.configure(text=name or "Sign in")
+
+    def broker_menu(self):
+        menu = tk.Menu(self, tearoff=0)
+        name = self.cfg.get("current_broker") or ""
+        if name:
+            menu.add_command(label="My profile", command=lambda: broker_ui.ProfilePage(self, name))
+            menu.add_command(label="Switch broker / sign out", command=self.start_sign_in)
+        else:
+            menu.add_command(label="Sign in", command=self.start_sign_in)
+        menu.add_command(label="New broker profile", command=lambda: broker_ui.ProfilePage(self, None))
+        x, y = self.broker_btn.winfo_rootx(), self.broker_btn.winfo_rooty() + self.broker_btn.winfo_height()
+        menu.tk_popup(x, y)
 
     def _first_run(self):
         if self.clients_root and self.clients_root.exists():
@@ -1696,6 +1736,9 @@ class App(ctk.CTk):
         self.root_label.pack(anchor="w")
         self.secondary_button(bar, "Settings", lambda: SettingsDialog(self), width=96) \
             .pack(side="right")
+        self.broker_btn = self.secondary_button(bar, self.cfg.get("current_broker") or "Sign in", self.broker_menu,
+                                                width=150)
+        self.broker_btn.pack(side="right", padx=(0, SP))
         # Clients | Tracker | Rules: three views in this one window
         self.view_var = tk.StringVar(value="Clients")
         ctk.CTkSegmentedButton(bar, values=["Clients", "Tracker", "Rules"], variable=self.view_var, height=36,

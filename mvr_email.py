@@ -81,6 +81,8 @@ SIGNATURE_DEFAULTS = {"name": "Ilkin Mammadzada", "title": "Insurance Broker", "
 
 
 def signature_values(cfg):
+    if cfg.get("current_broker"):          # a signed-in broker: their own details, never the owner's defaults
+        return {k: (cfg.get(f"sig_{k}") or "").strip() for k in SIGNATURE_FIELDS}
     return {k: (cfg.get(f"sig_{k}") or "").strip() or SIGNATURE_DEFAULTS[k] for k in SIGNATURE_FIELDS}
 
 
