@@ -55,6 +55,8 @@ TEXT = ("#111827", "#E6EAF0")
 MUTED = ("#5B6472", "#9AA4B2")
 PRIMARY = ("#C8102E", "#D42A44")
 PRIMARY_HOVER = ("#A50D26", "#B5213A")
+ACCENT = ("#2563EB", "#3B82F6")         # ticks, switches, selected tabs: red is kept for the one main action
+ACCENT_HOVER = ("#1D4ED8", "#2F6FDB")
 SELECTED = ("#FDECEF", "#3A1F26")
 SUCCESS = ("#15803D", "#4ADE80")
 SUCCESS_BG = ("#E8F5EC", "#16291D")
@@ -63,6 +65,11 @@ WARN_BG = ("#F1F3F6", "#252D37")
 WARN = ("#B45309", "#FBBF24")           # amber: check this (red is kept for the one main action)
 WARN_SOFT = ("#FEF6E7", "#2E2717")
 RAISED = ("#FFFFFF", "#2E3946")          # selected tab / segment
+
+# widget defaults (corners, borders, colours) that match the tokens above: templates/theme.json, see tools/make_theme.py
+_THEME = Path(__file__).parent / "templates" / "theme.json"
+if _THEME.exists():
+    ctk.set_default_color_theme(str(_THEME))
 
 # Text size setting -> widget scaling (every screen grows evenly)
 TEXT_SIZES = {"Normal": 1.0, "Large": 1.15, "Extra large": 1.3}
@@ -330,12 +337,12 @@ class SettingsDialog(Panel):
         ctk.CTkLabel(body, text="Appearance", font=font(13, "bold"), text_color=TEXT) \
             .grid(row=4, column=0, sticky="w", padx=2 * SP, pady=(2 * SP, SP / 2))
         ctk.CTkSegmentedButton(body, values=["System", "Light", "Dark"], variable=self.mode_var,
-                               font=font(13), selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER) \
+                               font=font(13), selected_color=ACCENT, selected_hover_color=ACCENT_HOVER) \
             .grid(row=5, column=0, sticky="w", padx=2 * SP)
         ctk.CTkLabel(body, text="Text size", font=font(13, "bold"), text_color=TEXT) \
             .grid(row=4, column=0, sticky="e", padx=2 * SP, pady=(2 * SP, SP / 2))
         ctk.CTkSegmentedButton(body, values=list(TEXT_SIZES), variable=self.size_var,
-                               font=font(13), selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER) \
+                               font=font(13), selected_color=ACCENT, selected_hover_color=ACCENT_HOVER) \
             .grid(row=5, column=0, sticky="e", padx=2 * SP)
 
         self._text_row(body, 6, "MVR request: To", self.to_var, "branch manager's email")
@@ -345,7 +352,7 @@ class SettingsDialog(Panel):
         ctk.CTkLabel(body, text="Email app", font=font(13, "bold"), text_color=TEXT) \
             .grid(row=10, column=0, sticky="w", padx=2 * SP, pady=(2 * SP, SP / 2))
         ctk.CTkSegmentedButton(body, values=["New Outlook", "Classic Outlook"], variable=self.mail_var,
-                               font=font(13), selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER) \
+                               font=font(13), selected_color=ACCENT, selected_hover_color=ACCENT_HOVER) \
             .grid(row=11, column=0, sticky="w", padx=2 * SP)
         app.secondary_button(body, "Email signature…", lambda: SignatureDialog(self, app), width=150) \
             .grid(row=11, column=0, sticky="e", padx=2 * SP)
@@ -355,7 +362,7 @@ class SettingsDialog(Panel):
 
         self.autosave_var = tk.BooleanVar(value=app.cfg.get("mvr_autosave", True))
         ctk.CTkSwitch(body, text="Auto-save MVRs: file MVR PDFs from Downloads into the client's folder",
-                      variable=self.autosave_var, font=font(13), text_color=TEXT, progress_color=PRIMARY) \
+                      variable=self.autosave_var, font=font(13), text_color=TEXT, progress_color=ACCENT) \
             .grid(row=14, column=0, sticky="w", padx=2 * SP, pady=(2 * SP, 0))
 
         sample = ctk.CTkFrame(body, fg_color="transparent")
@@ -570,7 +577,7 @@ class MvrDialog(Panel):
             return
         var = tk.BooleanVar(value=True)
         ctk.CTkCheckBox(self.attach_frame, text=shorten(Path(path).name, 52), variable=var, font=font(13),
-                        text_color=TEXT, fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
+                        text_color=TEXT, fg_color=ACCENT, hover_color=ACCENT_HOVER,
                         border_color=MUTED).pack(anchor="w", pady=SP / 2)
         self.attach.append((var, Path(path)))
 
@@ -882,15 +889,15 @@ class EmailDialog(Panel):
             .grid(row=0, column=0, sticky="w", padx=p, pady=(p, SP / 2))
         if ctype in ("home", "tenant"):
             ctk.CTkCheckBox(left, text="Bundle with Auto", variable=self.bundle, font=font(13), text_color=TEXT,
-                            fg_color=PRIMARY, hover_color=PRIMARY_HOVER, command=self.bundle_changed)                 .grid(row=0, column=0, sticky="e", padx=p, pady=(p, SP / 2))
+                            fg_color=ACCENT, hover_color=ACCENT_HOVER, command=self.bundle_changed)                 .grid(row=0, column=0, sticky="e", padx=p, pady=(p, SP / 2))
         start = next((l for l, t in self.by_label.items() if t.file == wanted),
                      next((l for l, t in self.by_label.items() if t.file == f"quote-{ctype}.html"),
                           next(iter(self.by_label))))
         self.choice = tk.StringVar(value=start)
         self.template_menu = ctk.CTkOptionMenu(
             left, values=list(self.by_label), variable=self.choice, height=36, font=font(13),
-            dropdown_font=font(13), fg_color=SURFACE_ALT, button_color=PRIMARY,
-            button_hover_color=PRIMARY_HOVER, text_color=TEXT, dynamic_resizing=False,
+            dropdown_font=font(13), fg_color=SURFACE_ALT, button_color=BORDER,
+            button_hover_color=MUTED, text_color=TEXT, dynamic_resizing=False,
             command=lambda _: self.on_template())
         self.template_menu.grid(row=1, column=0, sticky="ew", padx=p)
 
@@ -1024,7 +1031,7 @@ class EmailDialog(Panel):
                                      or ((from_quote or saved) if uw else (saved or from_quote)))
             if key == "insurer" and len(carriers) > 1 and not self.policy_values.get("insurer"):
                 e = ctk.CTkComboBox(self.fields_frame, height=36, font=font(13), dropdown_font=font(13),
-                                    border_color=BORDER, button_color=PRIMARY, button_hover_color=PRIMARY_HOVER,
+                                    border_color=BORDER, button_color=BORDER, button_hover_color=MUTED,
                                     values=[c["insurer"] + (" (declined)" if c["declined"] else "")
                                             for c in carriers],
                                     command=lambda v: self._pick_carrier(v.replace(" (declined)", "")))
@@ -1131,7 +1138,7 @@ class EmailDialog(Panel):
             return
         var = tk.BooleanVar(value=checked)
         ctk.CTkCheckBox(self.attach_frame, text=shorten(Path(path).name, 46), variable=var, font=font(13),
-                        text_color=TEXT, fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
+                        text_color=TEXT, fg_color=ACCENT, hover_color=ACCENT_HOVER,
                         border_color=MUTED).pack(anchor="w", pady=SP / 2)
         self.attach.append((var, Path(path)))
 
@@ -1268,7 +1275,7 @@ class ImportDashDialog(Panel):
             row = ctk.CTkFrame(body, fg_color=SURFACE_ALT, corner_radius=8, border_width=1, border_color=BORDER)
             row.grid(row=2 + i, column=0, sticky="ew", padx=p, pady=SP / 2)
             row.grid_columnconfigure(1, weight=1)
-            ctk.CTkCheckBox(row, text="", variable=var, width=24, fg_color=PRIMARY, hover_color=PRIMARY_HOVER,
+            ctk.CTkCheckBox(row, text="", variable=var, width=24, fg_color=ACCENT, hover_color=ACCENT_HOVER,
                             border_color=MUTED).grid(row=0, column=0, rowspan=2, padx=(1.5 * SP, SP))
             ctk.CTkLabel(row, text=r["name"] or r["path"].name, font=font(14, "bold"), text_color=TEXT,
                          anchor="w", height=20).grid(row=0, column=1, sticky="w", pady=(SP, 0))
@@ -1352,7 +1359,7 @@ class ClientDialog(Panel):
         last = app.cfg.get("last_type")
         self.type_var = tk.StringVar(value=self.old_type or (last if last in types else types[0]))
         ctk.CTkSegmentedButton(body, values=types, variable=self.type_var, font=font(13), height=34,
-                               selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER,
+                               selected_color=ACCENT, selected_hover_color=ACCENT_HOVER,
                                command=lambda _: (self.update_changes(), self.type_changed())) \
             .grid(row=3, column=0, columnspan=2, sticky="ew", padx=p)
 
@@ -1361,7 +1368,7 @@ class ClientDialog(Panel):
         self.dln_label = self._label(body, 6, 0, "Driver's licence #" + ("" if editing else " *"))
         self._label(body, 6, 1, "Date of birth")
         self.dln = self._entry(body, 7, 0, format_dln(info.get("dln", "")), "A1234-12345-12345", upper=True, dln=True)
-        self.birth = tracker_ui.DateField(body, sys.modules[type(app).__module__], compact=True)      # date picker
+        self.birth = tracker_ui.DateField(body, sys.modules[type(app).__module__], compact=True, height=38)      # date picker
         self.birth.grid(row=7, column=1, sticky="ew", padx=(SP, p))
         if info.get("birth"):
             self.birth.insert(0, info["birth"])
@@ -1389,10 +1396,10 @@ class ClientDialog(Panel):
                                             anchor="w", wraplength=390)
             self.change_text.grid(row=0, column=0, sticky="w", padx=1.5 * SP, pady=(1.5 * SP, SP / 2))
             self.rename_box = ctk.CTkCheckBox(self.changes, text="", variable=self.rename_var, font=font(12),
-                                              text_color=TEXT, fg_color=PRIMARY, hover_color=PRIMARY_HOVER)
+                                              text_color=TEXT, fg_color=ACCENT, hover_color=ACCENT_HOVER)
             self.refill_box = ctk.CTkCheckBox(self.changes, text="Refill the consent form with the new name",
                                               variable=self.refill_var, font=font(12), text_color=TEXT,
-                                              fg_color=PRIMARY, hover_color=PRIMARY_HOVER)
+                                              fg_color=ACCENT, hover_color=ACCENT_HOVER)
 
         btns = ctk.CTkFrame(self, fg_color="transparent")
         btns.pack(fill="x", padx=2 * SP, pady=2 * SP)
@@ -2048,7 +2055,7 @@ class App(ctk.CTk):
         self.filter_var = tk.StringVar(value="All")
         self.filter_buttons = ctk.CTkSegmentedButton(c, values=["All"] + self.client_types,
                                                      variable=self.filter_var, font=font(13), height=34,
-                                                     selected_color=PRIMARY, selected_hover_color=PRIMARY_HOVER,
+                                                     selected_color=ACCENT, selected_hover_color=ACCENT_HOVER,
                                                      command=lambda _: self.refresh_soon(0, reset_page=True, rescan=False))
         self.filter_buttons.grid(row=2, column=0, sticky="ew", padx=p, pady=(0, SP))
 

@@ -252,16 +252,16 @@ class DateField(ctk.CTkFrame):
     """Text box + calendar button. Typing still works; the button opens the calendar.
     Behaves like a CTkEntry for get/insert/delete/bind."""
 
-    def __init__(self, parent, ui, on_change=None, compact=False):
+    def __init__(self, parent, ui, on_change=None, compact=False, height=36):
         super().__init__(parent, fg_color="transparent")
         self.ui, self.on_change = ui, on_change
         self.grid_columnconfigure(0, weight=1)
-        self.entry = ctk.CTkEntry(self, height=34, font=ui.font(13), border_color=ui.BORDER,
+        self.entry = ctk.CTkEntry(self, height=height, font=ui.font(13), border_color=ui.BORDER,
                                   placeholder_text="Pick a date")
         self.entry.grid(row=0, column=0, sticky="ew")
         self.entry.bind("<Button-1>", lambda e: self.after(10, self.open) if not self.entry.get() else None)
         self.entry.bind("<Alt-Down>", lambda e: self.open())
-        ctk.CTkButton(self, text="▾" if compact else "▾  Calendar", width=40 if compact else 104, height=34, font=ui.font(12),
+        ctk.CTkButton(self, text="▾" if compact else "▾  Calendar", width=40 if compact else 104, height=height, font=ui.font(12),
                       fg_color="transparent", border_width=1, border_color=ui.BORDER, text_color=ui.TEXT,
                       hover_color=ui.SURFACE_ALT, command=self.open).grid(row=0, column=1, padx=(6, 0))
 
@@ -345,7 +345,7 @@ class RecordEditor(Panel):
             if ftype == "bool":
                 var = tk.BooleanVar(value=bool(value))
                 ctk.CTkCheckBox(body, text=label, variable=var, font=ui.font(13), text_color=ui.TEXT,
-                                fg_color=ui.PRIMARY, hover_color=ui.PRIMARY_HOVER) \
+                                fg_color=ui.ACCENT, hover_color=ui.ACCENT_HOVER) \
                     .grid(row=r, column=0, sticky="w", padx=16, pady=(14, 0))
                 self.inputs[key] = ("bool", var)
                 r += 1
@@ -357,7 +357,7 @@ class RecordEditor(Panel):
                 var = tk.StringVar(value=value or (options[0] if key in ("line", "status", "plan") else ""))
                 w = ctk.CTkOptionMenu(body, values=([""] if key not in ("line", "status", "plan") else []) + options,
                                       variable=var, height=34, font=ui.font(13), fg_color=ui.SURFACE_ALT,
-                                      button_color=ui.PRIMARY, button_hover_color=ui.PRIMARY_HOVER,
+                                      button_color=ui.BORDER, button_hover_color=ui.MUTED,
                                       text_color=ui.TEXT, dynamic_resizing=False)
                 self.inputs[key] = ("choice", var)
             elif ftype == "long":

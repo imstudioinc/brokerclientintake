@@ -142,7 +142,7 @@ class ProfilePage(Panel):
         self.no_pin = tk.BooleanVar(value=False)
         if had_pin:
             ctk.CTkCheckBox(body, text="Remove the PIN", variable=self.no_pin, font=ui.font(13), text_color=ui.TEXT,
-                            fg_color=ui.PRIMARY, hover_color=ui.PRIMARY_HOVER) \
+                            fg_color=ui.ACCENT, hover_color=ui.ACCENT_HOVER) \
                 .grid(row=1 + 2 * ((n + 2) // 3 + 1), column=0, sticky="w", padx=p, pady=(ui.SP, p))
         self.error = ctk.CTkLabel(self, text="", font=ui.font(13), text_color=ui.DANGER, anchor="w", wraplength=500, justify="left")
         self.error.pack(fill="x", padx=3 * ui.SP)

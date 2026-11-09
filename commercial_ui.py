@@ -61,7 +61,7 @@ class CommercialDetailsPage(property_ui.PropertyDetailsPage):
         row = ctk.CTkFrame(top, fg_color="transparent")
         row.grid(row=1, column=0, columnspan=4, sticky="ew", padx=2 * ui.SP, pady=(0, ui.SP))
         self.liab_switch = ctk.CTkSwitch(row, text="Liability only", variable=self.liab, font=ui.font(13, "bold"),
-                                         text_color=ui.TEXT, command=self.liability_changed, progress_color=ui.PRIMARY)
+                                         text_color=ui.TEXT, command=self.liability_changed, progress_color=ui.ACCENT)
         self.liab_switch.pack(side="left")
         self.liab_note = ctk.CTkLabel(row, text="", font=ui.font(12), text_color=ui.MUTED, anchor="w", justify="left")
         self.liab_note.pack(side="left", padx=(2 * ui.SP, 0))

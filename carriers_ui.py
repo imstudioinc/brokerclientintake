@@ -125,8 +125,8 @@ class CarrierInfoPage(Panel):
         ctk.CTkLabel(top, text="Carrier", font=ui.font(13, "bold"), text_color=ui.TEXT).pack(side="left")
         self.choice = tk.StringVar(value=default)
         ctk.CTkOptionMenu(top, values=[WELLCARE] + names, variable=self.choice, width=280, height=34,
-                          font=ui.font(13), fg_color=ui.SURFACE_ALT, button_color=ui.PRIMARY,
-                          button_hover_color=ui.PRIMARY_HOVER, text_color=ui.TEXT,
+                          font=ui.font(13), fg_color=ui.SURFACE_ALT, button_color=ui.BORDER,
+                          button_hover_color=ui.MUTED, text_color=ui.TEXT,
                           command=lambda _: self.show()).pack(side="left", padx=ui.SP)
         if on_quote:
             ctk.CTkLabel(top, text="On the quote: " + ", ".join(on_quote), font=ui.font(12),
@@ -235,7 +235,7 @@ class UwCallPage(Panel):
         self._label(form, 2, 0, "Carrier")
         self.carrier = tk.StringVar(value=names[0] if names else "")
         ctk.CTkComboBox(form, values=names or [""], variable=self.carrier, height=36, font=ui.font(13),
-                        border_color=ui.BORDER, button_color=ui.PRIMARY, button_hover_color=ui.PRIMARY_HOVER,
+                        border_color=ui.BORDER, button_color=ui.BORDER, button_hover_color=ui.MUTED,
                         command=lambda _: self.carrier_changed()) \
             .grid(row=3, column=0, columnspan=2, sticky="ew", padx=p)
         now = datetime.datetime.now()
@@ -261,7 +261,7 @@ class UwCallPage(Panel):
         self._label(form, 10, 0, "Result *")
         self.result = tk.StringVar(value="")
         ctk.CTkSegmentedButton(form, values=list(checklist.RESULTS), variable=self.result, height=34,
-                               font=ui.font(12), selected_color=ui.PRIMARY, selected_hover_color=ui.PRIMARY_HOVER) \
+                               font=ui.font(12), selected_color=ui.ACCENT, selected_hover_color=ui.ACCENT_HOVER) \
             .grid(row=11, column=0, columnspan=2, sticky="ew", padx=p)
         self._label(form, 12, 0, "Notes (conditions, what the underwriter said)", span=2)
         self.notes = ctk.CTkTextbox(form, height=96, font=ui.font(13), border_width=1, border_color=ui.BORDER,

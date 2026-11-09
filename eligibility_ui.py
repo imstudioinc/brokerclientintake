@@ -73,7 +73,7 @@ class EligibilityDialog(Panel):
             names = [p.name for p in self.docs[kind]] + [NONE]
             var = self.doc_vars[kind] = tk.StringVar(value=names[0])
             ctk.CTkOptionMenu(left, values=names, variable=var, height=30, font=ui.font(12),
-                              fg_color=ui.SURFACE_ALT, button_color=ui.PRIMARY, button_hover_color=ui.PRIMARY_HOVER,
+                              fg_color=ui.SURFACE_ALT, button_color=ui.BORDER, button_hover_color=ui.MUTED,
                               text_color=ui.TEXT, dynamic_resizing=False, command=lambda _: self.load()) \
                 .grid(row=r + 1, column=0, columnspan=2, sticky="ew", padx=14)
             r += 2
