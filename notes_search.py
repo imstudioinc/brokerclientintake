@@ -103,6 +103,7 @@ def parse(name, text):
     sections = []
     cur = {"note": name, "title": title, "heading": "", "items": []}
     header = None   # current table's column names
+    para = False    # the last line was plain text, so a plain line right under it continues it
 
     def start(heading):
         nonlocal cur
@@ -114,13 +115,14 @@ def parse(name, text):
         line = raw.rstrip()
         m = _HEAD.match(line)
         if m:
-            header = None
+            header, para = None, False
             if len(m.group(1)) == 1:
                 title = cur["title"] = clean(m.group(2))
             else:
                 start(clean(m.group(2)))
             continue
         if line.lstrip().startswith("|"):
+            para = False
             cells = _cells(line)
             if all(re.fullmatch(r":?-{2,}:?", c) or not c for c in cells):
                 continue                      # the |---|---| separator
@@ -133,16 +135,22 @@ def parse(name, text):
             continue
         header = None
         if not line.strip():
+            para = False
             continue
         b = _BULLET.match(line)
         if b and len(b.group(1)) >= 2 and cur["items"]:
             cur["items"][-1] += "\n    • " + clean(b.group(2))   # sub-point: keep with its parent
+            para = False
         elif b:
             cur["items"].append(clean(b.group(2)))
+            para = False
         elif raw.startswith((" ", "\t")) and cur["items"]:
             cur["items"][-1] += " " + clean(line)               # wrapped line of the item above
+        elif para and cur["items"]:
+            cur["items"][-1] += " " + clean(line)               # a paragraph hard-wrapped over several lines
         else:
             cur["items"].append(clean(line))
+            para = True
     start("")
     return sections
 
@@ -211,3 +219,43 @@ class Index:
         for raw in _WORD.findall(query.lower()):
             out.update(stem(s) for s in SYNONYMS.get(raw, []))
         return sorted((w for w in out if len(w) > 1), key=len, reverse=True)
+
+
+# ---------- making long items readable ----------
+def _split_top(text, sep="; "):
+    """Split on `sep` outside parentheses ('a (x; y); b' -> ['a (x; y)', 'b'])."""
+    parts, depth, start, i = [], 0, 0, 0
+    while i < len(text):
+        ch = text[i]
+        depth += ch == "("
+        depth -= ch == ")" and depth > 0
+        if depth == 0 and text.startswith(sep, i):
+            parts.append(text[start:i].strip())
+            start = i + len(sep)
+            i = start
+            continue
+        i += 1
+    parts.append(text[start:].strip())
+    return [x for x in parts if x]
+
+
+SUB_MARK = "\n    • "      # how parse() keeps a sub-point with its item
+
+
+def split_item(text):
+    """(lead, [bullets]): one long run-on note line ('Vehicles: a; b; c') as a short lead and separate bullets,
+    so it can be read. Sub-points the parser kept with the item come last. A short item is just ('', [text])."""
+    main, *subs = text.split(SUB_MARK)
+    subs = [s.strip() for s in subs]
+    lead, body = "", main
+    m = re.match(r"^([^:;]{2,60}?):\s+(.+)$", main, re.S)
+    if m and ("; " in m.group(2) or len(main) > 160):
+        lead, body = m.group(1) + ":", m.group(2)
+    else:
+        m = re.match(r"^(.{2,60}?) - (.+)$", main, re.S)        # table rows: "Name - Header: value; Header: value"
+        if m and "; " in m.group(2):
+            lead, body = m.group(1), m.group(2)
+    parts = _split_top(body)
+    if len(parts) == 1 and len(body) > 260:                       # no semicolons: split the sentences
+        parts = [s.strip() for s in re.split(r"(?<=[.!?])\s+(?=[A-Z])", body) if s.strip()] or parts
+    return lead, parts + subs
