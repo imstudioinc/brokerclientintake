@@ -1865,8 +1865,13 @@ class App(ctk.CTk):
     def _after_update_cleanup(self):
         reason = updater.cleanup_after_update()
         if reason:
-            self.ui(lambda: self.show_toast(f"The last update could not be installed: {shorten(reason, 60)}",
-                                            "Details", lambda: os.startfile(updater.update_dir() / "update.log"),
+            if "another process" in reason or "Permission" in reason:    # files in the install folder are open somewhere
+                text = ("The update could not be installed: another copy of Client Intake is still open (maybe on "
+                        "another computer or a disconnected session using the same folder). Close it everywhere, "
+                        "then click Update now again.")
+            else:
+                text = f"The last update could not be installed: {shorten(reason, 60)}"
+            self.ui(lambda: self.show_toast(text, "Details", lambda: os.startfile(updater.update_dir() / "update.log"),
                                             ok=False))
 
     def _check_update(self):
