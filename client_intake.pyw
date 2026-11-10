@@ -2823,7 +2823,7 @@ class App(ctk.CTk):
             self._stage_picked = False
             kind = self.client_type_of.get(folder, "")
             self._set(self.details_title, text=shorten(folder.name, 34))
-            self._set(self.details_type, text=(f"  {kind}" + (f"  ·  {b['household']}" if b.get("household") else "") + "  ") if kind else "")
+            self._set(self.details_type, text=f"  {kind}  " if kind else "")
         bundle = None if fresh else self._bundles.get(folder)
         self._loading = False
         if bundle:
@@ -2843,7 +2843,8 @@ class App(ctk.CTk):
             self._pageset(key)                          # first client of this type: build its pages
         self._use_set(key)
         self._set(self.details_title, text=shorten(folder.name, 34))
-        self._set(self.details_type, text=f"  {kind}  " if kind else "")
+        self._set(self.details_type, text=(f"  {kind}" + (f"  ·  {b['household']}" if b.get("household") else "") + "  ")
+                  if kind else "")
         info, docs, skip, warnings = b["info"], b["docs"], b["skip"], b["warnings"]
         if b["filled"]:
             self.note = (folder, "✓ Filled from the documents: " + ", ".join(b["filled"]), SUCCESS)
