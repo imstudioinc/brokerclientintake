@@ -1691,7 +1691,8 @@ class App(ctk.CTk):
         self.rules_view = None
 
         # Shown only when a newer version is published
-        self.update_bar = ctk.CTkFrame(bar, fg_color=SUCCESS_BG, corner_radius=8)
+        # (its own full-width row under the top bar: inside the bar it was squeezed out by the tabs and buttons)
+        self.update_bar = ctk.CTkFrame(self, fg_color=SUCCESS_BG, corner_radius=10)
         self.update_text = ctk.CTkLabel(self.update_bar, text="", font=font(13), text_color=SUCCESS)
         self.update_text.pack(side="left", padx=(1.5 * SP, SP), pady=SP)
         self.update_btn = ctk.CTkButton(self.update_bar, text="Update now", height=32, width=110,
@@ -1704,7 +1705,7 @@ class App(ctk.CTk):
             threading.Thread(target=self._after_update_cleanup, daemon=True).start()
 
         # Toast for things that happen in the background (MVR filed)
-        self.toast = ctk.CTkFrame(bar, fg_color=SUCCESS_BG, corner_radius=8)
+        self.toast = ctk.CTkFrame(self, fg_color=SUCCESS_BG, corner_radius=10)
         self.toast_text = ctk.CTkLabel(self.toast, text="", font=font(13), text_color=SUCCESS)
         self.toast_text.pack(side="left", padx=(1.5 * SP, SP), pady=SP)
         self.toast_btn = ctk.CTkButton(self.toast, text="Open", height=30, width=80, font=font(13, "bold"),
@@ -1768,7 +1769,7 @@ class App(ctk.CTk):
         self.toast_text.configure(text=text, text_color=SUCCESS if ok else DANGER)
         self.toast_btn.configure(text=button, command=command,
                                  fg_color=SUCCESS if ok else DANGER, hover_color=SUCCESS if ok else DANGER)
-        self.toast.pack(side="right", padx=(0, 2 * SP))
+        self.toast.pack(fill="x", padx=3 * SP, pady=(0, SP), after=self.topbar)
         if self._toast_job:
             self.after_cancel(self._toast_job)
         self._toast_job = self.after(20000 if ok else 60000, self.hide_toast)
@@ -1833,7 +1834,7 @@ class App(ctk.CTk):
     def _show_update(self, found):
         self.pending_update = found
         self.update_text.configure(text=f"Version {found['version']} is available")
-        self.update_bar.pack(side="right", padx=(0, 2 * SP))
+        self.update_bar.pack(fill="x", padx=3 * SP, pady=(0, SP), after=self.topbar)
 
     def install_update(self):
         self.update_btn.configure(state="disabled", text="Downloading…")
