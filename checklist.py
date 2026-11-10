@@ -331,6 +331,28 @@ def set_tick(folder, step_id, state):
     records._write(folder, data)
 
 
+def dash_missing(folder, dash_files, data):
+    """Names of household members who have no DASH report in the folder (reads no file: by the name in the file name).
+    A file with nobody's name on it belongs to the main client. Empty for a one-person file."""
+    people = ((data or {}).get("household") or {}).get("people") or []
+    names = [" ".join(str(p.get("name", "")).upper().split()) for p in people if isinstance(p, dict)]
+    names = [n for n in names if n]
+    if not names:
+        return []
+    files = [Path(f).name.upper() for f in dash_files]
+    owned = set()
+    missing = []
+    for n in names:
+        tokens = n.replace(",", " ").split()
+        hits = [f for f in files if len(tokens) >= 2 and all(t in f for t in tokens)]
+        owned.update(hits)
+        if not hits:
+            missing.append(n)
+    if not [f for f in files if f not in owned]:        # nothing left for the main client
+        missing.insert(0, Path(folder).name.upper())
+    return missing
+
+
 def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None, data=None):
     """[(step, state, note)] - state: "done", "na", "todo"; note explains auto ticks / what's missing.
 
@@ -365,7 +387,11 @@ def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None, data=N
         elif auto == "consent" and docs.get("Client consent"):
             state, note = "done", "In the folder"
         elif auto == "dash" and docs.get("DASH report"):
-            state, note = "done", "In the folder"
+            missing = dash_missing(folder, docs["DASH report"], data)
+            if missing:      # a household: each person needs their own DASH
+                note = "DASH missing for " + ", ".join(m.title() for m in missing)
+            else:
+                state, note = "done", "In the folder"
         elif auto == "quote" and docs.get("Quote (ARS)"):
             state, note = "done", "In the folder"
         elif auto == "uw_call":

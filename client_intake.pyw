@@ -1183,6 +1183,16 @@ class ImportDashDialog(Panel):
         self.downloads = dash_import.downloads_dir()
         reports = dash_import.find_dash_downloads(self.downloads)
         client = (mvr_email.load_client(folder).get("name") or folder.name).upper()
+        self.client = client
+        self.hh = household.load(folder)
+        members = self.hh["people"][1:]            # the household's other people: their DASH belongs here too
+
+        def owner(r):
+            """The household member a report is for (by licence # or name), None for the main client / nobody."""
+            raw = lambda s: re.sub(r"[^A-Z0-9]", "", (s or "").upper())  # noqa: E731
+            return next((m for m in members if (r["dln"] and raw(r["dln"]) == raw(m.get("dln")))
+                         or dash_import.names_match(m["name"], r["name"])), None)
+        self.owner = owner
 
         body = ctk.CTkScrollableFrame(self, fg_color=SURFACE, corner_radius=12,
                                       border_width=1, border_color=BORDER)
@@ -1192,7 +1202,9 @@ class ImportDashDialog(Panel):
 
         ctk.CTkLabel(body, text="DASH reports in Downloads", font=font(15, "bold"), text_color=TEXT) \
             .grid(row=0, column=0, sticky="w", padx=p, pady=(p, 0))
-        ctk.CTkLabel(body, text=f"Reports matching {client} are ticked. Tick other drivers on the "
+        who = client.title() + (" and the household (" + ", ".join(m["name"].title() for m in members) + ")"
+                                if members else "")
+        ctk.CTkLabel(body, text=f"Reports matching {who} are ticked. Tick other drivers on the "
                                 "same policy too.\nThey are moved into the client folder and the "
                                 "consent form is refilled.",
                      font=font(12), text_color=MUTED, justify="left", wraplength=480) \
@@ -1200,7 +1212,7 @@ class ImportDashDialog(Panel):
 
         self.rows = []
         for i, r in enumerate(reports):
-            var = tk.BooleanVar(value=dash_import.names_match(client, r["name"]))
+            var = tk.BooleanVar(value=dash_import.names_match(client, r["name"]) or owner(r) is not None)
             when = datetime.datetime.fromtimestamp(r["mtime"]).strftime("%b %d, %I:%M %p")
             row = ctk.CTkFrame(body, fg_color=SURFACE_ALT, corner_radius=8, border_width=1, border_color=BORDER)
             row.grid(row=2 + i, column=0, sticky="ew", padx=p, pady=SP / 2)
@@ -1209,7 +1221,9 @@ class ImportDashDialog(Panel):
                             border_color=MUTED).grid(row=0, column=0, rowspan=2, padx=(1.5 * SP, SP))
             ctk.CTkLabel(row, text=r["name"] or r["path"].name, font=font(14, "bold"), text_color=TEXT,
                          anchor="w", height=20).grid(row=0, column=1, sticky="w", pady=(SP, 0))
-            ctk.CTkLabel(row, text=f"{r['dln'] or 'Licence # not found'}  ·  downloaded {when}",
+            member = owner(r)
+            ctk.CTkLabel(row, text=f"{r['dln'] or 'Licence # not found'}  ·  downloaded {when}"
+                                   + (f"  ·  household: {member['relation'] or 'member'}" if member else ""),
                          font=font(12), text_color=MUTED, anchor="w", height=18) \
                 .grid(row=1, column=1, sticky="w", pady=(0, SP))
             self.rows.append((var, r))
@@ -1244,8 +1258,24 @@ class ImportDashDialog(Panel):
             self.error.configure(text=f"Could not move the file (is it open in another program?)\n{e}")
             return
         info = mvr_email.load_client(self.folder)
-        if not info.get("dln") and chosen[0]["dln"]:
-            mvr_email.save_client(self.folder, dln=chosen[0]["dln"])
+        # the main client's licence # comes from THEIR report (not a household member's); a member's goes on the household
+        mine = next((r for r in chosen if self.owner(r) is None and r["dln"]
+                     and dash_import.names_match(self.client, r["name"])), None)
+        if mine is None and len(self.hh["people"]) == 1 and chosen[0]["dln"]:
+            mine = chosen[0]                  # a one-person file: whatever was ticked, as before
+        if not info.get("dln") and mine:
+            mvr_email.save_client(self.folder, dln=mine["dln"])
+        try:
+            changed = False
+            for r in chosen:
+                m = self.owner(r)
+                if m is not None and r["dln"] and not m.get("dln"):
+                    m["dln"] = r["dln"]
+                    changed = True
+            if changed:
+                household.save(self.folder, self.hh)
+        except Exception:
+            pass
         self.destroy()
         n = len(moved)
         self.app.refill(self.folder, prefix=f"✓ Imported {n} DASH report{'s' if n > 1 else ''}.\n")
