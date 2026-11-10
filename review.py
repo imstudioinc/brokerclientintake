@@ -310,6 +310,9 @@ def add_vehicle_checks(v, today, add):
         add("refer", f"Annual km {v['annual_km']:,} (8,000 or less) - WellCare refer")
     if any((ded(k) or 0) > 1000 for k in phys):
         add("refer", "Deductible over $1,000 - WellCare refer")
+    if any(k.startswith(("#6tn", "#6t")) or "transportation network" in k for k in cov):
+        add("refer", "Transportation Network (ride sharing) endorsement #6TN on this car - check the carrier's "
+                     "conditions (hours per week, licence years) and tick Ride sharing on the review page")
     if any(k.startswith("#28") for k in cov):
         add("refer", "OPCF 28/28A - refer to the insurer and WellCare")
     if (v.get("list_price") or 0) >= 150000:

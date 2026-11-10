@@ -56,6 +56,8 @@ def _driver(block):
     d = {"name": name, "claims": [], "convictions": [], "lapses": [], "suspensions": []}
     birth = re.match(r"^" + MDY, block[1] if len(block) > 1 else "")
     d["birth"] = mdy(birth.group(1)) if birth else None
+    rel = re.match(r"^" + MDY + r"\s+(.*?)\s+(Male|Female|Other|Non-binary)\s+(.+)$", block[1] if len(block) > 1 else "")
+    d["marital"], d["gender"], d["relationship"] = (rel.group(2), rel.group(3), rel.group(4).strip()) if rel else ("", "", "")
     lic = _value_row(block, "Driver Training")
     m = re.match(r"^(Yes|No)\s+(?:" + MDY + r"\s+)?(Yes|No)\s+([A-Z][A-Z0-9]?)\b\s*(.*)$", lic)
     if m:
@@ -116,6 +118,20 @@ def _vehicle(block):
     if p:
         v.update(condition=p.group(1), purchase_date=mdy(p.group(2)), km_at_purchase=int(p.group(3)),
                  list_price=int(p.group(4)), purchase_price=int(p.group(5)), winter_tires=p.group(6) == "Yes")
+    v["code"] = (head.group(4) or "") if head else ""
+    # "Drivers" lists who drives this car: "Mrs JANE DOE (Prn)", "Mr JOHN DOE (Occ)"
+    v["drivers"] = []
+    in_drivers = False
+    for line in block:
+        if line == "Drivers":
+            in_drivers = True
+        elif line == "Coverages":
+            break
+        elif in_drivers:
+            m = re.match(r"^(?:(?:Mr|Mrs|Ms|Miss|Dr)\.?\s+)?(.*?)\s*\((Prn|Occ|[A-Za-z]{3})\)$", line)
+            if m:
+                v["drivers"].append({"name": m.group(1).strip(),
+                                     "role": {"Prn": "Principal", "Occ": "Occasional"}.get(m.group(2), m.group(2))})
     cov, on = {}, False
     for line in block:
         if line == "Coverages":
@@ -144,10 +160,15 @@ def _carriers(lines):
     for n, c in enumerate(out):
         end = out[n + 1]["_start"] - 1 if n + 1 < len(out) else len(lines)
         block = lines[c.pop("_start") + 1:end]
+        c["by_vehicle"] = []
         for line in block:
             m = re.match(r"^Total Premium \$([\d,]+\.\d\d)", line)
             if m and c["premium"] is None:
                 c["premium"] = money(m.group(1))
+            # the Vehicles / TOTALS table: "Private Passenger - 2023 HONDA ACCORD EX 4DR (021300) $3,552"
+            v = re.match(r"^.+? - (\d{4} .*?) \((\w+)\) \$([\d,]+)$", line)
+            if v and not any(x["code"] == v.group(2) for x in c["by_vehicle"]):
+                c["by_vehicle"].append({"description": v.group(1), "code": v.group(2), "premium": money(v.group(3))})
         target = None
         for line in block:
             if line.startswith("■"):

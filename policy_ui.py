@@ -50,6 +50,7 @@ def quote_for_policy(folder):
             "make": words[1] if len(words) > 1 else "", "model": " ".join(words[2:]),
             "vin": v.get("vin", ""), "use": {"Pleasure": "Pleasure", "Commute": "Commute",
                                               "Business": "Business"}.get(v.get("use"), ""),
+            "principal_driver": next((d["name"] for d in v.get("drivers", []) if d.get("role") == "Principal"), ""),
             "km_year": str(v["annual_km"]) if v.get("annual_km") else "",
             "winter_tires": bool(v.get("winter_tires"))})
     return out

@@ -159,6 +159,26 @@ def from_quote(folder, data):
             continue
         data["cars"].append({"id": uuid.uuid4().hex[:8], "label": label, "vin": vin})
         added.append(label)
+    # who drives which car, as the quote lists them per vehicle (Prn / Occ); a role already set by hand is kept
+    relation = {"spouse": "Spouse / partner", "applicant": ""}
+    by_driver = {_clean_name(d.get("name")): d for d in q.get("drivers", [])}
+    for v in q.get("vehicles", []):
+        label = client_facts._car(v.get("description") or "")
+        vin = (v.get("vin") or "").upper()
+        car = next((c for c in data["cars"] if (vin and vin == c.get("vin")) or label.upper() == c["label"].upper()), None)
+        if car is None:
+            continue
+        for qd in v.get("drivers", []):
+            person = next((p for p in data["people"] if _same_name(qd["name"], p["name"])), None)
+            if person is None or qd.get("role") not in ROLES:
+                continue
+            roles = data["roles"].setdefault(car["id"], {})
+            if person["id"] not in roles:
+                roles[person["id"]] = qd["role"]
+                added.append(f"{person['name'].title()}: {qd['role'].lower()} on {car['label']}")
+            rel = by_driver.get(_clean_name(qd["name"]), {}).get("relationship", "")
+            if person["id"] != MAIN and not person.get("relation") and rel:
+                person["relation"] = relation.get(rel.lower(), "Other family")
     return data, added
 
 

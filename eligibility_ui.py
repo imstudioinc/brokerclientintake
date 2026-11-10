@@ -219,8 +219,12 @@ class EligibilityDialog(Panel):
                 e.insert(0, f"{facts[key]:g}" if isinstance(facts[key], float) else str(facts[key]))
         saved = records.load(self.folder).get("vehicle_use")   # ticked earlier for this client
         saved = saved if isinstance(saved, dict) else {}
+        quoted_use = {}
+        for v in (self.data["quote"] or {}).get("vehicles", []):   # a ride-share endorsement on the quote = ride sharing
+            if any(k.lower().startswith("#6t") or "transportation network" in k.lower() for k in v["coverages"]):
+                quoted_use["rideshare"] = 1
         for key in eligibility.USES:
-            on = 1 if saved.get(key) else 0
+            on = 1 if (saved.get(key) or quoted_use.get(key)) else 0
             self.use_vars[key].set(on)
             self.entries[key].delete(0, "end")
             self.entries[key].insert(0, str(on))
