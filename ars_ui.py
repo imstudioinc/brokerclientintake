@@ -16,6 +16,7 @@ import ui_kit
 
 import ars
 import eligibility
+import household
 import mvr
 import review
 from carriers_ui import copy
@@ -43,12 +44,23 @@ class ArsEntryPage(Panel):
         top.grid(row=0, column=0, sticky="ew", padx=ui.SP, pady=(0, ui.SP))
         found = review.find_docs(self.folder)
         self.dashes, self.mvrs = found["dash"], found["mvr"]
+        self.hh = household.load(self.folder)                  # one folder, several people: one driver at a time
+        self.people = self.hh["people"] if len(self.hh["people"]) > 1 else []
+        self.owned = None                                      # {person id: {"dash": [...], "mvr": [...]}} once read
+        self.person = tk.StringVar(value=self.hh["people"][0]["name"].title())
+        if self.people:
+            ctk.CTkLabel(top, text="Driver", font=ui.font(13, "bold"), text_color=ui.MUTED).pack(side="left")
+            ctk.CTkOptionMenu(top, values=[p["name"].title() for p in self.people], variable=self.person, width=230,
+                              height=34, font=ui.font(13, "bold"), fg_color=ui.SURFACE_ALT, button_color=ui.SURFACE_ALT,
+                              button_hover_color=ui.BORDER, text_color=ui.TEXT, dynamic_resizing=False,
+                              command=lambda _: self.load()).pack(side="left", padx=(ui.SP, 2 * ui.SP))
         ctk.CTkLabel(top, text="DASH", font=ui.font(13, "bold"), text_color=ui.MUTED).pack(side="left")
         self.choice = tk.StringVar(value=self.dashes[0].name if self.dashes else "(none in the folder)")
-        ctk.CTkOptionMenu(top, values=[p.name for p in self.dashes] or ["(none in the folder)"],
-                          variable=self.choice, width=380, height=34, font=ui.font(12), fg_color=ui.SURFACE_ALT,
-                          button_color=ui.SURFACE_ALT, button_hover_color=ui.BORDER, text_color=ui.TEXT,
-                          dynamic_resizing=False, command=lambda _: self.load()).pack(side="left", padx=(ui.SP, 2 * ui.SP))
+        self.dash_menu = ctk.CTkOptionMenu(top, values=[p.name for p in self.dashes] or ["(none in the folder)"],
+                          variable=self.choice, width=380 if not self.people else 300, height=34, font=ui.font(12),
+                          fg_color=ui.SURFACE_ALT, button_color=ui.SURFACE_ALT, button_hover_color=ui.BORDER,
+                          text_color=ui.TEXT, dynamic_resizing=False, command=lambda _: self._read())
+        self.dash_menu.pack(side="left", padx=(ui.SP, 2 * ui.SP))
         self.mvr_label = ctk.CTkLabel(top, text="", font=ui.font(12), text_color=ui.MUTED)
         self.mvr_label.pack(side="left")
         self.copy_all = ctk.CTkButton(top, text="Copy everything as text", height=34, width=190,
@@ -83,13 +95,61 @@ class ArsEntryPage(Panel):
         ctk.CTkLabel(self.body, text=text, font=ui.font(14), text_color=color or ui.MUTED, justify="left",
                      anchor="w", wraplength=760).grid(row=0, column=0, sticky="w", padx=2 * ui.SP, pady=2 * ui.SP)
 
+    def current_person(self):
+        return next((p for p in self.people if p["name"].title() == self.person.get()), None)
+
     def load(self):
+        """A driver was picked (or the page opened): find that person's DASH / MVR, then read them."""
+        if not self.people:
+            return self._read()
+        self._message("Finding this driver's documents…")
+        if self.owned is not None:
+            return self._person_ready()
+        box = {}
+
+        def work():
+            try:
+                box["owned"] = household.assign_docs(self.folder, self.hh)
+            except Exception as e:
+                box["error"] = e
+
+        t = threading.Thread(target=work, daemon=True)
+        t.start()
+
+        def wait():
+            if t.is_alive():
+                return self.after(100, wait)
+            if not self.winfo_exists():
+                return
+            if "error" in box:
+                return self._message(f"Could not sort the documents by person: {box['error']}", self.ui.DANGER)
+            self.owned = box["owned"]
+            self._person_ready()
+        wait()
+
+    def _person_ready(self):
+        p = self.current_person()
+        mine = (self.owned or {}).get(p["id"], {"dash": [], "mvr": []}) if p else {"dash": [], "mvr": []}
+        self.dashes, self.mvrs = mine["dash"], mine["mvr"]
+        names = [d.name for d in self.dashes] or ["(none in the folder)"]
+        self.dash_menu.configure(values=names)
+        self.choice.set(names[0])
+        self._read()
+
+    def _read(self):
         path = next((p for p in self.dashes if p.name == self.choice.get()), None)
         mvr_path = self.mvrs[0] if self.mvrs else None
-        self.mvr_label.configure(text=f"MVR: {mvr_path.name}" if mvr_path else "No MVR in the folder")
+        roles = ""
+        who = self.current_person()
+        if who:
+            mine = household.cars_of(self.hh, who["id"])
+            roles = "   ·   " + ("; ".join(f"{role} on {car['label']}" for car, role in mine) if mine else "no car set yet")
+        self.mvr_label.configure(text=(f"MVR: {mvr_path.name}" if mvr_path else "No MVR for this driver") + roles)
         if path is None and mvr_path is None:
             self.text = ""
-            return self._message("No DASH report or MVR in the client folder. Use Import DASH and Request MVR first.")
+            return self._message(("No DASH report or MVR for " + self.person.get() + " in this folder. Save their reports in "
+                                  "the folder with their name in the file name.") if self.people else
+                                 "No DASH report or MVR in the client folder. Use Import DASH and Request MVR first.")
         self._message("Reading the DASH report and the MVR…")
         result = {}
 

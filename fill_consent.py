@@ -175,6 +175,13 @@ def fill(client_folder, dln=None, template=None):
     # the client first (with the licence # from their DASH if there is one), then the other drivers
     own = next((d for d in dash if _same_person(d[0], client_name, d[1], dln)), None)
     drivers = [(client_name, own[1] if own else format_dln(dln))]
+    try:                                             # the household's other people come right after the client
+        import household
+        for person in household.load(folder)["people"][1:]:
+            who = next((d for d in dash if _same_person(d[0], person["name"], d[1], person.get("dln", ""))), None)
+            drivers.append((person["name"], format_dln(person.get("dln", "")) if person.get("dln") else (who[1] if who else "")))
+    except Exception:
+        pass
     for d in dash:
         if d is own:
             continue

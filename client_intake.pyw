@@ -32,6 +32,8 @@ import checklist
 import client_edit
 import client_facts
 import ars_ui
+import household
+import household_ui
 import carriers
 import carriers_ui
 import policy_ui
@@ -2395,7 +2397,8 @@ class App(ctk.CTk):
         quote_ = ("UW call", sel(lambda f: carriers_ui.UwCallPage(self, f)))
         carriers_ = ("Carriers & payments", sel(lambda f: carriers_ui.CarrierInfoPage(self, f)))
         if key == "Auto":
-            return [[consent, ("Import DASH", sel(lambda f: ImportDashDialog(self, f))),
+            return [[consent, ("Household", sel(lambda f: household_ui.HouseholdPage(self, f, on_saved=lambda d: self.client_changed(f)))),
+                     ("Import DASH", sel(lambda f: ImportDashDialog(self, f))),
                      ("Request MVR", sel(lambda f: MvrDialog(self, f))), email],
                     [("ARS entry", sel(lambda f: ars_ui.ArsEntryPage(self, f))),
                      ("Review quote", sel(lambda f: eligibility_ui.EligibilityDialog(self, f))), quote_, email],
@@ -2760,7 +2763,8 @@ class App(ctk.CTk):
         except OSError:
             modified = 0
         return {"info": info, "docs": docs, "skip": skip, "rows": rows, "by_hand": by_hand, "filled": filled,
-                "warnings": warnings, "down_hint": down_hint, "modified": modified, "needed": needed}
+                "warnings": warnings, "down_hint": down_hint, "modified": modified, "needed": needed,
+                "household": household.summary_raw(data)}
 
     def _gather_thread(self, folder, kind):
         try:
@@ -2818,7 +2822,7 @@ class App(ctk.CTk):
             self._stage_picked = False
             kind = self.client_type_of.get(folder, "")
             self._set(self.details_title, text=shorten(folder.name, 34))
-            self._set(self.details_type, text=f"  {kind}  " if kind else "")
+            self._set(self.details_type, text=(f"  {kind}" + (f"  ·  {b['household']}" if b.get("household") else "") + "  ") if kind else "")
         bundle = None if fresh else self._bundles.get(folder)
         self._loading = False
         if bundle:
