@@ -385,6 +385,8 @@ def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None, data=N
         elif auto == "mvr_request" and (info.get("mvr_requested") or docs.get("MVR")):
             state = "done"
             note = f"Sent {info['mvr_requested'][:10]}" if info.get("mvr_requested") else "MVR already received"
+        elif auto == "mvr_request" and info.get("mvr_draft"):
+            note = f"Draft opened {info['mvr_draft'][:10]} - not marked as sent. Send it, then Mark done"
         elif auto == "mvr" and docs.get("MVR"):
             state, note = "done", "In the folder"
         elif auto == "documents":

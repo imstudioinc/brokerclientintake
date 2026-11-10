@@ -6,6 +6,7 @@ MVR only if its file name or text looks like one, then matched to a client by th
 licence number printed on it (or, failing that, the client's full name).
 """
 import datetime
+import json
 import re
 import shutil
 import time
@@ -32,11 +33,23 @@ def _raw_dln(dln):
     return re.sub(r"[^A-Z0-9]", "", (dln or "").upper())
 
 
+def _household_people(folder):
+    """[(raw licence #, NAME)] of the household members saved in the client's tracking.json (the main client is not in it)."""
+    try:
+        raw = json.loads((Path(folder) / "tracking.json").read_text(encoding="utf-8-sig"))
+        people = (raw.get("household") or {}).get("people") or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [(_raw_dln(p.get("dln")), " ".join(str(p.get("name", "")).split()).upper())
+            for p in people if isinstance(p, dict) and p.get("name")]
+
+
 class ClientIndex:
-    """Licence # and name -> client folder, cached per folder."""
+    """Licence # and name -> client folder, cached per folder. Each folder lists its people: the main client first,
+    then the household members (their MVRs go into the same folder)."""
 
     def __init__(self):
-        self._cache = {}  # folder -> (mtime, dln_raw, name)
+        self._cache = {}  # folder -> (mtime, [(dln_raw, name)])
 
     def build(self, folders):
         index = {}
@@ -55,9 +68,9 @@ class ClientIndex:
                         if found and found[1]:
                             dln = found[1]
                             break
-                cached = (mtime, _raw_dln(dln), name.upper())
+                cached = (mtime, [(_raw_dln(dln), name.upper())] + _household_people(folder))
                 self._cache[folder] = cached
-            index[folder] = cached[1:]
+            index[folder] = cached[1]
         return index
 
 
@@ -70,25 +83,32 @@ def read_pdf_text(path, pages=2):
 
 
 def match_client(path, text, index):
-    """Return (folder, how) for the client this MVR belongs to, or (None, reason)."""
+    """Return (folder, how, who) for the client this MVR belongs to: who = the household member's name when it is
+    not the main client's (None = the main client), or (None, reason, None)."""
     haystack = f"{path.stem}\n{text}".upper()
     found_dlns = {"".join(m) for m in DLN_IN_TEXT.findall(haystack)}
-    by_dln = [f for f, (dln, _) in index.items() if dln and dln in found_dlns]
-    if len(by_dln) == 1:
-        return by_dln[0], "licence #"
-    if len(by_dln) > 1:  # same person with folders in several types: newest folder wins
-        return max(by_dln, key=lambda f: f.stat().st_mtime), "licence #"
+    by_dln = {f: next(i for i, (dln, _) in enumerate(ents) if dln and dln in found_dlns)
+              for f, ents in index.items() if any(dln and dln in found_dlns for dln, _ in ents)}
+    if by_dln:     # several folders = the same person in different types: newest folder wins
+        f = max(by_dln, key=lambda x: x.stat().st_mtime) if len(by_dln) > 1 else next(iter(by_dln))
+        i = by_dln[f]
+        return f, "licence #", (index[f][i][1] if i else None)
     words = set(re.findall(r"[A-Z']+", haystack))
-    by_name = [f for f, (_, name) in index.items()
-               if len(name.split()) >= 2 and set(name.split()) <= words]
+    by_name = {}
+    for f, ents in index.items():
+        for i, (_, name) in enumerate(ents):
+            if len(name.split()) >= 2 and set(name.split()) <= words:
+                by_name.setdefault(f, i)
+                break
     if len(by_name) == 1:
-        return by_name[0], "name"
-    return None, "several clients match" if by_name else "no client matches"
+        f, i = next(iter(by_name.items()))
+        return f, "name", (index[f][i][1] if i else None)
+    return None, "several clients match" if by_name else "no client matches", None
 
 
-def file_mvr(path, folder):
-    """Move the MVR into the client folder as 'MVR - NAME.pdf' (never overwrites)."""
-    name = (load_client(folder).get("name") or folder.name).upper()
+def file_mvr(path, folder, who=None):
+    """Move the MVR into the client folder as 'MVR - NAME.pdf' (never overwrites). `who` = a household member's name."""
+    name = (who or load_client(folder).get("name") or folder.name).upper()
     dest = folder / f"MVR - {name}.pdf"
     if dest.exists():
         dest = folder / f"MVR - {name} {datetime.date.today():%Y-%m-%d}.pdf"
@@ -132,12 +152,12 @@ class Watcher:
             text = read_pdf_text(path)
             if not (MVR_WORDS.search(path.name) or MVR_WORDS.search(text)):
                 continue
-            folder, how = match_client(path, text, self.index.build(client_folders))
+            folder, how, who = match_client(path, text, self.index.build(client_folders))
             if folder is None:
                 events.append(("unmatched", path, how))
                 continue
             try:
-                dest = file_mvr(path, folder)
+                dest = file_mvr(path, folder, who)
             except OSError as e:
                 events.append(("unmatched", path, f"could not move it ({e})"))
                 continue

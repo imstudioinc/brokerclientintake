@@ -416,11 +416,31 @@ class MvrDialog(Panel):
         self.error = ctk.CTkLabel(body, text="", font=font(12), text_color=DANGER, justify="left")
         self.error.grid(row=7, column=0, columnspan=2, sticky="w", padx=p)
 
+        # the household's other members: their MVRs are requested in the same email
+        self.hh = household.load(folder)
+        self.members = []                     # (ticked, person, licence entry)
+        if len(self.hh["people"]) > 1:
+            box = ctk.CTkFrame(body, fg_color="transparent")
+            box.grid(row=8, column=0, columnspan=2, sticky="ew", padx=p, pady=(SP, 0))
+            box.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(box, text="Household - also request their MVR", font=font(15, "bold"), text_color=TEXT) \
+                .grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, SP / 2))
+            for i, person in enumerate(self.hh["people"][1:], 1):
+                var = tk.BooleanVar(value=True)
+                ctk.CTkCheckBox(box, text=shorten(person["name"].title(), 26), variable=var, font=font(13),
+                                text_color=TEXT, fg_color=ACCENT, hover_color=ACCENT_HOVER, border_color=MUTED,
+                                width=190).grid(row=i, column=0, sticky="w", pady=SP / 2)
+                e = ctk.CTkEntry(box, height=34, font=font(13), border_color=BORDER, width=210,
+                                 placeholder_text="Licence #  A1234-12345-12345")
+                e.grid(row=i, column=1, sticky="e", pady=SP / 2)
+                if person.get("dln"):
+                    e.insert(0, person["dln"])
+                self.members.append((var, person, e))
         ctk.CTkLabel(body, text="Attach", font=font(15, "bold"), text_color=TEXT) \
-            .grid(row=8, column=0, columnspan=2, sticky="w", padx=p, pady=(SP, SP / 2))
+            .grid(row=9, column=0, columnspan=2, sticky="w", padx=p, pady=(SP, SP / 2))
         self.attach = []
         self.attach_frame = ctk.CTkFrame(body, fg_color="transparent")
-        self.attach_frame.grid(row=9, column=0, columnspan=2, sticky="ew", padx=p)
+        self.attach_frame.grid(row=10, column=0, columnspan=2, sticky="ew", padx=p)
         for label in self.ATTACHABLE:
             for f in docs[label]:
                 self._add_attachment(f)
@@ -430,8 +450,8 @@ class MvrDialog(Panel):
                                          text="No DASH, consent or Quote Information files in this folder yet.")
             self.no_files.pack(anchor="w")
         app.secondary_button(body, "Add file…", self.browse_file, width=100) \
-            .grid(row=10, column=0, sticky="w", padx=p, pady=(SP, 0))
-        r = 11
+            .grid(row=11, column=0, sticky="w", padx=p, pady=(SP, 0))
+        r = 12
 
         if app.cfg.get("mvr_autosave", True):
             ctk.CTkLabel(body, text="When the reply arrives, click Download on the MVR in Outlook - "
@@ -442,6 +462,8 @@ class MvrDialog(Panel):
         to, cc = app.cfg.get("mvr_to", ""), app.cfg.get("mvr_cc", "")
         if to:
             rcpt = f"To: {to}" + (f"\nCC: {cc}" if cc else "")
+            if info.get("mvr_requested"):
+                rcpt += f"\nAn MVR request was already made on {info['mvr_requested'][:10]} - you can send it again."
         else:
             rcpt = "No recipient set. Add the branch manager's email in Settings."
         ctk.CTkLabel(body, text=rcpt, font=font(12), text_color=MUTED if to else DANGER,
@@ -511,21 +533,41 @@ class MvrDialog(Panel):
             problems.append("Licence # must be 1 letter + 14 digits.")
         if v["email"] and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", v["email"]):
             problems.append("Email address doesn't look right.")
+        others, typed = [], {}
+        for var, person, entry in self.members:
+            dln = format_dln(entry.get())
+            if dln and is_valid_dln(dln):
+                typed[person["id"]] = dln
+            if var.get():
+                if not is_valid_dln(dln):
+                    problems.append(f"Licence # for {person['name'].title()} must be 1 letter + 14 digits "
+                                    "(or untick them).")
+                else:
+                    first, last = mvr_email.split_name(person["name"])
+                    others.append((first, last, dln))
         if not self.app.cfg.get("mvr_to"):
             problems.append("Set the branch manager's email in Settings first.")
         if problems:
             self.error.configure(text="\n".join(problems))
             return None
 
+        # not marked as requested yet: the draft is only opened, the broker still has to send it
         mvr_email.save_client(self.folder, name=f"{v['first']} {v['last']}", dln=v["dln"],
-                              phone=v["phone"], email=v["email"],
-                              mvr_requested=datetime.datetime.now().isoformat(timespec="minutes"))
+                              phone=v["phone"], email=v["email"])
+        if typed:                              # keep the licence numbers typed here on the household
+            try:
+                for person in self.hh["people"]:
+                    if person["id"] in typed:
+                        person["dln"] = typed[person["id"]]
+                household.save(self.folder, self.hh)
+            except Exception:
+                pass
         self.go.configure(state="disabled", text="Opening Outlook…")
         self.update_idletasks()
         email = dict(
             to=self.app.cfg["mvr_to"], cc=self.app.cfg.get("mvr_cc", ""),
-            subject=mvr_email.build_subject(v["dln"], v["first"], v["last"]),
-            body_html=mvr_email.build_body_html(v["first"], v["last"], v["dln"], v["phone"], v["email"]),
+            subject=mvr_email.build_subject(v["dln"], v["first"], v["last"], others),
+            body_html=mvr_email.build_body_html(v["first"], v["last"], v["dln"], v["phone"], v["email"], others),
             attachments=[f for var, f in self.attach if var.get()])
         classic = self.app.cfg.get("email_app") == "Classic Outlook"
         try:
@@ -543,6 +585,10 @@ class MvrDialog(Panel):
             self.go.configure(state="normal", text="Create Outlook draft")
             self.error.configure(text=f"Could not open {'Classic' if classic else 'New'} Outlook.\n{e}")
             return None
+        try:     # the draft is open; "Mark done" on the MVR step confirms it was sent
+            mvr_email.save_client(self.folder, mvr_draft=datetime.datetime.now().isoformat(timespec="minutes"))
+        except OSError:
+            pass
         if display:
             self.destroy()
         return mail

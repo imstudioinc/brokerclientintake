@@ -52,19 +52,27 @@ def format_phone(phone):
 
 
 # ---------- email ----------
-def build_subject(dln, first, last):
-    return f"MVR Request | {dln} | {first} {last}".strip()
+def build_subject(dln, first, last, others=()):
+    """others = the household members asked for too: [(first, last, dln)]."""
+    more = f" + {len(others)} more driver{'s' if len(others) != 1 else ''}" if others else ""
+    return f"MVR Request | {dln} | {first} {last}{more}".strip()
 
 
-def build_body_html(first, last, dln, phone, email):
+def build_body_html(first, last, dln, phone, email, others=()):
+    """others = the household members asked for too: [(first, last, dln)], each as its own block under the client."""
     e = lambda s: html.escape(s or "")
     rows = [("Last Name", last), ("First Name", first), ("License Number", dln),
             ("Phone", phone), ("Email", email)]
     details = "".join(f"<b>{k}: {e(v)}</b><br>" for k, v in rows)
+    for f2, l2, d2 in others:
+        details += "<br>" + "".join(f"<b>{k}: {e(v)}</b><br>" for k, v in
+                                    (("Last Name", l2), ("First Name", f2), ("License Number", d2)))
+    plural = "s" if others else ""
     return (
         '<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">'
         "<p>Hello,</p>"
-        "<p>Please find below the client details for <b>MVR request</b>.</p>"
+        f"<p>Please find below the client details for <b>MVR request{plural}</b>"
+        + (f" ({1 + len(others)} drivers in the same household)" if others else "") + ".</p>"
         f"<p>{details}</p>"
         "<p>Please advise at your earliest convenience.</p>"
         "<p>Thank you,</p>"
