@@ -30,12 +30,16 @@ FACTS = {
     "nonpay_cancellations_5y": "Non-payment cancellations (5 yrs)",
     "possible_gaps": "Possible gaps in coverage",
     "gap_last_12m": "Gap in the last 12 months / uninsured now",
+    "rideshare": "Ride sharing - Uber / Lyft (1 = yes)",
+    "carshare": "Car sharing - Turo etc. (1 = yes)",
+    "delivery": "Delivery apps - Uber Eats etc. (1 = yes)",
     "minor_convictions_3y": "Minor convictions (3 yrs)",
     "major_convictions_3y": "Major convictions (3 yrs)",
     "serious_convictions_3y": "Serious / criminal convictions (3 yrs)",
     "alcohol_convictions_3y": "   of those, alcohol-related",
 }
 MANUAL = ("minor_convictions_3y", "major_convictions_3y", "serious_convictions_3y", "alcohol_convictions_3y")
+USES = ("rideshare", "carshare", "delivery")   # how the car is used: ticked by the broker, saved per client
 
 
 def _plumber():
@@ -52,6 +56,7 @@ def _sum(facts, *keys):
 
 # Worked out from the facts above, for rules on combined counts
 DERIVED = {
+    "uses_total": ("Ride sharing / car sharing / delivery use", lambda f: _sum(f, *USES)),
     "major_serious_3y": ("Major + serious convictions (3 yrs)",
                          lambda f: _sum(f, "major_convictions_3y", "serious_convictions_3y")),
     "all_convictions_3y": ("All convictions (3 yrs)",
@@ -228,11 +233,29 @@ def read_dash_facts(pdf_path, today=None, at_fault_over=25):
     return facts, details, notes
 
 
-def load_rules(path=None):
+USE_RULES_FILE = "use_rules.json"
+
+
+def load_rules(path=None, notes=None):
+    """(rules, path). `notes` = the Underwriting Knowledge folder: its use_rules.json (ride sharing / car sharing /
+    delivery rules per carrier; kept out of the public repo) is merged in - "extends" adds rules to a market that is
+    already there, any other market is added."""
     path = Path(path) if path else BUILTIN_RULES
     if not path.exists():
         path = BUILTIN_RULES
     data = json.loads(path.read_text(encoding="utf-8-sig"))
+    if notes:
+        try:
+            extra = json.loads((Path(notes) / USE_RULES_FILE).read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            extra = {}
+        markets = data.setdefault("markets", [])
+        for m in extra.get("markets", []):
+            target = next((x for x in markets if x.get("name") == m.get("extends")), None) if m.get("extends") else None
+            if target is not None:
+                target["rules"] = list(target.get("rules", [])) + list(m.get("rules", []))
+            elif not m.get("extends"):
+                markets.append(m)
     return data, path
 
 
@@ -268,6 +291,8 @@ def evaluate(facts, rules, line=None):
     if line and any(line in m.get("lines", []) for m in markets):
         markets = [m for m in markets if not m.get("lines") or line in m["lines"]]   # only this client's line
     for market in markets:
+        if market.get("show_if") and _check(facts, market["show_if"]) is not True:
+            continue   # e.g. the vehicle-use markets only appear once a use is ticked
         reasons, unknown = [], set()
         for rule_set in [market] + always:
             for r in rule_set.get("rules", []):

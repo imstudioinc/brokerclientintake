@@ -80,6 +80,8 @@ def facts_from(data):
         facts = {k: 0 for k in eligibility.FACTS if k not in eligibility.MANUAL}
         facts.update(years_licensed=None, age=None)
         notes = ["No DASH report: treated as no insurance history (a new driver for the rules)."]
+    for k in eligibility.USES:   # ticked on the review page; no use unless the broker says so
+        facts.setdefault(k, 0)
     m = data["mvr"]
     if m:
         g1 = m["dates"].get("g1")
@@ -341,8 +343,9 @@ def recommend(results, q):
     # standard markets first; non-standard only when no standard market fits
     # (a market that only needs a referral still counts - e.g. a new driver at Intact)
     for ok in (("Proceed", "Caution"), ("Refer to underwriter",)):
-        for tier in ("standard", "non-standard", "commercial", ""):
-            fits = [r for r in results if r.get("tier", "") == tier and r["verdict"] in ok]
+        # the vehicle-use markets (Aviva, Economical...) only exist when a use is ticked: they sit with the standard ones
+        for tiers in (("standard", "uses"), ("non-standard",), ("commercial",), ("",)):
+            fits = [r for r in results if r.get("tier", "") in tiers and r["verdict"] in ok]
             if fits:
                 return quoted, fits
     return quoted, []

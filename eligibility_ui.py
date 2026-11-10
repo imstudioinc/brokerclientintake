@@ -16,6 +16,8 @@ import customtkinter as ctk
 import config
 from panel import Panel
 import eligibility
+import notes_search
+import records
 import review
 
 WARN = ("#B45309", "#FBBF24")
@@ -91,9 +93,18 @@ class EligibilityDialog(Panel):
         self.class_entry = ctk.CTkEntry(left, width=64, height=30, font=ui.font(13), justify="center")
         self.class_entry.grid(row=r + 2, column=1, sticky="e", padx=(0, 14), pady=(10, 0))
         self.class_entry.bind("<KeyRelease>", lambda ev: self.show_results())
+        ctk.CTkLabel(left, text="How the car is used", font=ui.font(13, "bold"), text_color=ui.TEXT, anchor="w") \
+            .grid(row=r + 3, column=0, columnspan=2, sticky="w", padx=14, pady=(14, 0))
+        self.use_vars = {}
+        for i, (key, label) in enumerate((("rideshare", "Ride sharing (Uber, Lyft)"), ("carshare", "Car sharing (Turo)"),
+                                          ("delivery", "Delivery apps (Uber Eats)"))):
+            self.use_vars[key] = tk.IntVar(value=0)
+            ctk.CTkCheckBox(left, text=label, variable=self.use_vars[key], font=ui.font(13), text_color=ui.TEXT,
+                            command=self.use_changed).grid(row=r + 4 + i, column=0, columnspan=2, sticky="w",
+                                                           padx=14, pady=(6, 0))
         self.facts_btn = app.secondary_button(left, "Edit facts ▾", self.toggle_facts)
-        self.facts_btn.grid(row=r + 3, column=0, columnspan=2, sticky="ew", padx=14, pady=(12, 4))
-        r += 4
+        self.facts_btn.grid(row=r + 7, column=0, columnspan=2, sticky="ew", padx=14, pady=(14, 4))
+        r += 8
 
         self.facts_frame = ctk.CTkFrame(left, fg_color="transparent")
         self.facts_frame.grid_columnconfigure(0, weight=1)
@@ -101,6 +112,9 @@ class EligibilityDialog(Panel):
         self.entries = {}
         fr = 0
         for key, label in eligibility.FACTS.items():
+            if key in eligibility.USES:   # ticked in "How the car is used": the entry exists but is not shown
+                self.entries[key] = ctk.CTkEntry(self.facts_frame, width=60)
+                continue
             if key == eligibility.MANUAL[0]:
                 ctk.CTkLabel(self.facts_frame, text="Convictions (from the MVR)", font=ui.font(13, "bold"),
                              text_color=ui.TEXT).grid(row=fr, column=0, columnspan=2, sticky="w", pady=(10, 2))
@@ -138,7 +152,8 @@ class EligibilityDialog(Panel):
 
     # ---------- rules file ----------
     def load_rules(self):
-        self.rules, self.rules_path = eligibility.load_rules(self.app.cfg.get("rules_file"))
+        self.rules, self.rules_path = eligibility.load_rules(self.app.cfg.get("rules_file"),
+                                                             notes_search.notes_dir(self.app.cfg))
         builtin = self.rules_path == eligibility.BUILTIN_RULES
         self.rules_label.configure(text="Rules: built in (Intact, Jevco, Echelon, WellCare - Oct 2026)" if builtin
                                    else f"Rules: {self.rules_path}")
@@ -202,10 +217,31 @@ class EligibilityDialog(Panel):
             e.delete(0, "end")
             if facts.get(key) is not None:
                 e.insert(0, f"{facts[key]:g}" if isinstance(facts[key], float) else str(facts[key]))
+        saved = records.load(self.folder).get("vehicle_use")   # ticked earlier for this client
+        saved = saved if isinstance(saved, dict) else {}
+        for key in eligibility.USES:
+            on = 1 if saved.get(key) else 0
+            self.use_vars[key].set(on)
+            self.entries[key].delete(0, "end")
+            self.entries[key].insert(0, str(on))
         m = self.data["mvr"]
         self.class_entry.delete(0, "end")
         if m and m.get("class"):
             self.class_entry.insert(0, m["class"])
+
+    def use_changed(self):
+        """A use was ticked: remember it for this client and re-run the rules."""
+        use = {k: int(v.get()) for k, v in self.use_vars.items()}
+        for key, on in use.items():
+            self.entries[key].delete(0, "end")
+            self.entries[key].insert(0, str(on))
+        try:
+            data = records.load(self.folder)
+            data["vehicle_use"] = use
+            records._write(self.folder, data)
+        except Exception:
+            pass   # the shared drive may be unreachable; the ticks still work for this window
+        self.show_results(checks=False)
 
     def toggle_facts(self):
         if self.facts_frame.winfo_ismapped():
@@ -247,6 +283,9 @@ class EligibilityDialog(Panel):
             lines.append(f"Non-pay cancellations (3 yrs): {n('nonpay_cancellations_3y')}")
         if n("gap_last_12m"):
             lines.append("Gap in the last 12 months")
+        uses = [w for k, w in (("rideshare", "ride sharing"), ("carshare", "car sharing"), ("delivery", "delivery")) if n(k)]
+        if uses:
+            lines.append("Use: " + ", ".join(uses))
         return "\n".join(lines)
 
     # ---------- results ----------
