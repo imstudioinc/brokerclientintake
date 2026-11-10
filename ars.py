@@ -196,6 +196,24 @@ def licence_text(number):
     return f"{n[0]}{n[1:5]}-{n[5:10]}-{n[10:15]}" if len(n) == 15 else number or ""
 
 
+OOP_DAYS = 90            # first insured this close to the MVR's G1 date (or earlier) = out-of-province experience
+
+
+def first_insured_date(details):
+    """The earliest policy start on the DASH (a date), or None without a DASH / policies."""
+    starts = [p["start"] for p in (details or {}).get("policies", []) if p.get("start")]
+    return min(starts) if starts else None
+
+
+def _out_of_province(m, dates, first_insured):
+    """True for a G / G2 licence whose first insurance starts within OOP_DAYS of the G1 date the MVR gives."""
+    cls = (m.get("class") or "").upper()
+    g1 = dates.get("g1")
+    if not (g1 and first_insured) or not cls.startswith("G") or cls == "G1":
+        return False
+    return first_insured <= g1 + datetime.timedelta(days=OOP_DAYS)
+
+
 def driver(m, details=None):
     """The driver's licence facts for the ARS driver screen, from the MVR (and the DASH for the name)."""
     details = details or {}
@@ -206,6 +224,16 @@ def driver(m, details=None):
            "issue": ars_date(m.get("issue")), "expiry": ars_date(m.get("expiry")),
            "g1": ars_date(dates.get("g1")), "g2": ars_date(dates.get("g2")), "g": ars_date(dates.get("g")),
            "notes": []}
+    out["out_of_province"] = False
+    first_insured = first_insured_date(details)
+    if _out_of_province(m, dates, first_insured):
+        # Insured within weeks of the "G1" date: that date is really the Ontario licence exchange, not a G1 test, so the
+        # driver learnt to drive elsewhere. ARS: Out of province experience ON, the date goes in G, G1 / G2 stay blank.
+        out.update(out_of_province=True, g=out["g1"], g1="", g2="")
+        out["notes"].append(
+            f"Insured {ars_date(first_insured)}, within {OOP_DAYS} days of the licence date {out['g']}: assume out-of-province "
+            f"experience. On the ARS driver screen turn ON \"Out of province experience\", enter {out['g']} as the G date "
+            f"and leave the G1 and G2 dates blank.")
     if dates.get("note"):
         out["notes"].append(dates["note"])
     for problem in m.get("problems", []):
@@ -255,7 +283,9 @@ def as_text(entries, hist, drv=None, convs=None, susp=None):
     lines = []
     if drv:
         lines += ["DRIVER (MVR)", f"{drv['first']} {drv['last']} - born {drv['birth']} - licence {drv['licence']}",
-                  f"Class {drv['class']} - G1 {drv['g1'] or '?'}, G2 {drv['g2'] or '-'}, G {drv['g'] or '-'}", ""]
+                  f"Class {drv['class']} - G1 {drv['g1'] or '?'}, G2 {drv['g2'] or '-'}, G {drv['g'] or '-'}"
+                  if not drv.get("out_of_province") else
+                  f"Class {drv['class']} - OUT OF PROVINCE experience ON: G date {drv['g']}, leave G1 and G2 blank", ""]
     if entries is not None:
         lines.append("CLAIMS (ARS)")
         shown = [e for e in entries if not e["old"]]

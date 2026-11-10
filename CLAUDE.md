@@ -208,6 +208,7 @@ decision changes (edit the section, don't append contradictions).
   OCR skips "G\*\*\*": the class is read by OCRing each character inside a made-up word
   (char + "ARAGE"), only real Ontario classes accepted, majority vote across passes; photos are
   read three ways and merged; small images (< ~1,100 px wide) get a "too small" warning.
+- **Out-of-province experience (owner's rule)**: for a **G / G2** licence, if the DASH's first-insured date is within **90 days of the MVR's G1 date** (or earlier), the "G1 date" is really the Ontario licence exchange, so assume the driver learnt elsewhere (`ars.driver`, `OOP_DAYS`, `ars._out_of_province`). The ARS driver card then says: turn ON "Out of province experience", enter that date as the **G date**, leave **G1 and G2 blank** (the later G2 / G dates are not computed). Not applied to G1 or motorcycle classes, or without a DASH.
 - **Convictions** classed per the Intact / Jevco lists: hand-held device, 50-59 km/h over, stunt,
   no insurance, novice condition breaches = **major**; careless, impaired / alcohol, 60+ over,
   racing, driving while suspended, fail to remain = **serious**; everything else **minor**.

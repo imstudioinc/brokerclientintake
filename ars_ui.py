@@ -271,9 +271,14 @@ class ArsEntryPage(Panel):
         fields = [("First name", d["first"], None), ("Last name", d["last"], None),
                   ("Date of birth", d["birth"], None), ("Licence #", d["licence"], None),
                   ("Licence class", d["class"], None)]
-        for label, key in (("G1 date", "g1"), ("G2 date", "g2"), ("G date", "g")):
-            if d[key]:
-                fields.append((label, d[key], None))
+        if d.get("out_of_province"):                 # the licence dates are entered differently: see the note below
+            fields.append(("Out of province experience", "Turn ON", self.ui.WARN))
+            fields.append(("G date", d["g"], None))
+            fields.append(("G1 / G2 dates", "Leave blank", self.ui.WARN))
+        else:
+            for label, key in (("G1 date", "g1"), ("G2 date", "g2"), ("G date", "g")):
+                if d[key]:
+                    fields.append((label, d[key], None))
         notes = list(d["notes"])
         if d["demerits"]:
             notes.insert(0, f"{d['demerits']} demerit points on the licence.")
