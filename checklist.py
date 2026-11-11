@@ -331,26 +331,33 @@ def set_tick(folder, step_id, state):
     records._write(folder, data)
 
 
-def dash_missing(folder, dash_files, data):
-    """Names of household members who have no DASH report in the folder (reads no file: by the name in the file name).
-    A file with nobody's name on it belongs to the main client. Empty for a one-person file."""
-    people = ((data or {}).get("household") or {}).get("people") or []
-    names = [" ".join(str(p.get("name", "")).upper().split()) for p in people if isinstance(p, dict)]
-    names = [n for n in names if n]
-    if not names:
+def people_docs(folder, docs, data):
+    """Who in a household has a DASH report and an MVR in the folder: [{name, relation, dash, mvr}] with the main client
+    first (empty for a one-person file). Reads no file: a document belongs to the person whose name is in its file name;
+    one with nobody's name on it belongs to the main client."""
+    raw = ((data or {}).get("household") or {}).get("people") or []
+    members = [(" ".join(str(m.get("name", "")).upper().split()), m.get("relation") or "")
+               for m in raw if isinstance(m, dict) and m.get("name")]
+    members = [(n, r) for n, r in members if n]
+    if not members:
         return []
-    files = [Path(f).name.upper() for f in dash_files]
-    owned = set()
-    missing = []
-    for n in names:
-        tokens = n.replace(",", " ").split()
-        hits = [f for f in files if len(tokens) >= 2 and all(t in f for t in tokens)]
-        owned.update(hits)
-        if not hits:
-            missing.append(n)
-    if not [f for f in files if f not in owned]:        # nothing left for the main client
-        missing.insert(0, Path(folder).name.upper())
-    return missing
+    out = [{"name": Path(folder).name.upper(), "relation": "Main client", "dash": False, "mvr": False}]
+    out += [{"name": n, "relation": r, "dash": False, "mvr": False} for n, r in members]
+    for kind, label in (("dash", "DASH report"), ("mvr", "MVR")):
+        files = [Path(f).name.upper() for f in (docs or {}).get(label, [])]
+        owned = set()
+        for person in out[1:]:
+            tokens = person["name"].replace(",", " ").split()
+            hits = [f for f in files if len(tokens) >= 2 and all(t in f for t in tokens)]
+            owned.update(hits)
+            person[kind] = bool(hits)
+        out[0][kind] = any(f not in owned for f in files)       # what nobody else claimed is the main client's
+    return out
+
+
+def docs_missing(folder, docs, data, kind):
+    """Names (households only) without a DASH report / MVR; kind = "dash" or "mvr"."""
+    return [p["name"] for p in people_docs(folder, docs, data) if not p[kind]]
 
 
 def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None, data=None):
@@ -387,7 +394,7 @@ def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None, data=N
         elif auto == "consent" and docs.get("Client consent"):
             state, note = "done", "In the folder"
         elif auto == "dash" and docs.get("DASH report"):
-            missing = dash_missing(folder, docs["DASH report"], data)
+            missing = docs_missing(folder, docs, data, "dash")
             if missing:      # a household: each person needs their own DASH
                 note = "DASH missing for " + ", ".join(m.title() for m in missing)
             else:
@@ -414,7 +421,11 @@ def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None, data=N
         elif auto == "mvr_request" and info.get("mvr_draft"):
             note = f"Draft opened {info['mvr_draft'][:10]} - not marked as sent. Send it, then Mark done"
         elif auto == "mvr" and docs.get("MVR"):
-            state, note = "done", "In the folder"
+            missing = docs_missing(folder, docs, data, "mvr")
+            if missing:      # a household: each person needs their own MVR
+                note = "MVR missing for " + ", ".join(m.title() for m in missing)
+            else:
+                state, note = "done", "In the folder"
         elif auto == "documents":
             wanted = [k for k in CLIENT_DOCS.get(kind, ()) if k in docs and k not in skip]
             have = [k for k in wanted if docs[k]]

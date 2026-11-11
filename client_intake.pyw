@@ -1511,6 +1511,8 @@ class App(ctk.CTk):
         self._shown_folder, self._shown_stamp, self._loading = None, None, False
         self._applied, self._visible = {}, {}      # what _set() / _show() last did to each widget
         self._next_packed = []
+        self._people_docs = []
+        self._household_text = ""
         self._tracker_dirty = False
         self._rows_mode = None
         self._refresh_job = None
@@ -2436,7 +2438,8 @@ class App(ctk.CTk):
         self.card_box.grid_columnconfigure(0, weight=1)
         top = ctk.CTkFrame(self.card_box, fg_color="transparent", height=1)
         top.grid(row=0, column=0, sticky="ew", padx=1.5 * SP, pady=(SP, 0))
-        ctk.CTkLabel(top, text="Details to copy", font=font(13, "bold"), text_color=TEXT).pack(side="left")
+        self.card_title = ctk.CTkLabel(top, text="Details to copy", font=font(13, "bold"), text_color=TEXT)
+        self.card_title.pack(side="left")
         ctk.CTkLabel(top, text="click a value to copy it", font=font(12), text_color=MUTED).pack(side="left", padx=SP)
         self.copy_note = ctk.CTkLabel(top, text="", font=font(13, "bold"), text_color=SUCCESS)
         self.copy_note.pack(side="left", padx=SP)
@@ -2549,9 +2552,10 @@ class App(ctk.CTk):
             for text, cmd in tools[i]:
                 b = self.secondary_button(row, "Fill consent" if text == "consent" else text, cmd, height=38,
                                           font=font(14), width=150 if len(text) > 14 else 120)
-                b.pack(side="left", padx=(0, SP))
+                b.grid(row=0, column=len(row.winfo_children()) - 1, padx=(0, SP), pady=(0, SP / 2))
                 if text == "consent":
                     ps["consent_btn"] = b
+            row.bind("<Configure>", lambda e, r=row: self._wrap_buttons(r, e.width), add="+")
             head, box = self._list_box(page, row=1, title="Steps")
             ps["steps_head"].append(head)
             for j, sid in enumerate(ids):
@@ -2566,6 +2570,26 @@ class App(ctk.CTk):
                 ps["docs_head"].append(None)
         self._use_set(key)
         return ps
+
+    def _wrap_buttons(self, row, width):
+        """A stage's buttons in as many rows as the width needs (the last one used to be cut off in a narrow window)."""
+        buttons = [b for b in row.winfo_children() if isinstance(b, ctk.CTkButton)]
+        if not buttons or width < 50:
+            return
+        layout, x, r, c = [], 0, 0, 0
+        for b in buttons:
+            w = b.winfo_reqwidth() + SP
+            if x + w > width and x:
+                r, c, x = r + 1, 0, 0
+            layout.append((b, r, c))
+            x += w
+            c += 1
+        sig = tuple((id(b), r, c) for b, r, c in layout)
+        if getattr(row, "_wrap_sig", None) == sig:
+            return
+        row._wrap_sig = sig
+        for b, r, c in layout:
+            b.grid_configure(row=r, column=c)
 
     def _wrap_contact(self, width):
         cells = [c for c in self.contact.winfo_children() if self._visible.get(c) is not False]
@@ -2603,6 +2627,7 @@ class App(ctk.CTk):
         """Draw the details card from the finished reading (rebuilt only when its content changed)."""
         self._card = card
         shown = bool(card) and (len(card["people"]) > 1 or card["cars"] or card["policy"])
+        self._set(self.card_title, text="Details to copy" + (f"   -   {self._household_text}" if self._household_text else ""))
         self._show(self.card_box, shown)
         if not shown:
             return
@@ -2616,65 +2641,90 @@ class App(ctk.CTk):
         bg, fg, muted = pick(SURFACE_ALT), pick(TEXT), pick(MUTED)
         chip_bg, hover = pick(SURFACE), pick(BORDER)
         px = lambda n: -int(round(n * scale))  # noqa: E731
-        f_name, f_note = (FONT, px(14), "bold"), (FONT, px(12))
-        f_label, f_value = (FONT, px(12)), (FONT, px(14))
+        f_name, f_note, f_cap = (FONT, px(14), "bold"), (FONT, px(12)), (FONT, px(11), "bold")
+        f_value = (FONT, px(14))
         for w in self.card_body.winfo_children():
             w.destroy()
         self._card_groups = []
-        measure = tkfont.Font(family=FONT, size=px(14)).measure
-        measure_small = tkfont.Font(family=FONT, size=px(12)).measure
 
-        def block(title, note, chips, empty=""):
+        def value_cell(parent, text, copy, row, col):
+            """A value that copies on click (soft background on hover); an empty one is a dash."""
+            if not text:
+                tk.Label(parent, text="-", font=f_value, bg=bg, fg=muted).grid(row=row, column=col, sticky="w", padx=(0, 18))
+                return
+            lab = tk.Label(parent, text=text, font=f_value, bg=chip_bg, fg=fg, padx=8, pady=3, cursor="hand2")
+            lab.grid(row=row, column=col, sticky="w", padx=(0, 14), pady=2)
+            lab.bind("<Button-1>", lambda e, c=copy: self._copy_value(c))
+            lab.bind("<Enter>", lambda e, w=lab: w.configure(bg=hover))
+            lab.bind("<Leave>", lambda e, w=lab: w.configure(bg=chip_bg))
+
+        def section(title):
             box = tk.Frame(self.card_body, bg=bg)
-            box.pack(fill="x", anchor="w")
-            line = tk.Frame(box, bg=bg)
-            line.pack(fill="x", pady=(SP, 2))
-            tk.Label(line, text=title, font=f_name, bg=bg, fg=fg).pack(side="left")
-            if note:
-                tk.Label(line, text="   " + note, font=f_note, bg=bg, fg=muted).pack(side="left")
-            row = tk.Frame(box, bg=bg)
-            row.pack(fill="x", anchor="w")
-            made = []
-            for label, shown_text, copy in chips:
-                chip = tk.Frame(row, bg=chip_bg, cursor="hand2", padx=8, pady=3)
-                a = tk.Label(chip, text=label, font=f_label, bg=chip_bg, fg=muted, cursor="hand2")
-                v = tk.Label(chip, text=shown_text, font=f_value, bg=chip_bg, fg=fg, cursor="hand2")
-                a.pack(side="left")
-                v.pack(side="left", padx=(6, 0))
-                for w in (chip, a, v):
-                    w.bind("<Button-1>", lambda e, c=copy: self._copy_value(c))
-                    w.bind("<Enter>", lambda e, ws=(chip, a, v): [x.configure(bg=hover) for x in ws])
-                    w.bind("<Leave>", lambda e, ws=(chip, a, v): [x.configure(bg=chip_bg) for x in ws])
-                width = measure_small(label) + measure(shown_text) + 6 + 16 + 10
-                made.append((chip, width))
-            if not chips and empty:
-                tk.Label(row, text=empty, font=f_note, bg=bg, fg=muted).pack(anchor="w")
-            self._card_groups.append((row, made))
+            box.pack(fill="x", anchor="w", pady=(SP, 0))
+            tk.Label(box, text=title.upper(), font=f_cap, bg=bg, fg=muted).grid(row=0, column=0, columnspan=6,
+                                                                              sticky="w", pady=(0, 3))
+            return box
 
-        for p in card["people"]:
-            if p["main"] and not card["people"][1:]:
-                continue       # a one-person file: the header already has these
-            if p["main"]:
-                block(p["name"].title(), "main client", [c for c in p["chips"] if c[0] in ("Licence", "Born")],
-                      "No licence # yet")
-            else:
-                block(p["name"].title(), p["relation"], p["chips"], "No licence # yet - add it on the Household page")
-        for c in card["cars"]:
-            block(c["label"], c["roles"], c["chips"])
+        def heads(box, names):
+            for c, h in enumerate(names):
+                tk.Label(box, text=h, font=f_note, bg=bg, fg=muted).grid(row=1, column=c, sticky="w", padx=(0, 18))
+
+        def name_cell(box, row, name, note):
+            cell = tk.Frame(box, bg=bg)
+            cell.grid(row=row, column=0, sticky="w", padx=(0, 18), pady=2)
+            tk.Label(cell, text=name, font=f_name, bg=bg, fg=fg).pack(anchor="w")
+            if note:
+                tk.Label(cell, text=note, font=f_note, bg=bg, fg=muted).pack(anchor="w")
+
+        def chip_of(chips, label):
+            return next(((shown_text, copy) for lab, shown_text, copy in chips if lab == label), ("", ""))
+
+        # ---- people: one row each (name, licence #, birth date) ----
+        if len(card["people"]) > 1:
+            box = section("People")
+            heads(box, ["Name", "Licence #", "Born"])
+            for i, p in enumerate(card["people"]):
+                name_cell(box, 2 + i, p["name"].title(), "main client" if p["main"] else p["relation"])
+                for col, label in ((1, "Licence"), (2, "Born")):
+                    text, copy = chip_of(p["chips"], label)
+                    value_cell(box, text, copy, 2 + i, col)
+        # ---- cars: name, VIN, who drives ----
+        if card["cars"]:
+            box = section("Cars")
+            heads(box, ["Car", "VIN"])
+            for i, c in enumerate(card["cars"]):
+                name_cell(box, 2 + i, c["label"], c["roles"].replace("   ·   ", "\n"))
+                text, copy = chip_of(c["chips"], "VIN")
+                value_cell(box, text, copy, 2 + i, 1)
+        # ---- policy: label over value, wraps with the window ----
         if card["policy"]:
-            block(card["policy"]["title"], "policy", card["policy"]["chips"])
+            box = section("Policy  -  " + card["policy"]["title"])
+            row = tk.Frame(box, bg=bg)
+            row.grid(row=1, column=0, columnspan=6, sticky="w")
+            made = []
+            measure = tkfont.Font(family=FONT, size=px(14)).measure
+            for label, shown_text, copy in card["policy"]["chips"]:
+                cell = tk.Frame(row, bg=bg)
+                tk.Label(cell, text=label, font=f_note, bg=bg, fg=muted).pack(anchor="w")
+                lab = tk.Label(cell, text=shown_text, font=f_value, bg=chip_bg, fg=fg, padx=8, pady=3, cursor="hand2")
+                lab.pack(anchor="w")
+                lab.bind("<Button-1>", lambda e, c=copy: self._copy_value(c))
+                lab.bind("<Enter>", lambda e, w=lab: w.configure(bg=hover))
+                lab.bind("<Leave>", lambda e, w=lab: w.configure(bg=chip_bg))
+                made.append((cell, measure(shown_text) + 40))
+            self._card_groups.append((row, made))
         self._wrap_card(self.card_box.master.winfo_width())
 
     def _wrap_card(self, width):
-        """Chips in rows that fit the width (a new row when the next chip would be cut off)."""
+        """The policy values in rows that fit the width (a new row when the next one would be cut off)."""
         avail = max(300, (width or 700) - 60)
-        for row, chips in self._card_groups:
+        for row, cells in self._card_groups:
             x = r = c = 0
-            for chip, w in chips:
+            for cell, w in cells:
                 if x + w > avail and x:
                     r, c, x = r + 1, 0, 0
-                chip.grid(row=r, column=c, sticky="w", padx=(0, SP), pady=(0, SP / 2))
-                x += w + SP
+                cell.grid(row=r, column=c, sticky="w", padx=(0, 16), pady=(0, SP / 2))
+                x += w + 16
                 c += 1
 
     def _descale(self, px):
@@ -2711,7 +2761,12 @@ class App(ctk.CTk):
         note = ctk.CTkLabel(rowf, text="", font=font(13), text_color=WARN, anchor="w", justify="left",
                             wraplength=560, height=18)
         note.grid(row=2, column=0, columnspan=2, sticky="w", padx=(32, 0), pady=(0, SP))
-        self.check_rows[sid] = {"var": var, "cb": cb, "note": note, "tag": tag, "auto": auto}
+        self.check_rows[sid] = {"var": var, "cb": cb, "note": note, "tag": tag, "auto": auto, "sub": None, "sub_sig": None}
+        if sid in ("dash", "mvr"):       # a household: one line per person under the step
+            sub = ctk.CTkFrame(rowf, fg_color="transparent", height=1)
+            sub.grid(row=3, column=0, columnspan=2, sticky="ew", padx=(32, 0), pady=(0, SP))
+            sub.grid_remove()
+            self.check_rows[sid]["sub"] = sub
 
     def _doc_row(self, box, i, label, auto, sel):
         row = ctk.CTkFrame(box, fg_color="transparent")
@@ -2940,8 +2995,35 @@ class App(ctk.CTk):
                 "WAITING" if sid in waiting_ids and state == "todo" else ""
             self._set(r["tag"], text=tag, text_color=PRIMARY if is_next else MUTED)
             warn = note if note and "issing" in note and state != "na" and sid != "documents" else ""
+            if r["sub"] is not None and self._people_docs:      # the per-person lines say who is missing
+                warn = ""
             self._set(r["note"], text=warn)
             self._show(r["note"], bool(warn))
+        self._render_people_steps()
+
+    def _render_people_steps(self):
+        """A household: under the DASH and MVR steps, one line per person (done / missing), clickable when missing."""
+        people = self._people_docs
+        for sid, key, opener, verb in (("dash", "dash", lambda f: ImportDashDialog(self, f), "import"),
+                                       ("mvr", "mvr", lambda f: MvrDialog(self, f), "request")):
+            r = self.check_rows.get(sid)
+            if not r or r["sub"] is None:
+                continue
+            sig = tuple((p["name"], p[key]) for p in people)
+            if sig != r["sub_sig"]:
+                r["sub_sig"] = sig
+                for w in r["sub"].winfo_children():
+                    w.destroy()
+                for i, p in enumerate(people):
+                    ok = p[key]
+                    who = p["name"].title() + (f"  ·  {p['relation']}" if p["relation"] and i else "")
+                    label = ctk.CTkLabel(r["sub"], text=(f"✓   {who}" if ok else f"○   {who}  -  missing  (click to {verb})"),
+                                         font=font(13), text_color=SUCCESS if ok else WARN, anchor="w", height=22,
+                                         cursor="" if ok else "hand2")
+                    label.pack(anchor="w")
+                    if not ok:
+                        label.bind("<Button-1>", lambda e: self.selected and opener(self.selected))
+            self._show(r["sub"], bool(people))
 
     # ----- the client page: files are read in a thread, the page is drawn on the window's thread
     def _gather(self, folder, kind):
@@ -2973,6 +3055,7 @@ class App(ctk.CTk):
         return {"info": info, "docs": docs, "skip": skip, "rows": rows, "by_hand": by_hand, "filled": filled,
                 "warnings": warnings, "down_hint": down_hint, "modified": modified, "needed": needed,
                 "household": household.summary_raw(data),
+                "people_docs": checklist.people_docs(folder, docs, data),
                 "card": client_card.build(folder.name, info, data, format_dln)}
 
     def _gather_thread(self, folder, kind):
@@ -3051,8 +3134,7 @@ class App(ctk.CTk):
             self._pageset(key)                          # first client of this type: build its pages
         self._use_set(key)
         self._set(self.details_title, text=shorten(folder.name, 34))
-        self._set(self.details_type, text=(f"  {kind}" + (f"  ·  {b['household']}" if b.get("household") else "") + "  ")
-                  if kind else "")
+        self._set(self.details_type, text=f"  {kind}  " if kind else "")
         info, docs, skip, warnings = b["info"], b["docs"], b["skip"], b["warnings"]
         if b["filled"]:
             self.note = (folder, "✓ Filled from the documents: " + ", ".join(b["filled"]), SUCCESS)
@@ -3068,6 +3150,8 @@ class App(ctk.CTk):
             self._set(label, text=value or "Add…", text_color=TEXT if value else PRIMARY)
             self._show(label.master, not hidden.get(key, False))
         self._wrap_contact(self.contact.master.winfo_width())
+        self.after(60, lambda: self._wrap_contact(self.contact.master.winfo_width()))   # once the new texts are measured
+        self._household_text = b.get("household") or ""
         self._render_card(folder, b.get("card"))
         self._set(self.facts_warn, text="⚠  Doesn't match the documents - click to edit\n"
                                         + "\n".join("•  " + w for w in warnings))
@@ -3098,6 +3182,7 @@ class App(ctk.CTk):
                     btn.grid() if key in show else btn.grid_remove()
                 r["buttons"]["open"].configure(command=lambda fs=files: [os.startfile(f) for f in fs])
                 r["state"] = state
+        self._people_docs = b.get("people_docs") or []
         self._render_stages(folder, kind, docs, skip, b["rows"], b["by_hand"], b["down_hint"], shown)
         # the consent needs only the client's name: fill it any time, DASH or not
         self._set(self.consent_btn, text="Refill consent" if docs["Client consent"] else "Fill consent")
