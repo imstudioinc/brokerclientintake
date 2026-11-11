@@ -331,33 +331,39 @@ def set_tick(folder, step_id, state):
     records._write(folder, data)
 
 
-def people_docs(folder, docs, data):
+def _raw(text):
+    return "".join(ch for ch in str(text or "").upper() if ch.isalnum())
+
+
+def people_docs(folder, docs, data, info=None):
     """Who in a household has a DASH report and an MVR in the folder: [{name, relation, dash, mvr}] with the main client
-    first (empty for a one-person file). Reads no file: a document belongs to the person whose name is in its file name;
-    one with nobody's name on it belongs to the main client."""
+    first (empty for a one-person file). Reads no file: a document belongs to the person whose NAME or LICENCE # is in
+    its file name (the branch manager's MVRs are named "MVR_A1234-56789-01234.pdf"); one that names nobody else belongs
+    to the main client."""
     raw = ((data or {}).get("household") or {}).get("people") or []
-    members = [(" ".join(str(m.get("name", "")).upper().split()), m.get("relation") or "")
+    members = [(" ".join(str(m.get("name", "")).upper().split()), m.get("relation") or "", _raw(m.get("dln")))
                for m in raw if isinstance(m, dict) and m.get("name")]
-    members = [(n, r) for n, r in members if n]
+    members = [m for m in members if m[0]]
     if not members:
         return []
     out = [{"name": Path(folder).name.upper(), "relation": "Main client", "dash": False, "mvr": False}]
-    out += [{"name": n, "relation": r, "dash": False, "mvr": False} for n, r in members]
+    out += [{"name": n, "relation": r, "dash": False, "mvr": False} for n, r, _ in members]
+    main_dln = _raw((info or {}).get("dln"))
     for kind, label in (("dash", "DASH report"), ("mvr", "MVR")):
         files = [Path(f).name.upper() for f in (docs or {}).get(label, [])]
         owned = set()
-        for person in out[1:]:
-            tokens = person["name"].replace(",", " ").split()
-            hits = [f for f in files if len(tokens) >= 2 and all(t in f for t in tokens)]
+        for person, (name, _, dln) in zip(out[1:], members):
+            tokens = name.replace(",", " ").split()
+            hits = [f for f in files if (len(tokens) >= 2 and all(t in f for t in tokens)) or (dln and dln in _raw(f))]
             owned.update(hits)
             person[kind] = bool(hits)
-        out[0][kind] = any(f not in owned for f in files)       # what nobody else claimed is the main client's
+        out[0][kind] = any(f not in owned for f in files) or bool(main_dln and any(main_dln in _raw(f) for f in files))
     return out
 
 
-def docs_missing(folder, docs, data, kind):
+def docs_missing(folder, docs, data, kind, info=None):
     """Names (households only) without a DASH report / MVR; kind = "dash" or "mvr"."""
-    return [p["name"] for p in people_docs(folder, docs, data) if not p[kind]]
+    return [p["name"] for p in people_docs(folder, docs, data, info) if not p[kind]]
 
 
 def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None, data=None):
@@ -394,7 +400,7 @@ def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None, data=N
         elif auto == "consent" and docs.get("Client consent"):
             state, note = "done", "In the folder"
         elif auto == "dash" and docs.get("DASH report"):
-            missing = docs_missing(folder, docs, data, "dash")
+            missing = docs_missing(folder, docs, data, "dash", info)
             if missing:      # a household: each person needs their own DASH
                 note = "DASH missing for " + ", ".join(m.title() for m in missing)
             else:
@@ -421,7 +427,7 @@ def status(folder, kind, docs, info, skip, read_quote=True, by_hand=None, data=N
         elif auto == "mvr_request" and info.get("mvr_draft"):
             note = f"Draft opened {info['mvr_draft'][:10]} - not marked as sent. Send it, then Mark done"
         elif auto == "mvr" and docs.get("MVR"):
-            missing = docs_missing(folder, docs, data, "mvr")
+            missing = docs_missing(folder, docs, data, "mvr", info)
             if missing:      # a household: each person needs their own MVR
                 note = "MVR missing for " + ", ".join(m.title() for m in missing)
             else:

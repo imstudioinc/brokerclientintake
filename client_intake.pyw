@@ -2440,9 +2440,11 @@ class App(ctk.CTk):
         top.grid(row=0, column=0, sticky="ew", padx=1.5 * SP, pady=(SP, 0))
         self.card_title = ctk.CTkLabel(top, text="Details to copy", font=font(13, "bold"), text_color=TEXT)
         self.card_title.pack(side="left")
-        ctk.CTkLabel(top, text="click a value to copy it", font=font(12), text_color=MUTED).pack(side="left", padx=SP)
+        ctk.CTkLabel(top, text="click to copy", font=font(12), text_color=MUTED).pack(side="left", padx=SP)
         self.copy_note = ctk.CTkLabel(top, text="", font=font(13, "bold"), text_color=SUCCESS)
         self.copy_note.pack(side="left", padx=SP)
+        self.card_toggle = self.secondary_button(top, "Hide", self._toggle_card, width=64, height=28, font=font(12))
+        self.card_toggle.pack(side="right", padx=(SP, 0))
         self.secondary_button(top, "Copy all", self._copy_all, width=90, height=28, font=font(12)).pack(side="right")
         self.card_body = ctk.CTkFrame(self.card_box, fg_color="transparent", height=1)
         self.card_body.grid(row=1, column=0, sticky="ew", padx=1.5 * SP, pady=(0, SP))
@@ -2450,6 +2452,8 @@ class App(ctk.CTk):
         self._card = None
         self._card_sig = None
         self._card_groups = []
+        self._card_narrow = False
+        self._card_folder = None
         self._card_job = None
         head.bind("<Configure>", lambda e: self._wrap_card(e.width), add="+")
 
@@ -2593,7 +2597,7 @@ class App(ctk.CTk):
 
     def _wrap_contact(self, width):
         cells = [c for c in self.contact.winfo_children() if self._visible.get(c) is not False]
-        need = sum(c.winfo_reqwidth() for c in cells)
+        need = sum(c.winfo_reqwidth() + int(3 * SP * ctk.ScalingTracker.get_widget_scaling(self)) for c in cells)
         two = need > width
         for i, c in enumerate(cells):
             c.grid_configure(row=i // 2 if two else 0, column=i % 2 if two else i,
@@ -2619,6 +2623,16 @@ class App(ctk.CTk):
         elif self.selected:
             ClientDialog(self, self.selected)
 
+    def _toggle_card(self):
+        """Fold the details card to its title bar (and back); remembered for next time."""
+        config.update(self.cfg, details_open=not self.cfg.get("details_open", True))
+        self._apply_card_open()
+
+    def _apply_card_open(self):
+        opened = self.cfg.get("details_open", True)
+        self._show(self.card_body, opened)
+        self._set(self.card_toggle, text="Hide" if opened else "Show")
+
     def _copy_all(self):
         if self._card:
             self._copy_value(client_card.as_text(self._card), said="all the details")
@@ -2631,9 +2645,13 @@ class App(ctk.CTk):
         self._show(self.card_box, shown)
         if not shown:
             return
+        self._apply_card_open()
         dark = ctk.get_appearance_mode() == "Dark"
         scale = ctk.ScalingTracker.get_widget_scaling(self)
-        sig = (folder, repr(card), dark, scale)
+        self._card_folder = folder
+        narrow = (self.card_box.master.winfo_width() or 900) < 700
+        self._card_narrow = narrow
+        sig = (folder, repr(card), dark, scale, narrow)
         if sig == self._card_sig:
             return
         self._card_sig = sig
@@ -2641,91 +2659,97 @@ class App(ctk.CTk):
         bg, fg, muted = pick(SURFACE_ALT), pick(TEXT), pick(MUTED)
         chip_bg, hover = pick(SURFACE), pick(BORDER)
         px = lambda n: -int(round(n * scale))  # noqa: E731
-        f_name, f_note, f_cap = (FONT, px(14), "bold"), (FONT, px(12)), (FONT, px(11), "bold")
+        f_name, f_note = (FONT, px(14), "bold"), (FONT, px(12))
         f_value = (FONT, px(14))
         for w in self.card_body.winfo_children():
             w.destroy()
         self._card_groups = []
+        cur = {"t": None}                 # the table being filled: people, cars and the policy each have their own columns
+        row_no = [0]
 
-        def value_cell(parent, text, copy, row, col):
-            """A value that copies on click (soft background on hover); an empty one is a dash."""
-            if not text:
-                tk.Label(parent, text="-", font=f_value, bg=bg, fg=muted).grid(row=row, column=col, sticky="w", padx=(0, 18))
-                return
-            lab = tk.Label(parent, text=text, font=f_value, bg=chip_bg, fg=fg, padx=8, pady=3, cursor="hand2")
-            lab.grid(row=row, column=col, sticky="w", padx=(0, 14), pady=2)
-            lab.bind("<Button-1>", lambda e, c=copy: self._copy_value(c))
-            lab.bind("<Enter>", lambda e, w=lab: w.configure(bg=hover))
-            lab.bind("<Leave>", lambda e, w=lab: w.configure(bg=chip_bg))
+        def new_table():
+            cur["t"] = tk.Frame(self.card_body, bg=bg)
+            cur["t"].pack(fill="x", anchor="w")
+            row_no[0] = 0
+        new_table()
 
-        def section(title):
-            box = tk.Frame(self.card_body, bg=bg)
-            box.pack(fill="x", anchor="w", pady=(SP, 0))
-            tk.Label(box, text=title.upper(), font=f_cap, bg=bg, fg=muted).grid(row=0, column=0, columnspan=6,
-                                                                              sticky="w", pady=(0, 3))
-            return box
+        def chip(parent, text, copy, label=""):
+            """A value that copies on click (soft background on hover)."""
+            holder = tk.Frame(parent, bg=chip_bg, cursor="hand2", padx=7, pady=2)
+            parts = []
+            if label:
+                parts.append(tk.Label(holder, text=label, font=f_note, bg=chip_bg, fg=muted, cursor="hand2"))
+            parts.append(tk.Label(holder, text=text, font=f_value, bg=chip_bg, fg=fg, cursor="hand2"))
+            for i, w in enumerate(parts):
+                w.pack(side="left", padx=(0, 6) if i < len(parts) - 1 else 0)
+            for w in [holder] + parts:
+                w.bind("<Button-1>", lambda e, c=copy: self._copy_value(c))
+                w.bind("<Enter>", lambda e, ws=[holder] + parts: [x.configure(bg=hover) for x in ws])
+                w.bind("<Leave>", lambda e, ws=[holder] + parts: [x.configure(bg=chip_bg) for x in ws])
+            return holder
 
-        def heads(box, names):
-            for c, h in enumerate(names):
-                tk.Label(box, text=h, font=f_note, bg=bg, fg=muted).grid(row=1, column=c, sticky="w", padx=(0, 18))
-
-        def name_cell(box, row, name, note):
-            cell = tk.Frame(box, bg=bg)
-            cell.grid(row=row, column=0, sticky="w", padx=(0, 18), pady=2)
-            tk.Label(cell, text=name, font=f_name, bg=bg, fg=fg).pack(anchor="w")
+        def name_cell(name, note, below=""):
+            cell = tk.Frame(cur["t"], bg=bg)
+            line = tk.Frame(cell, bg=bg)
+            line.pack(anchor="w")
+            tk.Label(line, text=name, font=f_name, bg=bg, fg=fg).pack(side="left")
             if note:
-                tk.Label(cell, text=note, font=f_note, bg=bg, fg=muted).pack(anchor="w")
+                tk.Label(line, text="  " + note, font=f_note, bg=bg, fg=muted).pack(side="left")
+            if below:
+                tk.Label(cell, text=below, font=f_note, bg=bg, fg=muted).pack(anchor="w")
+            return cell
+
+        def put(name_widget, chips):
+            r = row_no[0]
+            row_no[0] += 1
+            name_widget.grid(row=r, column=0, sticky="w", padx=(0, 16), pady=2)
+            for col, w in enumerate(chips, start=1):
+                w.grid(row=r, column=col, sticky="w", padx=(0, 10), pady=2)
+
+        def rule():
+            tk.Frame(self.card_body, bg=pick(BORDER), height=1).pack(fill="x", pady=3)
+            new_table()
 
         def chip_of(chips, label):
             return next(((shown_text, copy) for lab, shown_text, copy in chips if lab == label), ("", ""))
 
-        # ---- people: one row each (name, licence #, birth date) ----
+        narrow = self._card_narrow
+        # ---- people: one line each (name, licence #, born); in a narrow panel the relation goes under the name ----
         if len(card["people"]) > 1:
-            box = section("People")
-            heads(box, ["Name", "Licence #", "Born"])
-            for i, p in enumerate(card["people"]):
-                name_cell(box, 2 + i, p["name"].title(), "main client" if p["main"] else p["relation"])
-                for col, label in ((1, "Licence"), (2, "Born")):
-                    text, copy = chip_of(p["chips"], label)
-                    value_cell(box, text, copy, 2 + i, col)
-        # ---- cars: name, VIN, who drives ----
+            for p in card["people"]:
+                lic, born = chip_of(p["chips"], "Licence"), chip_of(p["chips"], "Born")
+                chips = [chip(cur["t"], lic[0], lic[1]) if lic[0] else tk.Label(cur["t"], text="no licence #", font=f_note, bg=bg, fg=muted)]
+                if born[0]:
+                    chips.append(chip(cur["t"], born[0], born[1], "Born"))
+                rel = "main client" if p["main"] else p["relation"]
+                put(name_cell(p["name"].title(), "" if narrow else rel, rel if narrow else ""), chips)
+        # ---- cars: name (and who drives it) + VIN ----
         if card["cars"]:
-            box = section("Cars")
-            heads(box, ["Car", "VIN"])
-            for i, c in enumerate(card["cars"]):
-                name_cell(box, 2 + i, c["label"], c["roles"].replace("   ·   ", "\n"))
+            if card["people"][1:]:
+                rule()
+            for c in card["cars"]:
                 text, copy = chip_of(c["chips"], "VIN")
-                value_cell(box, text, copy, 2 + i, 1)
-        # ---- policy: label over value, wraps with the window ----
+                roles = c["roles"].replace("   ·   ", "\n" if narrow else "  ·  ")
+                put(name_cell(c["label"], "", roles), [chip(cur["t"], text, copy, "VIN")] if text else [])
+        # ---- policy: its name, then the values (two per line in a narrow panel) ----
         if card["policy"]:
-            box = section("Policy  -  " + card["policy"]["title"])
-            row = tk.Frame(box, bg=bg)
-            row.grid(row=1, column=0, columnspan=6, sticky="w")
-            made = []
-            measure = tkfont.Font(family=FONT, size=px(14)).measure
-            for label, shown_text, copy in card["policy"]["chips"]:
-                cell = tk.Frame(row, bg=bg)
-                tk.Label(cell, text=label, font=f_note, bg=bg, fg=muted).pack(anchor="w")
-                lab = tk.Label(cell, text=shown_text, font=f_value, bg=chip_bg, fg=fg, padx=8, pady=3, cursor="hand2")
-                lab.pack(anchor="w")
-                lab.bind("<Button-1>", lambda e, c=copy: self._copy_value(c))
-                lab.bind("<Enter>", lambda e, w=lab: w.configure(bg=hover))
-                lab.bind("<Leave>", lambda e, w=lab: w.configure(bg=chip_bg))
-                made.append((cell, measure(shown_text) + 40))
-            self._card_groups.append((row, made))
-        self._wrap_card(self.card_box.master.winfo_width())
+            rule()
+            line = tk.Frame(cur["t"], bg=bg)
+            line.grid(row=row_no[0], column=0, columnspan=4, sticky="w", pady=2)
+            row_no[0] += 1
+            tk.Label(line, text=card["policy"]["title"], font=f_name, bg=bg, fg=fg).grid(row=0, column=0, columnspan=4, sticky="w")
+            per_row = 2 if narrow else 4
+            for i, (label, shown_text, copy) in enumerate(card["policy"]["chips"]):
+                chip(line, shown_text, copy, label).grid(row=1 + i // per_row, column=i % per_row, sticky="w",
+                                                         padx=(0, 10), pady=(2, 0))
 
     def _wrap_card(self, width):
-        """The policy values in rows that fit the width (a new row when the next one would be cut off)."""
-        avail = max(300, (width or 700) - 60)
-        for row, cells in self._card_groups:
-            x = r = c = 0
-            for cell, w in cells:
-                if x + w > avail and x:
-                    r, c, x = r + 1, 0, 0
-                cell.grid(row=r, column=c, sticky="w", padx=(0, 16), pady=(0, SP / 2))
-                x += w + 16
-                c += 1
+        """The card has a narrow layout for a narrow panel: rebuild it when the panel crosses that width."""
+        narrow = (width or 900) < 700
+        if narrow != self._card_narrow and self._card and self._card_folder is not None:
+            self._card_narrow = narrow
+            self._card_sig = None
+            self._render_card(self._card_folder, self._card)
 
     def _descale(self, px):
         return int(px / ctk.ScalingTracker.get_widget_scaling(self))
@@ -3055,7 +3079,7 @@ class App(ctk.CTk):
         return {"info": info, "docs": docs, "skip": skip, "rows": rows, "by_hand": by_hand, "filled": filled,
                 "warnings": warnings, "down_hint": down_hint, "modified": modified, "needed": needed,
                 "household": household.summary_raw(data),
-                "people_docs": checklist.people_docs(folder, docs, data),
+                "people_docs": checklist.people_docs(folder, docs, data, info),
                 "card": client_card.build(folder.name, info, data, format_dln)}
 
     def _gather_thread(self, folder, kind):
