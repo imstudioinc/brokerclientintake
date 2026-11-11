@@ -15,6 +15,7 @@ import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog
+from tkinter import font as tkfont
 
 import customtkinter as ctk
 
@@ -32,6 +33,7 @@ import checklist
 import client_edit
 import client_facts
 import ars_ui
+import client_card
 import household
 import household_ui
 import carriers
@@ -2414,8 +2416,10 @@ class App(ctk.CTk):
             ctk.CTkLabel(cell, text=label, font=font(12), text_color=MUTED, height=18).pack(anchor="w")
             value = ctk.CTkLabel(cell, text="", font=font(14), text_color=TEXT, height=22, cursor="hand2")
             value.pack(anchor="w")
-            value.bind("<Button-1>", lambda e: self.selected and ClientDialog(self, self.selected))
+            # a click copies the value (an empty one - "Add…" - opens Edit)
+            value.bind("<Button-1>", lambda e, k=key: self._copy_contact(k))
             self.contact_labels[key] = value
+        self._contact_copy = {}
         # two lines of two when the panel is narrow (the last one would be cut off)
         head.bind("<Configure>", lambda e: self._wrap_contact(e.width), add="+")
         # details on the quote / DASH that don't match the profile
@@ -2425,6 +2429,26 @@ class App(ctk.CTk):
                              ipady=SP)
         self.facts_warn.bind("<Button-1>", lambda e: self.selected and ClientDialog(self, self.selected))
         self.facts_warn.grid_remove()
+
+        # the details to copy: people (household), cars, policy - one click copies a value
+        self.card_box = ctk.CTkFrame(head, fg_color=SURFACE_ALT, corner_radius=10)
+        self.card_box.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(1.5 * SP, 0))
+        self.card_box.grid_columnconfigure(0, weight=1)
+        top = ctk.CTkFrame(self.card_box, fg_color="transparent", height=1)
+        top.grid(row=0, column=0, sticky="ew", padx=1.5 * SP, pady=(SP, 0))
+        ctk.CTkLabel(top, text="Details to copy", font=font(13, "bold"), text_color=TEXT).pack(side="left")
+        ctk.CTkLabel(top, text="click a value to copy it", font=font(12), text_color=MUTED).pack(side="left", padx=SP)
+        self.copy_note = ctk.CTkLabel(top, text="", font=font(13, "bold"), text_color=SUCCESS)
+        self.copy_note.pack(side="left", padx=SP)
+        self.secondary_button(top, "Copy all", self._copy_all, width=90, height=28, font=font(12)).pack(side="right")
+        self.card_body = ctk.CTkFrame(self.card_box, fg_color="transparent", height=1)
+        self.card_body.grid(row=1, column=0, sticky="ew", padx=1.5 * SP, pady=(0, SP))
+        self.card_box.grid_remove()
+        self._card = None
+        self._card_sig = None
+        self._card_groups = []
+        self._card_job = None
+        head.bind("<Configure>", lambda e: self._wrap_card(e.width), add="+")
 
         # ---- the three stages: a strip to switch, then the chosen stage's buttons, steps and documents ----
         self.detail_msg = ctk.CTkLabel(body, text="", font=font(13), text_color=SUCCESS,
@@ -2550,6 +2574,108 @@ class App(ctk.CTk):
         for i, c in enumerate(cells):
             c.grid_configure(row=i // 2 if two else 0, column=i % 2 if two else i,
                              pady=(SP / 2 if two and i >= 2 else 0, 0))
+
+    # ---------- details to copy ----------
+    def _copy_value(self, text, said=None):
+        """Copy a value to the clipboard and say so next to the card's title for a moment."""
+        text = str(text or "")
+        if not text:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.copy_note.configure(text=f"✓ Copied  {said or shorten(' '.join(text.split()), 36)}")
+        if self._card_job:
+            self.after_cancel(self._card_job)
+        self._card_job = self.after(3000, lambda: self.copy_note.configure(text=""))
+
+    def _copy_contact(self, key):
+        text = self._contact_copy.get(key)
+        if text:
+            self._copy_value(text)
+        elif self.selected:
+            ClientDialog(self, self.selected)
+
+    def _copy_all(self):
+        if self._card:
+            self._copy_value(client_card.as_text(self._card), said="all the details")
+
+    def _render_card(self, folder, card):
+        """Draw the details card from the finished reading (rebuilt only when its content changed)."""
+        self._card = card
+        shown = bool(card) and (len(card["people"]) > 1 or card["cars"] or card["policy"])
+        self._show(self.card_box, shown)
+        if not shown:
+            return
+        dark = ctk.get_appearance_mode() == "Dark"
+        scale = ctk.ScalingTracker.get_widget_scaling(self)
+        sig = (folder, repr(card), dark, scale)
+        if sig == self._card_sig:
+            return
+        self._card_sig = sig
+        pick = lambda pair: pair[1 if dark else 0]  # noqa: E731
+        bg, fg, muted = pick(SURFACE_ALT), pick(TEXT), pick(MUTED)
+        chip_bg, hover = pick(SURFACE), pick(BORDER)
+        px = lambda n: -int(round(n * scale))  # noqa: E731
+        f_name, f_note = (FONT, px(14), "bold"), (FONT, px(12))
+        f_label, f_value = (FONT, px(12)), (FONT, px(14))
+        for w in self.card_body.winfo_children():
+            w.destroy()
+        self._card_groups = []
+        measure = tkfont.Font(family=FONT, size=px(14)).measure
+        measure_small = tkfont.Font(family=FONT, size=px(12)).measure
+
+        def block(title, note, chips, empty=""):
+            box = tk.Frame(self.card_body, bg=bg)
+            box.pack(fill="x", anchor="w")
+            line = tk.Frame(box, bg=bg)
+            line.pack(fill="x", pady=(SP, 2))
+            tk.Label(line, text=title, font=f_name, bg=bg, fg=fg).pack(side="left")
+            if note:
+                tk.Label(line, text="   " + note, font=f_note, bg=bg, fg=muted).pack(side="left")
+            row = tk.Frame(box, bg=bg)
+            row.pack(fill="x", anchor="w")
+            made = []
+            for label, shown_text, copy in chips:
+                chip = tk.Frame(row, bg=chip_bg, cursor="hand2", padx=8, pady=3)
+                a = tk.Label(chip, text=label, font=f_label, bg=chip_bg, fg=muted, cursor="hand2")
+                v = tk.Label(chip, text=shown_text, font=f_value, bg=chip_bg, fg=fg, cursor="hand2")
+                a.pack(side="left")
+                v.pack(side="left", padx=(6, 0))
+                for w in (chip, a, v):
+                    w.bind("<Button-1>", lambda e, c=copy: self._copy_value(c))
+                    w.bind("<Enter>", lambda e, ws=(chip, a, v): [x.configure(bg=hover) for x in ws])
+                    w.bind("<Leave>", lambda e, ws=(chip, a, v): [x.configure(bg=chip_bg) for x in ws])
+                width = measure_small(label) + measure(shown_text) + 6 + 16 + 10
+                made.append((chip, width))
+            if not chips and empty:
+                tk.Label(row, text=empty, font=f_note, bg=bg, fg=muted).pack(anchor="w")
+            self._card_groups.append((row, made))
+
+        for p in card["people"]:
+            if p["main"] and not card["people"][1:]:
+                continue       # a one-person file: the header already has these
+            if p["main"]:
+                block(p["name"].title(), "main client", [c for c in p["chips"] if c[0] in ("Licence", "Born")],
+                      "No licence # yet")
+            else:
+                block(p["name"].title(), p["relation"], p["chips"], "No licence # yet - add it on the Household page")
+        for c in card["cars"]:
+            block(c["label"], c["roles"], c["chips"])
+        if card["policy"]:
+            block(card["policy"]["title"], "policy", card["policy"]["chips"])
+        self._wrap_card(self.card_box.master.winfo_width())
+
+    def _wrap_card(self, width):
+        """Chips in rows that fit the width (a new row when the next chip would be cut off)."""
+        avail = max(300, (width or 700) - 60)
+        for row, chips in self._card_groups:
+            x = r = c = 0
+            for chip, w in chips:
+                if x + w > avail and x:
+                    r, c, x = r + 1, 0, 0
+                chip.grid(row=r, column=c, sticky="w", padx=(0, SP), pady=(0, SP / 2))
+                x += w + SP
+                c += 1
 
     def _descale(self, px):
         return int(px / ctk.ScalingTracker.get_widget_scaling(self))
@@ -2846,7 +2972,8 @@ class App(ctk.CTk):
             modified = 0
         return {"info": info, "docs": docs, "skip": skip, "rows": rows, "by_hand": by_hand, "filled": filled,
                 "warnings": warnings, "down_hint": down_hint, "modified": modified, "needed": needed,
-                "household": household.summary_raw(data)}
+                "household": household.summary_raw(data),
+                "card": client_card.build(folder.name, info, data, format_dln)}
 
     def _gather_thread(self, folder, kind):
         try:
@@ -2935,11 +3062,13 @@ class App(ctk.CTk):
         hidden = {"dln": kind in ("Home", "Tenant", "Commercial"), "birth": kind == "Commercial"}
         for key, label in self.contact_labels.items():
             value = info.get(key) or ""
+            self._contact_copy[key] = (client_card.mdy(value) if key == "birth" else value)   # what a click copies
             if key == "birth" and value:
                 value = format_birth(value)
             self._set(label, text=value or "Add…", text_color=TEXT if value else PRIMARY)
             self._show(label.master, not hidden.get(key, False))
         self._wrap_contact(self.contact.master.winfo_width())
+        self._render_card(folder, b.get("card"))
         self._set(self.facts_warn, text="⚠  Doesn't match the documents - click to edit\n"
                                         + "\n".join("•  " + w for w in warnings))
         self._show(self.facts_warn, bool(warnings))
