@@ -203,6 +203,7 @@ decision changes (edit the section, don't append contradictions).
   check. At-fault = fault > 25%. Gaps come from `*POSSIBLE GAP*` lines between policies.
   Intact's lapse rule applies only to gaps in the last 12 months (or uninsured now).
 - **No DASH report** = no insurance history (treated as a new driver).
+- **Latest policy not active = a gap to today (owner's rule)**: when the newest DASH policy is not "Active" and its end date is before today (cancelled / expired), the gap is **its end date -> today**, added to the DASH's own `*POSSIBLE GAP*` gaps (`eligibility.read_dash_facts`: a gap with `now: True`; counts in `gap_last_12m` / `possible_gaps`, shows in the ARS lapses with months, in the review's "Add lapse" check, plus the "Not insured now" card). A policy marked Active is never a gap.
 - **MVR** (dates DD/MM/YYYY; offence dates YYYY/MM/DD): the **conviction date (left column) is the
   one that counts**, not the offence date. If the **expiry date has the same day/month as the
   birth date, the issue date is the G1 date**; G2 = G1 + 1 year if the class is G2 or G; G = G2 + 1
@@ -210,6 +211,13 @@ decision changes (edit the section, don't append contradictions).
   OCR skips "G\*\*\*": the class is read by OCRing each character inside a made-up word
   (char + "ARAGE"), only real Ontario classes accepted, majority vote across passes; photos are
   read three ways and merged; small images (< ~1,100 px wide) get a "too small" warning.
+  **Convictions (`mvr.parse_convictions`, owner: "sometimes convictions are not read properly")**: an entry is a date + description
+  followed by `OFFENCE DATE yyyy/mm/dd`; the OFFENCE DATE line is what tells a **conviction** from a licence **action**
+  (suspension, discharge, reinstatement) - an entry with one is a conviction even if it says "SUSPENSION" (DRIVE WHILE UNDER
+  SUSPENSION used to be lost as an action). Works without the heading line (OCR garbles it), with the description on the next
+  row, the offence date on the same row, wrapped descriptions, and O / I / L read for digits. `Number of Convictions: N` is the
+  cross-check: when N is more than what was read, `unread_convictions` is set and the ARS Convictions tab says so in amber
+  (never "no convictions"); the review counts the unread ones as minor.
 - **Out-of-province experience (owner's rule)**: for a **G / G2** licence, if the DASH's first-insured date is within **90 days of the MVR's G1 date** (or earlier), the "G1 date" is really the Ontario licence exchange, so assume the driver learnt elsewhere (`ars.driver`, `OOP_DAYS`, `ars._out_of_province`). The ARS driver card then says: turn ON "Out of province experience", enter that date as the **G date**, leave **G1 and G2 blank** (the later G2 / G dates are not computed). Not applied to G1 or motorcycle classes, or without a DASH.
 - **Convictions** classed per the Intact / Jevco lists: hand-held device, 50-59 km/h over, stunt,
   no insurance, novice condition breaches = **major**; careless, impaired / alcohol, 60+ over,

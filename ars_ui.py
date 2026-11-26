@@ -155,7 +155,7 @@ class ArsEntryPage(Panel):
 
         def work():
             try:
-                v = {"claims": None, "hist": None, "drv": None, "convs": None, "susp": None}
+                v = {"claims": None, "hist": None, "drv": None, "convs": None, "susp": None, "unread": 0}
                 details = None
                 if path is not None:
                     _, details, _ = eligibility.read_dash_facts(str(path))
@@ -163,6 +163,7 @@ class ArsEntryPage(Panel):
                 if mvr_path is not None:
                     m = mvr.read(str(mvr_path))
                     v["drv"], v["convs"], v["susp"] = ars.driver(m, details), ars.convictions(m), ars.suspensions(m)
+                    v["unread"] = m.get("unread_convictions", 0)       # convictions the MVR states but could not be read
                 result["v"] = v
             except Exception as e:
                 result["error"] = e
@@ -290,8 +291,8 @@ class ArsEntryPage(Panel):
         wrap.grid_columnconfigure(0, weight=1)
 
     # ---------- the tabs ----------
-    def show(self, claims, hist, drv, convs, susp):
-        self.data = {"claims": claims, "hist": hist, "drv": drv, "convs": convs, "susp": susp}
+    def show(self, claims, hist, drv, convs, susp, unread=0):
+        self.data = {"claims": claims, "hist": hist, "drv": drv, "convs": convs, "susp": susp, "unread": unread}
         self.text = ars.as_text(claims, hist, drv, convs, susp)
         names = {}
         if drv is not None:
@@ -301,7 +302,8 @@ class ArsEntryPage(Panel):
             names[f"Claims  {n}" if n else "Claims"] = "claims"
         if convs is not None:
             n = len([c for c in convs if not c["old"]])
-            names[f"Convictions  {n}" if n else "Convictions"] = "convictions"
+            label = f"Convictions  {n}" if n else "Convictions"
+            names[label + (f"  ⚠ {unread} unread" if unread else "")] = "convictions"
         if hist is not None:
             n = len(hist["lapses"])
             names[f"Gaps & history  {n}" if n else "Gaps & history"] = "history"
@@ -380,11 +382,17 @@ class ArsEntryPage(Panel):
         convs, susp = self.data["convs"], self.data["susp"]
         recent = [c for c in convs if not c["old"]]
         old = [c for c in convs if c["old"]]
-        self._heading(0, f"{len(recent)} conviction{'s' if len(recent) != 1 else ''} to enter",
+        self._heading(0, f"{len(recent)} conviction{'s' if len(recent) != 1 else ''} to enter"
+                      + (f"  (+ {self.data.get('unread', 0)} unread)" if self.data.get("unread") else ""),
                       f"From the MVR, last {ars.CONVICTION_YEARS} years. The conviction date counts, not the offence date.")
-        if not recent:
+        unread = self.data.get("unread", 0)
+        if unread:        # never say "no convictions" when the MVR itself says there are some
+            self._record(1, f"{unread} conviction{'s' if unread != 1 else ''} could not be read", "check", "warn",
+                         notes=[f"The MVR states more convictions than the app could read ({unread} missing). "
+                                "Open the MVR and enter them by hand - do not treat this driver as conviction-free."])
+        elif not recent:
             self._empty(1, f"No convictions on the MVR in the last {ars.CONVICTION_YEARS} years.")
-        row = 1
+        row = 2 if unread else 1
         ui = self.ui
         for i, c in enumerate(recent, 1):
             bad = c["category"] in ("Major", "Serious")

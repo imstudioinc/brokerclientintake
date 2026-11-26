@@ -117,6 +117,86 @@ def read_class(img, label_box):
     return chars, sure
 
 
+# ---------- convictions ----------
+OCR_DIGITS = str.maketrans({"O": "0", "o": "0", "I": "1", "l": "1", "L": "1", "|": "1"})   # what OCR mistakes for a digit
+_LAX_DATE = r"([0-9OIL|]{2})\s*/\s*([0-9OIL|]{2})\s*/\s*([0-9OIL|]{4})"           # DD/MM/YYYY with OCR slips (text is upper-cased)
+_LAX_OFFENCE = r"OFFEN[CS]E\s*DATE\W*([0-9OIL|]{4})\s*/\s*([0-9OIL|]{2})\s*/\s*([0-9OIL|]{2})"
+_END = ("SEARCH SUCC", "END OF RE", "ABSTRACT FOUND", "NO PUBLIC RECORD")
+
+
+def _lax(a, b, c, order="dmy"):
+    """A date from three OCR'd parts (letters that look like digits are fixed); None when it is not a date."""
+    a, b, c = (x.translate(OCR_DIGITS) for x in (a, b, c))
+    try:
+        return datetime.date(int(c), int(b), int(a)) if order == "dmy" else datetime.date(int(a), int(b), int(c))
+    except ValueError:
+        return None
+
+
+def _is_header(u):
+    """The "DATE  CONVICTIONS, DISCHARGES AND OTHER ACTIONS" line, however OCR spelled it."""
+    if re.match(r"^\W{0,3}" + _LAX_DATE, u):    # "05/03/2026 DISCHARGE OF PROBATION" is an entry, not the heading
+        return False
+    letters = re.sub(r"[^A-Z]", "", u.translate(str.maketrans("015", "OIS")))   # OCR: C0NVICT1ONS, ACT1ONS
+    if "NUMBEROF" in letters:                  # "Number of Convictions: 2" is not the list's heading
+        return False
+    return "OTHERACTION" in letters or ("CONVICT" in letters and ("DISCHARG" in letters or "ACTION" in letters))
+
+
+def parse_convictions(lines):
+    """([convictions], [other actions]) from the MVR's lines.
+
+    An entry is a date and a description ("22/08/2024 DISOBEY LEGAL SIGN") followed by "OFFENCE DATE 2023/07/27".
+    Convictions are told from licence actions (suspensions, discharges...) by that OFFENCE DATE line: an entry with
+    one is a conviction even if its description says "SUSPENSION" (DRIVE WHILE UNDER SUSPENSION is a conviction).
+    Works without the heading line too (OCR can garble it) and with the offence date on the same line or the next."""
+    entries, current, in_list = [], None, False
+    lines = [re.sub(r"\s+", " ", l).strip() for l in lines]
+    for i, line in enumerate(lines):
+        u = line.upper()
+        if _is_header(u):
+            in_list = True
+            continue
+        if any(k in u for k in _END):
+            in_list, current = False, None      # a photo is read several times: look for the next copy
+            continue
+        off = re.search(_LAX_OFFENCE, u)
+        start = re.match(r"^\W{0,3}" + _LAX_DATE + r"\s*(.*)$", u)
+        if start:
+            tail = start.group(4)
+            has_offence = bool(off) or any(re.search(_LAX_OFFENCE, x.upper()) for x in lines[i + 1:i + 3]
+                                           if not re.match(r"^\W{0,3}" + _LAX_DATE, x.upper()))
+            d = _lax(*start.group(1, 2, 3))
+            if d and (in_list or has_offence):          # (the description may be on the next row: OCR splits rows)
+                desc = re.sub(r"OFFEN[CS]E\s*DATE.*$", "", tail).strip(" -,.")
+                current = {"date": d, "description": desc, "offence_date": None}
+                entries.append(current)
+                if off:
+                    current["offence_date"] = _lax(*off.group(1, 2, 3), order="ymd")
+                    current = None              # complete: what follows is not part of it
+                continue
+        if off and current:
+            current["offence_date"] = _lax(*off.group(1, 2, 3), order="ymd")
+            current = None
+        elif current and u and not re.match(r"^[-,.\W]+$", u):
+            current["description"] = (current["description"] + " " + u).strip()   # a description wrapped onto the next line
+    convictions, actions = [], []
+    for e in entries:
+        if e["offence_date"] or not any(k in e["description"].upper() for k in ACTIONS):
+            convictions.append(e)
+        else:
+            actions.append(e)
+    unique = {}
+    for c in convictions:                       # the same conviction read from several copies of a photo
+        key = (c["date"], c.get("offence_date") or c["description"][:4])   # OCR typos differ between passes
+        if key not in unique or len(c["description"]) > len(unique[key]["description"]):
+            unique[key] = c
+    convictions = sorted(unique.values(), key=lambda c: c["date"] or datetime.date.min)
+    for c in convictions:
+        c["category"], c["alcohol"] = classify(c["description"])
+    return convictions, actions
+
+
 # ---------- reading ----------
 def read(pdf_path):
     """Everything useful on the MVR. Returns dict; "problems" lists anything that could not be read."""
@@ -171,42 +251,17 @@ def read(pdf_path):
     pc = re.findall(r"\b([A-Z]\d[A-Z])\s?(\d)\s?([A-Z])\s?(\d)\b", flat.replace("YB", "Y9"))
     out["postal"] = "".join(pc[0]) if pc else ""
 
-    # convictions: "22/08/2024 DISOBEY LEGAL SIGN" then "OFFENCE DATE 2023/07/27"
-    convictions, actions, current = [], [], None
-    in_list = False
-    for line in lines:
-        u = line.upper().strip()
-        if "DISCHARGES" in u or "OTHER ACTIONS" in u or ("CONVICTIONS" in u and "ACTIONS" in u):
-            in_list = True
-            continue
-        if not in_list:
-            continue
-        if "SEARCH SUCC" in u or "END OF RE" in u or "ABSTRACT FOUND" in u:
-            in_list, current = False, None    # a photo is read several times: look for the next copy
-            continue
-        m = re.match(r"^" + DATE + r"\s+(.+)$", u)
-        off = re.search(r"OFFENCE\s*DATE\W*(\d{4}/\d{2}/\d{2})", u)
-        if m:
-            current = {"date": _d(m.group(1)), "description": m.group(2).strip(), "offence_date": None}
-            (actions if any(k in current["description"] for k in ACTIONS) else convictions).append(current)
-        elif off and current:
-            current["offence_date"] = _d(off.group(1), "%Y/%m/%d")
-        elif current and u and not re.match(r"^[-,.]+$", u):
-            current["description"] += " " + u
-    unique = {}
-    for c in convictions:                     # the same conviction read from several copies of a photo
-        key = (c["date"], c.get("offence_date") or c["description"][:4])   # OCR typos differ between passes
-        if key not in unique or len(c["description"]) > len(unique[key]["description"]):
-            unique[key] = c
-    convictions = sorted(unique.values(), key=lambda c: c["date"] or datetime.date.min)
-    for c in convictions:
-        c["category"], c["alcohol"] = classify(c["description"])
+    n = re.search(r"Number\s*of\s*Convict\w*\s*:?\s*([0-9OoIl]{1,2})\b", flat)
+    out["conviction_count"] = int(n.group(1).translate(OCR_DIGITS)) if n else None
+    convictions, actions = parse_convictions(lines)
     out["convictions"], out["actions"] = convictions, actions
-    n = re.search(r"Number\s*of\s*Convictions\s*:\s*([0-9Oo]+)", flat)
-    out["conviction_count"] = int(n.group(1).replace("O", "0").replace("o", "0")) if n else None
-    if out["conviction_count"] and out["conviction_count"] != len(convictions):
-        out["problems"].append(f"The MVR says {out['conviction_count']} conviction(s) but {len(convictions)} could "
-                               "be read - check the MVR and type the counts in.")
+    out["unread_convictions"] = max(0, (out["conviction_count"] or 0) - len(convictions))
+    if out["unread_convictions"]:
+        out["problems"].append(f"The MVR says {out['conviction_count']} conviction(s) but only {len(convictions)} could "
+                               "be read - open the MVR and enter the others by hand.")
+    elif out["conviction_count"] is not None and len(convictions) > out["conviction_count"]:
+        out["problems"].append(f"The MVR says {out['conviction_count']} conviction(s) but {len(convictions)} were read "
+                               "- check the MVR.")
     for key, label in (("birth", "birth date"), ("expiry", "expiry date"), ("issue", "issue date"),
                        ("licence", "licence number")):
         if not out[key]:

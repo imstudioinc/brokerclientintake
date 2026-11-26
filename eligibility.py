@@ -200,16 +200,23 @@ def read_dash_facts(pdf_path, today=None, at_fault_over=25):
     facts["nonpay_cancellations_3y"] = len([p for p in nonpay if _years_ago(p["end"], today, 3)])
     facts["nonpay_cancellations_5y"] = len([p for p in nonpay if _years_ago(p["end"], today, 5)])
     facts["possible_gaps"] = len(re.findall(r"POSSIBLE GAP", policy_list))
+    # The latest policy is not active (cancelled or expired): the client is uninsured since it ended, and that is a
+    # gap too - from that end date to today - even though the DASH prints no "*POSSIBLE GAP*" line after it.
+    latest = max(policies, key=lambda p: p["end"] or p["start"] or datetime.date.min, default=None)
+    uninsured = bool(latest) and "active" not in latest["rest"].lower() and bool(latest["end"]) and latest["end"] < today
+    if uninsured:
+        gaps.insert(0, {"from": latest["end"], "to": today, "now": True})
+        facts["possible_gaps"] += 1
     recent = [g for g in gaps if g["to"] and (today - g["to"]).days <= 365]
-    uninsured = bool(policies) and not any("active" in p["rest"].lower() or (p["end"] and p["end"] >= today)
-                                           for p in policies)
-    facts["gap_last_12m"] = len(recent) + (1 if uninsured else 0)
+    facts["gap_last_12m"] = len(recent)
     for g in gaps:
         months = round(((g["to"] - g["from"]).days if g["to"] and g["from"] else 0) / 30.4)
-        notes.append(f"Coverage gap {g['from']} to {g['to']} (about {months} months) - make sure the quote shows "
-                     "it as a lapse with the reason.")
-    if uninsured:
-        notes.append("No active policy on the DASH report - the client is not insured right now.")
+        if g.get("now"):
+            notes.append(f"Not insured now: the latest policy ended {g['from']} ({latest['rest']}), so the gap runs "
+                         f"{g['from']} to today ({today}), about {months} months - show it as a lapse with the reason.")
+        else:
+            notes.append(f"Coverage gap {g['from']} to {g['to']} (about {months} months) - make sure the quote shows "
+                         "it as a lapse with the reason.")
     starts = [p["start"] for p in policies if p["start"]]
     facts["years_insured"] = round((today - min(starts)).days / 365.25, 1) if starts else 0
     if not starts:
