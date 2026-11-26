@@ -7,6 +7,7 @@ not in Notepad.
 import os
 import re
 import sys
+import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog
 
@@ -19,6 +20,10 @@ from panel import Panel
 
 EXAMPLES = ["intact G2 at-fault", "pembridge oil tank", "echelon monthly payment", "motorcycle M1 course",
             "jevco minor accident", "OPCF 43", "winter tire discount", "nsf fee", "uber turo"]
+
+# Quick guides: a note of the notes folder with one "##" section per insurer, one click away on the Rules tab.
+# (button text, word in the note's file name). A guide shows only when its note is in the notes folder.
+GUIDES = [("Ride sharing (Uber, Lyft)", "ride sharing"), ("Billing by company", "billing")]
 
 BAND = ("#EEF2F7", "#26303C")          # the bar behind a result's title
 HIT_BG = ("#FFF1B8", "#5A4A12")         # a word that matches the question
@@ -109,8 +114,11 @@ class RulesView(ctk.CTkFrame):
         self.query.bind("<KeyRelease>", self._on_key)
         self.query.bind("<Return>", lambda e: self.search())
         self.query.bind("<Escape>", lambda e: (self.query.delete(0, "end"), self.search()))
+        # quick guides: one button each (a menu of the insurers in it), filled in by reload()
+        self.guides_row = ctk.CTkFrame(head, fg_color="transparent", height=1)
+        self.guides_row.grid(row=2, column=0, columnspan=2, sticky="w", padx=2 * SP, pady=(SP / 2, 0))
         self.notes_label = ctk.CTkLabel(head, text="", font=ui.font(12), text_color=ui.MUTED, anchor="w")
-        self.notes_label.grid(row=2, column=0, columnspan=2, sticky="w", padx=2 * SP, pady=(0, 1.5 * SP))
+        self.notes_label.grid(row=3, column=0, columnspan=2, sticky="w", padx=2 * SP, pady=(SP / 2, 1.5 * SP))
 
         # ---------- results ----------
         body = app.card(self, row=1, column=0, pady=(1.5 * SP, 0))
@@ -136,7 +144,49 @@ class RulesView(ctk.CTkFrame):
         else:
             self.notes_label.configure(text=f"No notes (.md files) in {self.ui.shorten_path(folder, 80)} - choose "
                                             "the Notes folder", text_color=self.ui.DANGER)
+        self._build_guides()
         self.search()
+
+    def _guide_notes(self):
+        """[(button text, note file name)] for the quick guides whose note exists."""
+        out = []
+        for label, key in GUIDES:
+            note = next((n for n in (self.index.notes if self.index else []) if key in n.lower()), None)
+            if note:
+                out.append((label, note))
+        return out
+
+    def _build_guides(self):
+        for w in self.guides_row.winfo_children():
+            w.destroy()
+        guides = self._guide_notes()
+        if guides:
+            ctk.CTkLabel(self.guides_row, text="Quick guides", font=self.ui.font(13, "bold"), text_color=self.ui.TEXT) \
+                .pack(side="left", padx=(0, self.ui.SP))
+        for label, note in guides:
+            self.app.secondary_button(self.guides_row, label + "  ▾", lambda n=note, b=label: self.guide_menu(n),
+                                      width=len(label) * 8 + 50, height=32).pack(side="left", padx=(0, self.ui.SP))
+        self._show_row(bool(guides))
+
+    def _show_row(self, visible):
+        if visible:
+            self.guides_row.grid()
+        else:
+            self.guides_row.grid_remove()           # an empty CTkFrame is 200 px tall
+
+    def guide_menu(self, note):
+        """A menu of the insurers in a guide: pick one to read just that section, or open the whole guide."""
+        try:
+            sections = notes_search.parse(note, (self.index.folder / note).read_text(encoding="utf-8-sig"))
+        except OSError:
+            sections = []
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Open the whole guide", command=lambda: self.open_note(note))
+        menu.add_separator()
+        for s in sections:
+            if s["heading"]:
+                menu.add_command(label=s["heading"], command=lambda h=s["heading"]: self.open_note(note, h))
+        menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
 
     def load(self):
         """Called each time the view is shown."""
@@ -200,6 +250,15 @@ class RulesView(ctk.CTkFrame):
     def _show_start(self):
         tb = self.out._textbox
         tb.insert("end", "Type above to search the underwriting notes - results show as you type.\n\n", "meta")
+        guides = self._guide_notes()
+        if guides:
+            tb.insert("end", "Quick guides: ", "meta")
+            for i, (label, note) in enumerate(guides):
+                tag = f"link_g{i}"
+                tb.insert("end", label, ("more", tag))
+                self._link(tb, tag, lambda n=note: self.open_note(n))
+                tb.insert("end", "     ", "meta")
+            tb.insert("end", "\n\n", "meta")
         tb.insert("end", "Try: ", "meta")
         for i, ex in enumerate(EXAMPLES):
             tag = f"link_ex{i}"
@@ -207,7 +266,9 @@ class RulesView(ctk.CTkFrame):
             self._link(tb, tag, lambda ex=ex: (self.query.delete(0, "end"), self.query.insert(0, ex), self.search()))
             tb.insert("end", "     ", "meta")
         if self.index and self.index.notes:
-            tb.insert("end", "\n\nAll notes (click to read)\n", "title")
+            tb.insert("end", "\n", "meta")
+            tb.insert("end", "\n", "gap")
+            tb.insert("end", "All notes (click to read)\n", "title")
             for i, name in enumerate(self.index.notes):
                 tag = f"link_n{i}"
                 tb.insert("end", "•  " + Path(name).stem + "\n", ("bullet", tag))
