@@ -16,14 +16,18 @@ import customtkinter as ctk
 import carriers_ui
 import config
 import notes_search
+import ui_kit
 from panel import Panel
 
 EXAMPLES = ["intact G2 at-fault", "pembridge oil tank", "echelon monthly payment", "motorcycle M1 course",
             "jevco minor accident", "OPCF 43", "winter tire discount", "nsf fee", "uber turo"]
 
-# Quick guides: a note of the notes folder with one "##" section per insurer, one click away on the Rules tab.
-# (button text, word in the note's file name). A guide shows only when its note is in the notes folder.
-GUIDES = [("Ride sharing (Uber, Lyft)", "ride sharing"), ("Billing by company", "billing")]
+# The sections of the Rules view: Search, and one tab for each guide. A guide is a note of the notes folder with one "##"
+# section per insurer (or topic); (tab text, word in the note's file name, what to call it when it is missing).
+TABS = [("Search", "", ""), ("Ride sharing", "ride sharing", "Ride sharing and car sharing - by insurer"),
+        ("Billing by company", "billing", "Billing and payment policy - by insurer")]
+TAB_ON = ("#FFFFFF", "#44566B")          # the open tab: clearly lighter than the others
+SELECTED = ("#E8F0FE", "#1F2D45")       # the open insurer in a guide's list
 
 BAND = ("#EEF2F7", "#26303C")          # the bar behind a result's title
 HIT_BG = ("#FFF1B8", "#5A4A12")         # a word that matches the question
@@ -100,7 +104,7 @@ class RulesView(ctk.CTkFrame):
         # ---------- header: search box ----------
         head = app.card(self, row=0, column=0)
         head.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(head, text="Search the rules", font=ui.font(16, "bold"), text_color=ui.TEXT) \
+        ctk.CTkLabel(head, text="Rules", font=ui.font(16, "bold"), text_color=ui.TEXT) \
             .grid(row=0, column=0, sticky="w", padx=2 * SP, pady=(1.5 * SP, 0))
         btns = ctk.CTkFrame(head, fg_color="transparent")
         btns.grid(row=0, column=1, sticky="e", padx=2 * SP, pady=(1.5 * SP, 0))
@@ -108,20 +112,23 @@ class RulesView(ctk.CTkFrame):
         app.secondary_button(btns, "Reload notes", self.reload, width=110).pack(side="right", padx=SP)
         app.secondary_button(btns, "Carriers & payments", lambda: carriers_ui.CarrierInfoPage(app), width=160) \
             .pack(side="right")
+        # the sections of the Rules view: Search, and a tab for each guide (ride sharing, billing by company)
+        self.tabs = ui_kit.Segmented(head, values=[t[0] for t in TABS], height=38, font=ui.font(14, "bold"),
+                                     selected_color=TAB_ON, selected_hover_color=TAB_ON,
+                                     unselected_color=ui.SURFACE_ALT, unselected_hover_color=ui.BORDER,
+                                     text_color=ui.TEXT, command=self.show_tab)
+        self.tabs.grid(row=1, column=0, columnspan=2, sticky="w", padx=2 * SP, pady=(SP, 0))
         self.query = ctk.CTkEntry(head, height=40, font=ui.font(15),
                                   placeholder_text="Type a question or a few words: carrier, situation, rule…")
-        self.query.grid(row=1, column=0, columnspan=2, sticky="ew", padx=2 * SP, pady=(SP, SP / 2))
+        self.query.grid(row=2, column=0, columnspan=2, sticky="ew", padx=2 * SP, pady=(SP, SP / 2))
         self.query.bind("<KeyRelease>", self._on_key)
         self.query.bind("<Return>", lambda e: self.search())
         self.query.bind("<Escape>", lambda e: (self.query.delete(0, "end"), self.search()))
-        # quick guides: one button each (a menu of the insurers in it), filled in by reload()
-        self.guides_row = ctk.CTkFrame(head, fg_color="transparent", height=1)
-        self.guides_row.grid(row=2, column=0, columnspan=2, sticky="w", padx=2 * SP, pady=(SP / 2, 0))
         self.notes_label = ctk.CTkLabel(head, text="", font=ui.font(12), text_color=ui.MUTED, anchor="w")
         self.notes_label.grid(row=3, column=0, columnspan=2, sticky="w", padx=2 * SP, pady=(SP / 2, 1.5 * SP))
 
-        # ---------- results ----------
-        body = app.card(self, row=1, column=0, pady=(1.5 * SP, 0))
+        # ---------- search results ----------
+        body = self.results_card = app.card(self, row=1, column=0, pady=(1.5 * SP, 0))
         body.grid_columnconfigure(0, weight=1)
         body.grid_rowconfigure(0, weight=1)
         self.out = ctk.CTkTextbox(body, font=ui.font(14), wrap="word", fg_color=ui.SURFACE, text_color=ui.TEXT,
@@ -129,9 +136,16 @@ class RulesView(ctk.CTkFrame):
         self.out.grid(row=0, column=0, sticky="nsew", padx=SP, pady=SP)
         self.scale = ctk.ScalingTracker.get_widget_scaling(self)
         setup_tags(self.out._textbox, ui, self.scale)
-        ctk.CTkLabel(self, text="Searches your notes only (no internet). Click a result's title to read that "
-                                "note. Notes are a summary - check the carrier manual before quoting exact rates.",
-                     font=ui.font(12), text_color=ui.MUTED).grid(row=2, column=0, sticky="w", pady=(SP / 2, 0))
+        # ---------- a guide: the list of insurers on the left, the open one on the right ----------
+        self.guide_card = app.card(self, row=1, column=0, pady=(1.5 * SP, 0))
+        self.guide_card.grid_columnconfigure(0, weight=1)
+        self.guide_card.grid_rowconfigure(0, weight=1)
+        self.guide = GuidePane(self.guide_card, app)
+        self.guide.grid(row=0, column=0, sticky="nsew")
+        self.guide_card.grid_remove()
+        self.footer = ctk.CTkLabel(self, text="", font=ui.font(12), text_color=ui.MUTED)
+        self.footer.grid(row=2, column=0, sticky="w", pady=(SP / 2, 0))
+        self.tab = "Search"
         self.reload()
 
     # ---------- notes ----------
@@ -144,53 +158,40 @@ class RulesView(ctk.CTkFrame):
         else:
             self.notes_label.configure(text=f"No notes (.md files) in {self.ui.shorten_path(folder, 80)} - choose "
                                             "the Notes folder", text_color=self.ui.DANGER)
-        self._build_guides()
+        self.show_tab(self.tab)
         self.search()
 
-    def _guide_notes(self):
-        """[(button text, note file name)] for the quick guides whose note exists."""
-        out = []
-        for label, key in GUIDES:
-            note = next((n for n in (self.index.notes if self.index else []) if key in n.lower()), None)
-            if note:
-                out.append((label, note))
-        return out
+    def _guide_note(self, key):
+        """The note (file name) of a guide: the one in the notes folder whose name has the key words, else None."""
+        return next((n for n in (self.index.notes if self.index else []) if key in n.lower()), None)
 
-    def _build_guides(self):
-        for w in self.guides_row.winfo_children():
-            w.destroy()
-        guides = self._guide_notes()
-        if guides:
-            ctk.CTkLabel(self.guides_row, text="Quick guides", font=self.ui.font(13, "bold"), text_color=self.ui.TEXT) \
-                .pack(side="left", padx=(0, self.ui.SP))
-        for label, note in guides:
-            self.app.secondary_button(self.guides_row, label + "  ▾", lambda n=note, b=label: self.guide_menu(n),
-                                      width=len(label) * 8 + 50, height=32).pack(side="left", padx=(0, self.ui.SP))
-        self._show_row(bool(guides))
-
-    def _show_row(self, visible):
-        if visible:
-            self.guides_row.grid()
-        else:
-            self.guides_row.grid_remove()           # an empty CTkFrame is 200 px tall
-
-    def guide_menu(self, note):
-        """A menu of the insurers in a guide: pick one to read just that section, or open the whole guide."""
-        try:
-            sections = notes_search.parse(note, (self.index.folder / note).read_text(encoding="utf-8-sig"))
-        except OSError:
-            sections = []
-        menu = tk.Menu(self, tearoff=0)
-        menu.add_command(label="Open the whole guide", command=lambda: self.open_note(note))
-        menu.add_separator()
-        for s in sections:
-            if s["heading"]:
-                menu.add_command(label=s["heading"], command=lambda h=s["heading"]: self.open_note(note, h))
-        menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
+    def show_tab(self, name):
+        """Switch the section of the Rules view: Search, or a guide (a list of insurers and what the open one says)."""
+        self.tab = name
+        if self.tabs.get() != name:
+            self.tabs.set(name)
+        label, key, title = next((t for t in TABS if t[0] == name), TABS[0])
+        if not key:                                   # Search
+            self.guide_card.grid_remove()
+            self.results_card.grid()
+            self.query.grid()
+            self.footer.configure(text="Searches your notes only (no internet). Click a result's title to read that "
+                                       "note. Notes are a summary - check the carrier manual before quoting exact rates.")
+            self.query.focus_set()
+            return
+        self.results_card.grid_remove()
+        self.query.grid_remove()
+        self.guide_card.grid()
+        note = self._guide_note(key)
+        folder = self.index.folder if self.index else notes_search.notes_dir(self.app.cfg)
+        self.guide.load(folder / note if note else None, title, folder)
+        self.footer.configure(text="One section per insurer: pick one on the left. A summary of your notes - check the "
+                                   "carrier before binding.")
 
     def load(self):
         """Called each time the view is shown."""
-        self.query.focus_set()
+        if self.tab == "Search":
+            self.query.focus_set()
 
     def choose_notes(self):
         p = filedialog.askdirectory(parent=self, title="Choose the Underwriting Knowledge folder (.md notes)")
@@ -250,15 +251,13 @@ class RulesView(ctk.CTkFrame):
     def _show_start(self):
         tb = self.out._textbox
         tb.insert("end", "Type above to search the underwriting notes - results show as you type.\n\n", "meta")
-        guides = self._guide_notes()
-        if guides:
-            tb.insert("end", "Quick guides: ", "meta")
-            for i, (label, note) in enumerate(guides):
-                tag = f"link_g{i}"
-                tb.insert("end", label, ("more", tag))
-                self._link(tb, tag, lambda n=note: self.open_note(n))
-                tb.insert("end", "     ", "meta")
-            tb.insert("end", "\n\n", "meta")
+        tb.insert("end", "Guides: ", "meta")
+        for i, (label, key, _) in enumerate(TABS[1:]):
+            tag = f"link_g{i}"
+            tb.insert("end", label, ("more", tag))
+            self._link(tb, tag, lambda n=label: self.show_tab(n))
+            tb.insert("end", "     ", "meta")
+        tb.insert("end", chr(10) * 2, "meta")
         tb.insert("end", "Try: ", "meta")
         for i, ex in enumerate(EXAMPLES):
             tag = f"link_ex{i}"
@@ -273,6 +272,75 @@ class RulesView(ctk.CTkFrame):
                 tag = f"link_n{i}"
                 tb.insert("end", "•  " + Path(name).stem + "\n", ("bullet", tag))
                 self._link(tb, tag, lambda n=name: self.open_note(n))
+
+
+class GuidePane(ctk.CTkFrame):
+    """One guide inside the Rules view: the insurers (the note's "##" sections) in a list on the left, and what the
+    open one says on the right. Built from a note of the notes folder; says what to copy where when it is missing."""
+
+    def __init__(self, master, app):
+        super().__init__(master, fg_color="transparent")
+        self.app = app
+        ui = self.ui = sys.modules[type(app).__module__]
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        self.list = ctk.CTkScrollableFrame(self, width=250, fg_color=ui.SURFACE_ALT, corner_radius=10)
+        self.list.grid(row=0, column=0, sticky="ns", padx=(ui.SP, 0), pady=ui.SP)
+        self.text = ctk.CTkTextbox(self, font=ui.font(14), wrap="word", fg_color=ui.SURFACE, text_color=ui.TEXT,
+                                   border_width=0, cursor="arrow")
+        self.text.grid(row=0, column=1, sticky="nsew", padx=ui.SP, pady=ui.SP)
+        setup_tags(self.text._textbox, ui, ctk.ScalingTracker.get_widget_scaling(self))
+        self.sections, self.buttons, self.stamp = [], [], None
+
+    def load(self, path, title, folder):
+        """Show the guide in `path` (None = it is not in the notes folder: say what to do)."""
+        try:
+            stamp = (str(path), path.stat().st_mtime) if path else None
+        except OSError:
+            stamp = None
+        if stamp and stamp == self.stamp:
+            return
+        self.stamp = stamp
+        for b in self.buttons:
+            b.destroy()
+        self.buttons, self.sections = [], []
+        tb = self.text._textbox
+        recolor(tb, self.ui)
+        if not stamp:
+            self.text.configure(state="normal")
+            self.text.delete("1.0", "end")
+            tb.insert("end", "This guide is not in your notes folder yet\n", "h1")
+            tb.insert("end", f"Copy the note called \"{title}\" (a .md file) into this folder, then press Reload notes:\n\n",
+                      "meta")
+            tb.insert("end", f"{folder}\n", "lead")
+            self.text.configure(state="disabled")
+            return
+        try:
+            sections = notes_search.parse(path.name, path.read_text(encoding="utf-8-sig"))
+        except OSError:
+            sections = []
+        self.sections = [s for s in sections if s["heading"] and s["items"]]
+        for i, s in enumerate(self.sections):
+            b = ctk.CTkButton(self.list, text=self.ui.shorten(s["heading"], 30), anchor="w", height=34, corner_radius=8,
+                              font=self.ui.font(14), fg_color="transparent", text_color=self.ui.TEXT,
+                              hover_color=self.ui.BORDER, command=lambda i=i: self.select(i))
+            b.pack(fill="x", pady=1)
+            self.buttons.append(b)
+        if self.sections:
+            self.select(0)
+
+    def select(self, i):
+        for k, b in enumerate(self.buttons):
+            b.configure(fg_color=SELECTED if k == i else "transparent")
+        s = self.sections[i]
+        tb = self.text._textbox
+        self.text.configure(state="normal")
+        self.text.delete("1.0", "end")
+        tb.insert("end", s["heading"] + "\n", "h1")
+        for item in s["items"]:
+            render_item(tb, item, None)
+        self.text.configure(state="disabled")
+        self.text.yview_moveto(0)
 
 
 class NotePage(Panel):
