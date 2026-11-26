@@ -147,6 +147,20 @@ def _vehicle(block):
     return v
 
 
+_QNUM = re.compile(r"(?:quote\s*(?:number|no\.?|#|id)|reference\s*(?:number|no\.?|#))\s*[:#\-]*\s*"
+                   r"(?=[A-Z0-9\-]*\d)([A-Z0-9][A-Z0-9\-]{4,})", re.I)
+
+
+def quote_number(messages):
+    """The carrier's own quote number when one of its messages gives it ("Here is your quote number:7958581931",
+    "Quote successfully rated - Reference number - 17921595034008"), else "". Not every carrier prints one."""
+    for m in messages:
+        found = _QNUM.search(m)
+        if found:
+            return found.group(1)
+    return ""
+
+
 def _carriers(lines):
     out = []
     for i, line in enumerate(lines[1:], 1):
@@ -183,6 +197,7 @@ def _carriers(lines):
                 target[-1] += " " + line.strip()
             else:
                 target = None
+        c["quote_number"] = quote_number(c["messages"])
     return out
 
 

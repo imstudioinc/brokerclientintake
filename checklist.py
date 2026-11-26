@@ -296,7 +296,7 @@ def quote_refers(folder, docs, data=None, read=True):
         return None
     q = quotes[-1]
     try:
-        key = f"{q.name}|{int(q.stat().st_mtime)}"
+        key = f"{q.name}|{int(q.stat().st_mtime)}|v2"        # v2: the carriers' quote numbers are kept too
     except OSError:
         return None
     data = _load(folder) if data is None else data
@@ -306,14 +306,23 @@ def quote_refers(folder, docs, data=None, read=True):
     if not read:
         return None
     try:
-        carriers = {c["name"]: [m for m in c["messages"] if review.carrier_message(m) == "refer"]
-                    for c in quote.read(str(q)).get("carriers", [])}
+        read_carriers = quote.read(str(q)).get("carriers", [])
+        carriers = {c["name"]: [m for m in c["messages"] if review.carrier_message(m) == "refer"] for c in read_carriers}
+        numbers = {c["name"]: c.get("quote_number", "") for c in read_carriers if c.get("quote_number")}
     except Exception:
         return None
     fresh = records.load(folder)
-    fresh["quote_refers"] = {"key": key, "carriers": carriers}
+    fresh["quote_refers"] = {"key": key, "carriers": carriers, "numbers": numbers}
     records._write(folder, fresh)
     return carriers
+
+
+def quote_numbers(folder, docs, data=None):
+    """{carrier: the carrier's quote number} on the newest quote - only the carriers whose quote prints one."""
+    if quote_refers(folder, docs, data) is None:
+        return {}
+    kept = (records.load(folder) if data is None else data).get("quote_refers") or {}
+    return dict(kept.get("numbers") or {})
 
 
 RESULTS = ("Approved", "Approved with conditions", "Declined", "Call back")

@@ -99,6 +99,14 @@ def quote_carriers(app, folder):
     return out
 
 
+def quote_numbers(app, folder):
+    """{known carrier name: the carrier's quote number} for the carriers on the newest quote that print one."""
+    data = carriers.load(app.cfg)
+    kind = app.client_type_of.get(folder, "")
+    found = checklist.quote_numbers(folder, _ui(app).find_docs(folder, kind)) or {}
+    return {carriers.find(data, name) or name: number for name, number in found.items()}
+
+
 def missing_file(parent, app, row=0):
     ui = _ui(app)
     ctk.CTkLabel(parent, text=f"Carrier details not found.\n\nThe app reads them from {carriers.FILE} in the "
@@ -214,6 +222,8 @@ class UwCallPage(Panel):
         self.geometry("1180x840")
         self.data = carriers.load(app.cfg)
         self.on_quote = quote_carriers(app, self.folder)
+        self.numbers = quote_numbers(app, self.folder)           # the carrier's own quote number, when the quote has one
+        self._number_prefill = ""
         names = [n for n in self.on_quote if self.on_quote[n]] + [n for n in self.on_quote if not self.on_quote[n]]
         names += sorted(n for n in self.data["carriers"] if n not in names)
         self._prefill = ""
@@ -235,11 +245,13 @@ class UwCallPage(Panel):
             .grid(row=1, column=0, columnspan=2, sticky="w", padx=p)
 
         self._label(form, 2, 0, "Carrier")
+        self._label(form, 2, 1, "Quote #")
         self.carrier = tk.StringVar(value=names[0] if names else "")
         ctk.CTkComboBox(form, values=names or [""], variable=self.carrier, height=36, font=ui.font(13),
                         border_color=ui.BORDER, button_color=ui.BORDER, button_hover_color=ui.MUTED,
                         command=lambda _: self.carrier_changed()) \
-            .grid(row=3, column=0, columnspan=2, sticky="ew", padx=p)
+            .grid(row=3, column=0, sticky="ew", padx=(p, ui.SP / 2))
+        self.quote_no = self._entry(form, 3, 1, "", "none on the quote")
         now = datetime.datetime.now()
         self._label(form, 4, 0, "Date")
         self._label(form, 4, 1, "Time")
@@ -311,6 +323,11 @@ class UwCallPage(Panel):
         if not self.underwriter.get() or self.underwriter.get() in self._people_before():
             self.underwriter.set("")
         self._people = people
+        number = self.numbers.get(name, "")                      # this carrier's quote number, if the quote prints one
+        if self.quote_no.get().strip() in ("", self._number_prefill):
+            self.quote_no.delete(0, "end")
+            self.quote_no.insert(0, number)
+            self._number_prefill = number
         msgs = self.on_quote.get(name, [])
         text = "\n".join("• " + m for m in msgs)
         if self.reason.get("1.0", "end").strip() in ("", self._prefill.strip()):
@@ -382,6 +399,7 @@ class UwCallPage(Panel):
         ctk.CTkLabel(top, text=call.get("result", ""), font=ui.font(12, "bold"), text_color=color) \
             .pack(side="right")
         lines = [f"{call.get('underwriter', '')}" + (f"  ·  {call['contact']}" if call.get("contact") else ""),
+                 f"Quote # {call['quote_number']}" if call.get("quote_number") else "",
                  "Reason: " + call.get("reason", "").replace("\n", "  "),
                  ("Notes: " + call["notes"].replace("\n", "  ")) if call.get("notes") else "",
                  f"Logged by {call.get('by', '')}"]
@@ -412,7 +430,8 @@ class UwCallPage(Panel):
     def save(self):
         day = records.parse_date(self.date.get())
         at = _parse_when(day.isoformat() if day else self.date.get(), self.time.get())
-        item = {"carrier": self.carrier.get().strip(), "underwriter": self.underwriter.get().strip(),
+        item = {"carrier": self.carrier.get().strip(), "quote_number": self.quote_no.get().strip(),
+                "underwriter": self.underwriter.get().strip(),
                 "contact": self.contact.get().strip(), "reason": self.reason.get("1.0", "end").strip(),
                 "result": self.result.get(), "notes": self.notes.get("1.0", "end").strip()}
         problem = ("Pick the carrier." if not item["carrier"] else
@@ -452,8 +471,9 @@ def _when(at):
 
 def note_text(call):
     """The call as a file note (paste into PowerBroker / the client's notes)."""
-    lines = [f"UW call - {_when(call.get('at'))} - {call.get('carrier', '')}",
-             f"Spoke with: {call.get('underwriter', '')}" + (f" ({call['contact']})" if call.get("contact") else ""),
+    lines = [f"UW call - {_when(call.get('at'))} - {call.get('carrier', '')}"
+             + (f" - Quote # {call['quote_number']}" if call.get("quote_number") else ""),
+             f"Spoke with:{call.get('underwriter', '')}" + (f" ({call['contact']})" if call.get("contact") else ""),
              f"Reason: {call.get('reason', '')}",
              f"Result: {call.get('result', '')}"]
     if call.get("notes"):
