@@ -51,11 +51,39 @@ def setup_tags(tb, ui, scale):
     tb.tag_configure("hit", font=(ui.FONT, px(15), "bold"))
     tb.tag_configure("more", font=(ui.FONT, px(14), "bold"), spacing1=int(10 * scale), lmargin1=14)
     tb.tag_configure("meta", font=(ui.FONT, px(14)), spacing1=4)
-    tb.tag_configure("h1", font=(ui.FONT, px(22), "bold"), spacing3=int(6 * scale))
+    tb.tag_configure("h1", font=(ui.FONT, px(22), "bold"), spacing3=int(10 * scale))
+    # a fact row: "Label" in a narrow muted column, the value beside it; a wrapped value lines up under the value
+    label_w = int(168 * scale)
+    tb.tag_configure("kv", tabs=(label_w,), lmargin1=14, lmargin2=14 + label_w, spacing1=int(9 * scale))
+    tb.tag_configure("kvlabel", font=(ui.FONT, px(13), "bold"))
+    tb.tag_configure("kvvalue", font=(ui.FONT, px(15)))
+    tb.tag_configure("kvlink", font=(ui.FONT, px(15), "bold"))
+    for tone in ("ok", "no", "ask"):
+        tb.tag_configure("kvlabel_" + tone, font=(ui.FONT, px(13), "bold"))
+        tb.tag_configure("pill_" + tone, font=(ui.FONT, px(13), "bold"))
     recolor(tb, ui)
 
 
+# the verdict colours: soft background + strong text, always with the word in it (never colour alone)
+TONES = {"ok": (("#DCF2E3", "#1B3A28"), ("#11713A", "#7FE0A4")),
+         "no": (("#FBE3E1", "#4A1F1D"), ("#B3261E", "#FF9C93")),
+         "ask": (("#FDF0D5", "#4A3A14"), ("#8A5300", "#F6C45F"))}
+
+
+def fit_width(tb, width, scale, max_px=900):
+    """Keep lines a readable length (about 100 characters): the text stops `max_px` from the left even in a wide window."""
+    right = max(24, int(width - max_px * scale))
+    for tag in ("lead", "bullet", "sub", "kv", "meta", "more", "title", "source"):
+        tb.tag_configure(tag, rmargin=right if tag not in ("title", "source") else 0)
+
+
 def recolor(tb, ui):
+    for tone, (bg, fg) in TONES.items():
+        tb.tag_configure("pill_" + tone, background=_pick(bg), foreground=_pick(fg))
+        tb.tag_configure("kvlabel_" + tone, foreground=_pick(fg))
+    tb.tag_configure("kvlabel", foreground=_pick(ui.MUTED))
+    tb.tag_configure("kvvalue", foreground=_pick(ui.TEXT))
+    tb.tag_configure("kvlink", foreground=_pick(ui.ACCENT))
     tb.tag_configure("title", foreground=_pick(ui.TEXT), background=_pick(BAND))
     tb.tag_configure("source", foreground=_pick(ui.MUTED), background=_pick(BAND))
     tb.tag_configure("lead", foreground=_pick(ui.TEXT))
@@ -77,9 +105,18 @@ def insert_marked(tb, text, base, pattern):
     tb.insert("end", text[pos:], base)
 
 
-def render_item(tb, item, pattern):
-    """One note line as a lead + short bullets (or a single bullet)."""
+def render_item(tb, item, pattern, focus=False):
+    """One note line as a lead + short bullets (or a single bullet).
+
+    focus=True (search results): of a long run-on line only the bullets that mention what was searched for are shown,
+    at most 3, and the rest is counted ("+ 9 more") - the whole line is one click away in the note."""
     lead, parts = notes_search.split_item(item)
+    hidden = 0
+    if focus and pattern and len(parts) > 3:
+        hits = [p for p in parts if pattern.search(p)]
+        shown = (hits or parts)[:3]
+        hidden = len(parts) - len(shown)
+        parts = shown
     if lead:
         insert_marked(tb, lead + "\n", "lead", pattern)
         for part in parts:
@@ -88,6 +125,8 @@ def render_item(tb, item, pattern):
         insert_marked(tb, "•  " + parts[0] + "\n", "bullet", pattern)
         for part in parts[1:]:
             insert_marked(tb, "–  " + part + "\n", "sub", pattern)
+    if hidden:
+        tb.insert("end", f"+ {hidden} more in this line\n", ("sub", "meta"))
 
 
 class RulesView(ctk.CTkFrame):
@@ -136,6 +175,7 @@ class RulesView(ctk.CTkFrame):
         self.out.grid(row=0, column=0, sticky="nsew", padx=SP, pady=SP)
         self.scale = ctk.ScalingTracker.get_widget_scaling(self)
         setup_tags(self.out._textbox, ui, self.scale)
+        self.out.bind("<Configure>", lambda e: fit_width(self.out._textbox, e.width, self.scale), add="+")
         # ---------- a guide: the list of insurers on the left, the open one on the right ----------
         self.guide_card = app.card(self, row=1, column=0, pady=(1.5 * SP, 0))
         self.guide_card.grid_columnconfigure(0, weight=1)
@@ -226,7 +266,7 @@ class RulesView(ctk.CTkFrame):
         if not q:
             self._show_start()
         else:
-            results = self.index.search(q) if self.index else []
+            results = self.index.search(q, limit=6, per_section=5) if self.index else []
             if not results:
                 tb.insert("end", "Nothing found. Try fewer or different words (a carrier name plus one or two "
                                  "key words works best).\n", "meta")
@@ -240,7 +280,7 @@ class RulesView(ctk.CTkFrame):
                 tb.insert("end", r["title"] + "\n", ("source", link))
                 self._link(tb, link, lambda r=r: self.open_note(r["note"], r["heading"]))
                 for item in r["items"]:
-                    render_item(tb, item, pattern)
+                    render_item(tb, item, pattern, focus=True)
                 if r["more"] > 0:
                     more = f"link_more{i}"
                     tb.insert("end", f"Read the whole section  (+ {r['more']} more)  →\n", ("more", more))
@@ -274,9 +314,20 @@ class RulesView(ctk.CTkFrame):
                 self._link(tb, tag, lambda n=name: self.open_note(n))
 
 
+VERDICT_LOOK = {   # first word of "Verdict:" -> (pill tag, list mark, list heading)
+    "accepted": ("pill_ok", "✓", "Accepted"), "declined": ("pill_no", "✕", "Declined")}
+ASK_LOOK = ("pill_ask", "?", "Ask the underwriter")
+
+
+def verdict_look(verdict):
+    return VERDICT_LOOK.get((verdict or "").split(" ")[0].lower(), ASK_LOOK)
+
+
 class GuidePane(ctk.CTkFrame):
-    """One guide inside the Rules view: the insurers (the note's "##" sections) in a list on the left, and what the
-    open one says on the right. Built from a note of the notes folder; says what to copy where when it is missing."""
+    """One guide inside the Rules view. The insurers (the note's "##" sections) are a list on the left, grouped by
+    verdict when the note gives one; the open one is a short fact sheet on the right: a verdict pill and "Label  value"
+    rows (a note line written as "Label: value"), not paragraphs. "At a glance" sections list who is in each group, with
+    the names as links. Says what to copy where when the note is missing."""
 
     def __init__(self, master, app):
         super().__init__(master, fg_color="transparent")
@@ -289,8 +340,10 @@ class GuidePane(ctk.CTkFrame):
         self.text = ctk.CTkTextbox(self, font=ui.font(14), wrap="word", fg_color=ui.SURFACE, text_color=ui.TEXT,
                                    border_width=0, cursor="arrow")
         self.text.grid(row=0, column=1, sticky="nsew", padx=ui.SP, pady=ui.SP)
-        setup_tags(self.text._textbox, ui, ctk.ScalingTracker.get_widget_scaling(self))
-        self.sections, self.buttons, self.stamp = [], [], None
+        self.scale = ctk.ScalingTracker.get_widget_scaling(self)
+        setup_tags(self.text._textbox, ui, self.scale)
+        self.text.bind("<Configure>", lambda e: fit_width(self.text._textbox, e.width, self.scale), add="+")
+        self.sections, self.widgets, self.buttons, self.stamp = [], [], {}, None
 
     def load(self, path, title, folder):
         """Show the guide in `path` (None = it is not in the notes folder: say what to do)."""
@@ -301,9 +354,9 @@ class GuidePane(ctk.CTkFrame):
         if stamp and stamp == self.stamp:
             return
         self.stamp = stamp
-        for b in self.buttons:
-            b.destroy()
-        self.buttons, self.sections = [], []
+        for w in self.widgets:
+            w.destroy()
+        self.widgets, self.buttons, self.sections = [], {}, []
         tb = self.text._textbox
         recolor(tb, self.ui)
         if not stamp:
@@ -320,25 +373,101 @@ class GuidePane(ctk.CTkFrame):
         except OSError:
             sections = []
         self.sections = [s for s in sections if s["heading"] and s["items"]]
-        for i, s in enumerate(self.sections):
-            b = ctk.CTkButton(self.list, text=self.ui.shorten(s["heading"], 30), anchor="w", height=34, corner_radius=8,
-                              font=self.ui.font(14), fg_color="transparent", text_color=self.ui.TEXT,
-                              hover_color=self.ui.BORDER, command=lambda i=i: self.select(i))
-            b.pack(fill="x", pady=1)
-            self.buttons.append(b)
+        for s in self.sections:
+            first = s["items"][0]
+            s["verdict"] = first.split(":", 1)[1].strip() if first.lower().startswith("verdict:") else ""
+            s["facts"] = [i for i in s["items"] if not i.lower().startswith("verdict:")]
+        self._build_list()
         if self.sections:
             self.select(0)
 
+    def _build_list(self):
+        """The insurers on the left: grouped by verdict (Accepted / Ask / Declined) when the note gives verdicts."""
+        ui = self.ui
+        grouped = any(s["verdict"] for s in self.sections)
+
+        def add_group(name):
+            lab = ctk.CTkLabel(self.list, text=name.upper(), font=ui.font(12, "bold"), text_color=ui.MUTED, anchor="w")
+            lab.pack(fill="x", padx=8, pady=(10, 2))
+            self.widgets.append(lab)
+
+        def add_button(i, s):
+            mark = verdict_look(s["verdict"])[1] + "  " if s["verdict"] else ""
+            b = ctk.CTkButton(self.list, text=mark + ui.shorten(s["heading"], 28), anchor="w", height=34, corner_radius=8,
+                              font=ui.font(14), fg_color="transparent", text_color=ui.TEXT, hover_color=ui.BORDER,
+                              command=lambda i=i: self.select(i))
+            b.pack(fill="x", pady=1)
+            self.widgets.append(b)
+            self.buttons[i] = b
+
+        order = list(range(len(self.sections)))
+        if not grouped:
+            for i in order:
+                add_button(i, self.sections[i])
+            return
+        for i in order:                                     # "at a glance" and other sections without a verdict first
+            if not self.sections[i]["verdict"]:
+                add_button(i, self.sections[i])
+        for heading in ("Accepted", "Ask the underwriter", "Declined"):
+            members = [i for i in order if self.sections[i]["verdict"] and verdict_look(self.sections[i]["verdict"])[2] == heading]
+            if members:
+                add_group(heading)
+                for i in members:
+                    add_button(i, self.sections[i])
+
+    def _jump_to(self, name):
+        """The section an insurer's name in an "at a glance" row stands for."""
+        key = re.sub(r"[^a-z0-9]", "", name.lower())
+        for i, s in enumerate(self.sections):
+            head = re.sub(r"[^a-z0-9]", "", s["heading"].lower())
+            if head.startswith(key) or key.startswith(head[:5]) and len(key) >= 4 and head[:5] == key[:5]:
+                return i
+        # an insurer with no section of its own is in the "Not in the notes" section
+        return next((i for i, s in enumerate(self.sections) if s["heading"].lower().startswith("not in the")), None)
+
     def select(self, i):
-        for k, b in enumerate(self.buttons):
+        for k, b in self.buttons.items():
             b.configure(fg_color=SELECTED if k == i else "transparent")
         s = self.sections[i]
         tb = self.text._textbox
         self.text.configure(state="normal")
         self.text.delete("1.0", "end")
-        tb.insert("end", s["heading"] + "\n", "h1")
-        for item in s["items"]:
-            render_item(tb, item, None)
+        for tag in tb.tag_names():
+            if tag.startswith("gl"):
+                tb.tag_delete(tag)
+        recolor(tb, self.ui)
+        tb.insert("end", s["heading"], "h1")
+        if s["verdict"]:
+            tb.insert("end", "     ", "h1")
+            tb.insert("end", f"  {s['verdict'].upper()}  ", verdict_look(s["verdict"])[0])
+        tb.insert("end", "\n", "h1")
+        glance = "glance" in s["heading"].lower()
+        for k, item in enumerate(s["facts"]):
+            m = re.match(r"^([^:;]{2,22}):\s+(.+)$", item, re.S)     # a longer label would run into its value: a bullet
+            if not m:
+                insert_marked(tb, "•  " + item + "\n", "bullet", None)
+                continue
+            label, value = m.group(1), m.group(2)
+            value = value[:1].upper() + value[1:]
+            look = verdict_look(label)[0] if glance and label.split(" ")[0].lower() in ("accepted", "declined", "ask", "fleet") else None
+            tb.insert("end", label, ("kv", "kvlabel" if not look else "kvlabel_" + look[5:]))
+            tb.insert("end", "\t", "kv")
+            if glance and ";" in value and look:
+                for n, name in enumerate(x.strip() for x in value.split(";")):
+                    target = self._jump_to(name)
+                    tags = ("kv", "kvvalue")
+                    if target is not None:
+                        tag = f"gl{k}_{n}"
+                        tags = ("kv", "kvlink", tag)
+                        tb.tag_bind(tag, "<Button-1>", lambda e, t=target: self.select(t))
+                        tb.tag_bind(tag, "<Enter>", lambda e: tb.configure(cursor="hand2"))
+                        tb.tag_bind(tag, "<Leave>", lambda e: tb.configure(cursor="arrow"))
+                    tb.insert("end", name, tags)
+                    if n < value.count(";"):
+                        tb.insert("end", "   ·   ", ("kv", "kvvalue"))
+                tb.insert("end", "\n", "kv")
+            else:
+                tb.insert("end", value + "\n", ("kv", "kvvalue"))
         self.text.configure(state="disabled")
         self.text.yview_moveto(0)
 
