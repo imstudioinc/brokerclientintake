@@ -161,8 +161,9 @@ class Index:
         self.sections = []
         files = sorted(p for p in self.folder.glob("*.md") if "index" not in p.stem.lower())             if self.folder.is_dir() else []
         self.notes = [p.name for p in files]
-        for p in files:
-            self.sections += parse(p.name, p.read_text(encoding="utf-8-sig"))
+        for p in files:       # a guide's "Compare" table is for the guide's own screen, not for search results
+            self.sections += [s for s in parse(p.name, p.read_text(encoding="utf-8-sig"))
+                              if s["heading"].strip().lower() != "compare"]
         for s in self.sections:
             s["head_words"] = set(words(s["heading"]))
             s["item_words"] = [set(words(i)) for i in s["items"]]

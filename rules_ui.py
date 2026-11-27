@@ -1,8 +1,9 @@
-"""Rules view: search the underwriting notes, inside the main window (next to Clients and Tracker).
+"""Rules view: the underwriting notes, inside the main window (next to Clients and Tracker).
 
-Results are read in the app: long run-on lines of the notes are split into a lead and short bullets
-(notes_search.split_item), and a click on a result opens the whole note in a page of its own (NotePage),
-not in Notepad.
+Three sections (tabs): Search (home tiles, then result cards), and one tab per guide (ride sharing, billing by company).
+A guide is a note of the notes folder with a "## Compare" table: it is shown as a comparison table (one row per insurer,
+colour-coded Yes / No / Ask pills) and a click on a row opens that insurer's short fact sheet. Long notes open in a page of
+their own (NotePage), never in Notepad.
 """
 import os
 import re
@@ -22,15 +23,15 @@ from panel import Panel
 EXAMPLES = ["intact G2 at-fault", "pembridge oil tank", "echelon monthly payment", "motorcycle M1 course",
             "jevco minor accident", "OPCF 43", "winter tire discount", "nsf fee", "uber turo"]
 
-# The sections of the Rules view: Search, and one tab for each guide. A guide is a note of the notes folder with one "##"
-# section per insurer (or topic); (tab text, word in the note's file name, what to call it when it is missing).
-TABS = [("Search", "", ""), ("Ride sharing", "ride sharing", "Ride sharing and car sharing - by insurer"),
-        ("Billing by company", "billing", "Billing and payment policy - by insurer")]
+# The sections of the Rules view: Search, and one tab for each guide.
+# (tab text, word in the guide's file name, what to call the note when it is missing, what the home tile says)
+TABS = [("Search", "", "", ""),
+        ("Ride sharing", "ride sharing", "Ride sharing and car sharing - by insurer",
+         "Who accepts Uber, Lyft, Turo and delivery apps - and what to add to the policy"),
+        ("Billing by company", "billing", "Billing and payment policy - by insurer",
+         "Monthly payments, down payment, NSF fee and agency bill for every insurer")]
 TAB_ON = ("#FFFFFF", "#44566B")          # the open tab: clearly lighter than the others
-SELECTED = ("#E8F0FE", "#1F2D45")       # the open insurer in a guide's list
-
-BAND = ("#EEF2F7", "#26303C")          # the bar behind a result's title
-HIT_BG = ("#FFF1B8", "#5A4A12")         # a word that matches the question
+SELECTED = ("#E8F0FE", "#1F2D45")       # the open row / item
 
 
 def _pick(pair):
@@ -129,6 +130,382 @@ def render_item(tb, item, pattern, focus=False):
         tb.insert("end", f"+ {hidden} more in this line\n", ("sub", "meta"))
 
 
+PILL_WORDS = {"yes": "ok", "accepted": "ok", "no": "no", "declined": "no", "ask": "ask", "fleet": "ask", "partly": "ask"}
+
+
+def tone_of(text):
+    """ok / no / ask for a pill's text (Yes / No / Ask / Fleet policy / Partly), None for anything else."""
+    first = re.sub(r"[^a-z]", "", (text or "").strip().split(" ")[0].lower())
+    return PILL_WORDS.get(first)
+
+
+def make_pill(parent, ui, text, width=112):
+    """A coloured status label: soft background + strong text, always with the word in it (never colour alone)."""
+    tone = tone_of(text)
+    bg, fg = TONES[tone] if tone else (ui.SURFACE_ALT, ui.TEXT)
+    return ctk.CTkLabel(parent, text=text, width=width, height=28, corner_radius=8, fg_color=bg, text_color=fg,
+                        font=ui.font(13, "bold"))
+
+
+def on_click(widget, command, cursor="hand2"):
+    """Make a whole group of widgets clickable (the widget and everything inside it)."""
+    try:
+        widget.bind("<Button-1>", lambda e: command())
+        widget.configure(cursor=cursor)
+    except (tk.TclError, ValueError, NotImplementedError):
+        pass
+    for child in widget.winfo_children():
+        on_click(child, command, cursor)
+
+
+def snippet(text, n=170):
+    text = " ".join(text.split())
+    if len(text) <= n:
+        return text
+    cut = text[:n].rsplit(" ", 1)[0]
+    return cut + "…"
+
+
+class _Pane(ctk.CTkScrollableFrame):
+    """A scrolling pane whose long-text labels wrap to the pane's width."""
+
+    def __init__(self, master, app, **kw):
+        super().__init__(master, fg_color="transparent", **kw)
+        self.app = app
+        self.ui = sys.modules[type(app).__module__]
+        self.grid_columnconfigure(0, weight=1)
+        self.wrapped = []                    # (label, pixels taken from the pane's width - or a function of the width)
+        self._wrap_job = None
+        self._width = 0
+        self.bind("<Configure>", self._on_resize, add="+")
+
+    def _on_resize(self, event):
+        if abs(event.width - self._width) < 30:
+            return
+        self._width = event.width
+        if self._wrap_job:
+            self.after_cancel(self._wrap_job)
+        self._wrap_job = self.after(120, self.rewrap)
+
+    def rewrap(self):
+        self._wrap_job = None
+        scale = ctk.ScalingTracker.get_widget_scaling(self)
+        for label, taken in self.wrapped:
+            if label.winfo_exists():
+                label.configure(wraplength=self._wrap_for(taken, self._width / scale))
+
+    def clear(self):
+        for w in self.winfo_children():
+            w.destroy()
+        self.wrapped = []
+
+    @staticmethod
+    def _wrap_for(taken, width):
+        return max(110, int(taken(width)) if callable(taken) else max(160, int(width) - taken))
+
+    def add_wrapped(self, label, taken):
+        self.wrapped.append((label, taken))
+        scale = ctk.ScalingTracker.get_widget_scaling(self)
+        label.configure(wraplength=self._wrap_for(taken, (self._width or 1000) / scale))
+
+
+# ---------------------------------------------------------------------------- home (Search with nothing typed)
+class HomePane(_Pane):
+    """What the Search section shows before anything is typed: a tile for each guide, example searches, all notes."""
+
+    def build(self, view):
+        ui, SP = self.ui, self.ui.SP
+        self.clear()
+        tiles = ctk.CTkFrame(self, fg_color="transparent")
+        tiles.grid(row=0, column=0, sticky="ew", padx=SP, pady=(SP, 0))
+        tiles.grid_columnconfigure((0, 1), weight=1, uniform="tile")
+        for col, (name, key, _title, subtitle) in enumerate(TABS[1:]):
+            found = view.guide_note(key) is not None
+            card = ctk.CTkFrame(tiles, fg_color=ui.SURFACE, corner_radius=14, border_width=1, border_color=ui.BORDER)
+            card.grid(row=0, column=col, sticky="nsew", padx=(0, SP) if col == 0 else (SP, 0))
+            ctk.CTkLabel(card, text=name, font=ui.font(20, "bold"), text_color=ui.TEXT, anchor="w") \
+                .pack(fill="x", padx=2 * SP, pady=(2 * SP, 2))
+            body = ctk.CTkLabel(card, text=subtitle if found else "Not in your notes folder yet - open it to see what to copy.",
+                                font=ui.font(14), text_color=ui.MUTED, anchor="w", justify="left", wraplength=380)
+            body.pack(fill="x", padx=2 * SP)
+            ctk.CTkLabel(card, text="Open  ›", font=ui.font(14, "bold"), text_color=ui.ACCENT, anchor="w") \
+                .pack(fill="x", padx=2 * SP, pady=(SP, 2 * SP))
+            on_click(card, lambda n=name: view.show_tab(n))
+        ctk.CTkLabel(self, text="Try a search", font=ui.font(14, "bold"), text_color=ui.TEXT, anchor="w") \
+            .grid(row=1, column=0, sticky="w", padx=SP, pady=(3 * SP, SP / 2))
+        chips = ctk.CTkFrame(self, fg_color="transparent")
+        chips.grid(row=2, column=0, sticky="w", padx=SP)
+        for i, ex in enumerate(EXAMPLES):
+            ctk.CTkButton(chips, text=ex, height=32, corner_radius=16, font=ui.font(13), fg_color=ui.SURFACE,
+                          border_width=1, border_color=ui.BORDER, text_color=ui.TEXT, hover_color=ui.SURFACE_ALT,
+                          width=len(ex) * 8 + 30, command=lambda ex=ex: view.search_for(ex)) \
+                .grid(row=i // 5, column=i % 5, padx=(0, SP), pady=(0, SP))
+        if view.index and view.index.notes:
+            ctk.CTkLabel(self, text=f"All notes ({len(view.index.notes)})", font=ui.font(14, "bold"),
+                         text_color=ui.TEXT, anchor="w").grid(row=3, column=0, sticky="w", padx=SP, pady=(2 * SP, SP / 2))
+            grid = ctk.CTkFrame(self, fg_color="transparent")
+            grid.grid(row=4, column=0, sticky="ew", padx=SP, pady=(0, 2 * SP))
+            grid.grid_columnconfigure((0, 1), weight=1, uniform="n")
+            for i, name in enumerate(view.index.notes):
+                ctk.CTkButton(grid, text=ui.shorten(Path(name).stem, 52), anchor="w", height=34, corner_radius=8,
+                              font=ui.font(13), fg_color="transparent", text_color=ui.TEXT, hover_color=ui.SURFACE,
+                              command=lambda n=name: view.open_note(n)) \
+                    .grid(row=i // 2, column=i % 2, sticky="ew", padx=2, pady=1)
+
+
+# ---------------------------------------------------------------------------- search results as cards
+class ResultsPane(_Pane):
+    """Search results as cards: the section, which note it is from, and only the few lines that matter."""
+
+    def show(self, results, words, view):
+        ui, SP = self.ui, self.ui.SP
+        self.clear()
+        if not results:
+            ctk.CTkLabel(self, text="Nothing found.\nTry fewer or different words - a carrier name plus one or two "
+                                    "key words works best.", font=ui.font(15), text_color=ui.MUTED, anchor="w",
+                         justify="left").grid(row=0, column=0, sticky="w", padx=2 * SP, pady=2 * SP)
+            return
+        pattern = re.compile(r"\b(" + "|".join(map(re.escape, words)) + r")\w*", re.I) if words else None
+        for i, r in enumerate(results):
+            card = ctk.CTkFrame(self, fg_color=ui.SURFACE, corner_radius=12, border_width=1, border_color=ui.BORDER)
+            card.grid(row=i, column=0, sticky="ew", padx=SP, pady=(0, SP))
+            card.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(card, text=r["heading"] or r["title"], font=ui.font(17, "bold"), text_color=ui.TEXT,
+                         anchor="w").grid(row=0, column=0, sticky="w", padx=(2 * SP, SP), pady=(1.5 * SP, 0))
+            ctk.CTkLabel(card, text=r["title"], font=ui.font(12), text_color=ui.MUTED, anchor="w") \
+                .grid(row=1, column=0, sticky="w", padx=2 * SP)
+            lines, hidden = [], r["more"]
+            for item in r["items"]:
+                lead, parts = notes_search.split_item(item)
+                if pattern and len(parts) > 3:
+                    hits = [p for p in parts if pattern.search(p)]
+                    keep = (hits or parts)[:3]
+                    hidden += len(parts) - len(keep)
+                    parts = keep
+                lines += [(lead + " " + p) if lead else p for p in parts]
+            shown = lines[:4]
+            hidden += len(lines) - len(shown)
+            for k, text in enumerate(shown):
+                lab = ctk.CTkLabel(card, text="•  " + snippet(text), font=ui.font(14), text_color=ui.TEXT, anchor="w",
+                                   justify="left")
+                lab.grid(row=2 + k, column=0, sticky="w", padx=2 * SP, pady=(SP / 2 if k == 0 else 2, 0))
+                self.add_wrapped(lab, 150)
+            foot = ctk.CTkFrame(card, fg_color="transparent", height=1)
+            foot.grid(row=2 + len(shown), column=0, sticky="ew", padx=2 * SP, pady=(SP / 2, SP))
+            ctk.CTkLabel(foot, text=f"+ {hidden} more" if hidden > 0 else "", font=ui.font(12), text_color=ui.MUTED) \
+                .pack(side="left")
+            ctk.CTkLabel(foot, text="Read the note  ›", font=ui.font(13, "bold"), text_color=ui.ACCENT).pack(side="right")
+            on_click(card, lambda r=r: view.open_note(r["note"], r["heading"]))
+
+
+# ---------------------------------------------------------------------------- a guide: comparison table + insurer sheet
+def read_guide(path):
+    """(tips, header, rows, sections) of a guide note: the "## Compare" section's tips (- lines) and table, and the
+    insurers' own "##" sections."""
+    text = path.read_text(encoding="utf-8-sig")
+    tips, header, rows = [], [], []
+    m = re.search(r"^##\s+Compare\s*$(.*?)(?=^##\s|\Z)", text, re.M | re.S)
+    for line in (m.group(1).splitlines() if m else []):
+        s = line.strip()
+        if s.startswith("|"):
+            cells = [notes_search.clean(c) for c in s.strip("|").split("|")]
+            if all(re.fullmatch(r":?-{2,}:?", c) or not c for c in cells):
+                continue
+            if not header:
+                header = cells
+            else:
+                rows.append((cells + [""] * len(header))[:len(header)])
+        elif s.startswith("- "):
+            tip = re.sub(r"^Tip:\s*", "", notes_search.clean(s[2:]), flags=re.I)
+            tips.append(tip[:1].upper() + tip[1:])
+    sections = [s for s in notes_search.parse(path.name, text)
+                if s["heading"] and s["items"] and s["heading"].strip().lower() != "compare"]
+    return tips, header, rows, sections
+
+
+class GuideView(ctk.CTkFrame):
+    """One guide: a comparison table (insurer rows, status pills, short text), and a click on a row opens that insurer's
+    short fact sheet with Back / Previous / Next. Says what to copy where when the note is missing."""
+
+    def __init__(self, master, app):
+        super().__init__(master, fg_color="transparent")
+        self.app = app
+        ui = self.ui = sys.modules[type(app).__module__]
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        self.table = _Pane(self, app)
+        self.table.grid(row=0, column=0, sticky="nsew")
+        self.detail = ctk.CTkFrame(self, fg_color="transparent")
+        self.detail.grid_columnconfigure(0, weight=1)
+        self.detail.grid_rowconfigure(1, weight=1)
+        self.detail.grid(row=0, column=0, sticky="nsew")
+        self.detail.grid_remove()
+        self.tips, self.header, self.rows, self.sections = [], [], [], []
+        self.stamp, self.open_index = None, None
+
+    # ---- loading
+    def load(self, path, title, folder):
+        try:
+            stamp = (str(path), path.stat().st_mtime) if path else None
+        except OSError:
+            stamp = None
+        if stamp and stamp == self.stamp:
+            self.close_detail()
+            return
+        self.stamp = stamp
+        self.close_detail()
+        ui = self.ui
+        self.table.clear()
+        if not stamp:
+            box = ctk.CTkFrame(self.table, fg_color=ui.SURFACE, corner_radius=14, border_width=1, border_color=ui.BORDER)
+            box.grid(row=0, column=0, sticky="ew", padx=ui.SP, pady=ui.SP)
+            ctk.CTkLabel(box, text="This guide is not in your notes folder yet", font=ui.font(20, "bold"),
+                         text_color=ui.TEXT, anchor="w").pack(fill="x", padx=3 * ui.SP, pady=(3 * ui.SP, 4))
+            ctk.CTkLabel(box, text=f"Copy the note called \"{title}\" (a .md file) into this folder, then press "
+                                   "Reload notes:", font=ui.font(14), text_color=ui.MUTED, anchor="w", justify="left") \
+                .pack(fill="x", padx=3 * ui.SP)
+            ctk.CTkLabel(box, text=str(folder), font=ui.font(14, "bold"), text_color=ui.TEXT, anchor="w",
+                         justify="left", wraplength=800).pack(fill="x", padx=3 * ui.SP, pady=(ui.SP, 3 * ui.SP))
+            return
+        try:
+            self.tips, self.header, self.rows, self.sections = read_guide(path)
+        except OSError:
+            self.tips, self.header, self.rows, self.sections = [], [], [], []
+        if not self.rows:                    # a note without a Compare table: one row per section
+            self.header = ["Name", "Summary"]
+            self.rows = [[s["heading"], notes_search.clean((s["items"][0] if s["items"] else "")[:140])]
+                         for s in self.sections]
+        self.build_table()
+
+    def section_for(self, name):
+        key = re.sub(r"[^a-z0-9]", "", name.lower())
+        for s in self.sections:
+            if re.sub(r"[^a-z0-9]", "", s["heading"].lower()) == key:
+                return s
+        for s in self.sections:
+            head = re.sub(r"[^a-z0-9]", "", s["heading"].lower())
+            if head.startswith(key[:6]) or key.startswith(head[:6]):
+                return s
+        return None
+
+    # ---- the comparison table
+    def build_table(self):
+        ui, SP = self.ui, self.ui.SP
+        t = self.table
+        t.clear()
+        r0 = 0
+        if self.tips:
+            note = ctk.CTkFrame(t, fg_color=SELECTED, corner_radius=10)
+            note.grid(row=0, column=0, sticky="ew", padx=SP, pady=(SP, SP))
+            for tip in self.tips:
+                lab = ctk.CTkLabel(note, text="•  " + tip, font=ui.font(14), text_color=ui.TEXT, anchor="w", justify="left")
+                lab.pack(fill="x", padx=2 * SP, pady=(SP if tip is self.tips[0] else 2, SP if tip is self.tips[-1] else 0))
+                t.add_wrapped(lab, 130)
+            r0 = 1
+        grid = ctk.CTkFrame(t, fg_color=ui.SURFACE, corner_radius=14, border_width=1, border_color=ui.BORDER)
+        grid.grid(row=r0, column=0, sticky="ew", padx=SP, pady=(0, SP))
+        pills = [h.endswith("[pill]") for h in self.header]
+        heads = [h.replace("[pill]", "").strip() for h in self.header]
+        ncols = len(heads)
+        for c in range(ncols):
+            grid.grid_columnconfigure(c, weight=(0 if c == 0 or pills[c] else 1),
+                                      minsize=210 if c == 0 else 128 if pills[c] else 0)
+        grid.grid_columnconfigure(ncols, weight=0, minsize=34)
+        for c, h in enumerate(heads):
+            ctk.CTkLabel(grid, text=h.upper(), font=ui.font(12, "bold"), text_color=ui.MUTED, anchor="w" if not pills[c] else "center") \
+                .grid(row=0, column=c, sticky="ew", padx=(2 * SP if c == 0 else SP, SP), pady=(1.5 * SP, SP))
+        n_text = max(1, sum(1 for p in pills[1:] if not p))
+        n_pill = sum(1 for p in pills if p)
+        share = lambda width: (width - 210 - 34 - 70 - 128 * n_pill) / n_text - 26      # noqa: E731
+        for i, row in enumerate(self.rows):
+            r = 1 + i * 2
+            ctk.CTkFrame(grid, fg_color=ui.BORDER, height=1).grid(row=r, column=0, columnspan=ncols + 1, sticky="ew")
+            cells = []
+            for c, value in enumerate(row):
+                if c == 0:
+                    w = ctk.CTkLabel(grid, text=value, font=ui.font(15, "bold"), text_color=ui.TEXT, anchor="w")
+                    w.grid(row=r + 1, column=c, sticky="w", padx=(2 * SP, SP), pady=SP)
+                elif pills[c]:
+                    w = make_pill(grid, ui, value)
+                    w.grid(row=r + 1, column=c, padx=SP, pady=SP)
+                else:
+                    w = ctk.CTkLabel(grid, text=value or "", font=ui.font(14), text_color=ui.TEXT, anchor="w", justify="left")
+                    w.grid(row=r + 1, column=c, sticky="w", padx=SP, pady=SP)
+                    t.add_wrapped(w, share)
+                cells.append(w)
+            arrow = ctk.CTkLabel(grid, text="›", font=ui.font(20), text_color=ui.MUTED)
+            arrow.grid(row=r + 1, column=ncols, padx=(0, SP))
+            cells.append(arrow)
+            for w in cells:
+                on_click(w, lambda i=i: self.open_row(i))
+        ctk.CTkFrame(grid, fg_color="transparent", height=SP).grid(row=2 + 2 * len(self.rows), column=0)
+
+    # ---- one insurer
+    def close_detail(self):
+        self.open_index = None
+        self.detail.grid_remove()
+        self.table.grid()
+
+    def open_row(self, i):
+        ui, SP = self.ui, self.ui.SP
+        self.open_index = i
+        row = self.rows[i]
+        name = row[0]
+        sec = self.section_for(name)
+        self.table.grid_remove()
+        for w in self.detail.winfo_children():
+            w.destroy()
+        self.detail.grid()
+        bar = ctk.CTkFrame(self.detail, fg_color="transparent")
+        bar.grid(row=0, column=0, sticky="ew", padx=SP, pady=(SP, SP))
+        self.app.secondary_button(bar, "‹  All insurers", self.close_detail, width=130).pack(side="left")
+        ctk.CTkLabel(bar, text=name, font=ui.font(24, "bold"), text_color=ui.TEXT).pack(side="left", padx=(2 * SP, SP))
+        verdict = next((x.split(":", 1)[1].strip() for x in (sec["items"] if sec else []) if x.lower().startswith("verdict:")), "")
+        if verdict:
+            make_pill(bar, ui, verdict, width=0).pack(side="left", padx=SP)
+        nav = ctk.CTkFrame(bar, fg_color="transparent")
+        nav.pack(side="right")
+        self.app.secondary_button(nav, "Next  ›", lambda: self.open_row((i + 1) % len(self.rows)), width=96).pack(side="right")
+        self.app.secondary_button(nav, "‹  Previous", lambda: self.open_row((i - 1) % len(self.rows)), width=110) \
+            .pack(side="right", padx=(0, SP))
+        body = _Pane(self.detail, self.app)
+        body.grid(row=1, column=0, sticky="nsew")
+        facts = [x for x in (sec["items"] if sec else []) if not x.lower().startswith("verdict:")]
+        if not facts:                         # no sheet of its own: the table row, with its column names
+            facts = [f"{h.replace('[pill]', '').strip()}: {v}" for h, v in zip(self.header[1:], row[1:]) if v and v != "-"]
+        for k, item in enumerate(facts):
+            m = re.match(r"^([^:;]{2,26}):\s+(.+)$", item, re.S)
+            label, value = (m.group(1), m.group(2)) if m else ("", item)
+            value = value[:1].upper() + value[1:]
+            card = ctk.CTkFrame(body, fg_color=ui.SURFACE, corner_radius=10, border_width=1, border_color=ui.BORDER)
+            card.grid(row=k, column=0, sticky="ew", padx=SP, pady=(0, SP / 2 + 1))
+            card.grid_columnconfigure(1, weight=1)
+            if label:
+                ctk.CTkLabel(card, text=label, width=190, anchor="nw", justify="left", font=ui.font(14, "bold"),
+                             text_color=ui.MUTED).grid(row=0, column=0, sticky="nw", padx=(2 * SP, SP), pady=(1.5 * SP, 1.5 * SP))
+            if label and "contact" in label.lower():           # phone / email: one click copies it
+                chips = ctk.CTkFrame(card, fg_color="transparent")
+                chips.grid(row=0, column=1, sticky="w", pady=SP)
+                for part in [x.strip() for x in value.split(";") if x.strip()]:
+                    b = ctk.CTkButton(chips, text=part, height=32, corner_radius=8, font=ui.font(14), fg_color=ui.SURFACE_ALT,
+                                      text_color=ui.TEXT, hover_color=ui.BORDER, border_width=1, border_color=ui.BORDER,
+                                      width=len(part) * 8 + 24)
+                    b.configure(command=lambda p=part, b=b: self.copy(p, b))
+                    b.pack(side="left", padx=(0, SP))
+                continue
+            lab = ctk.CTkLabel(card, text=value, font=ui.font(16), text_color=ui.TEXT, anchor="w", justify="left")
+            lab.grid(row=0, column=1 if label else 0, columnspan=1 if label else 2, sticky="w", padx=(0, 2 * SP) if label else 2 * SP,
+                     pady=1.5 * SP)
+            body.add_wrapped(lab, 330 if label else 150)
+
+    def copy(self, text, button):
+        self.app.clipboard_clear()
+        self.app.clipboard_append(text)
+        old = button.cget("text")
+        button.configure(text="Copied  ✓")
+        button.after(1500, lambda: button.winfo_exists() and button.configure(text=old))
+
+
 class RulesView(ctk.CTkFrame):
     def __init__(self, master, app):
         super().__init__(master, fg_color="transparent")
@@ -136,11 +513,12 @@ class RulesView(ctk.CTkFrame):
         ui = self.ui = sys.modules[type(app).__module__]
         self.index = None
         self._job = None
+        self.tab = "Search"
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
         SP = ui.SP
 
-        # ---------- header: search box ----------
+        # ---------- header: title, the sections, the search box ----------
         head = app.card(self, row=0, column=0)
         head.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(head, text="Rules", font=ui.font(16, "bold"), text_color=ui.TEXT) \
@@ -151,7 +529,6 @@ class RulesView(ctk.CTkFrame):
         app.secondary_button(btns, "Reload notes", self.reload, width=110).pack(side="right", padx=SP)
         app.secondary_button(btns, "Carriers & payments", lambda: carriers_ui.CarrierInfoPage(app), width=160) \
             .pack(side="right")
-        # the sections of the Rules view: Search, and a tab for each guide (ride sharing, billing by company)
         self.tabs = ui_kit.Segmented(head, values=[t[0] for t in TABS], height=38, font=ui.font(14, "bold"),
                                      selected_color=TAB_ON, selected_hover_color=TAB_ON,
                                      unselected_color=ui.SURFACE_ALT, unselected_hover_color=ui.BORDER,
@@ -166,26 +543,19 @@ class RulesView(ctk.CTkFrame):
         self.notes_label = ctk.CTkLabel(head, text="", font=ui.font(12), text_color=ui.MUTED, anchor="w")
         self.notes_label.grid(row=3, column=0, columnspan=2, sticky="w", padx=2 * SP, pady=(SP / 2, 1.5 * SP))
 
-        # ---------- search results ----------
-        body = self.results_card = app.card(self, row=1, column=0, pady=(1.5 * SP, 0))
-        body.grid_columnconfigure(0, weight=1)
-        body.grid_rowconfigure(0, weight=1)
-        self.out = ctk.CTkTextbox(body, font=ui.font(14), wrap="word", fg_color=ui.SURFACE, text_color=ui.TEXT,
-                                  border_width=0, cursor="arrow")
-        self.out.grid(row=0, column=0, sticky="nsew", padx=SP, pady=SP)
-        self.scale = ctk.ScalingTracker.get_widget_scaling(self)
-        setup_tags(self.out._textbox, ui, self.scale)
-        self.out.bind("<Configure>", lambda e: fit_width(self.out._textbox, e.width, self.scale), add="+")
-        # ---------- a guide: the list of insurers on the left, the open one on the right ----------
-        self.guide_card = app.card(self, row=1, column=0, pady=(1.5 * SP, 0))
-        self.guide_card.grid_columnconfigure(0, weight=1)
-        self.guide_card.grid_rowconfigure(0, weight=1)
-        self.guide = GuidePane(self.guide_card, app)
-        self.guide.grid(row=0, column=0, sticky="nsew")
-        self.guide_card.grid_remove()
+        # ---------- the three panes: home, results, guide (one shows at a time) ----------
+        self.content = ctk.CTkFrame(self, fg_color="transparent")
+        self.content.grid(row=1, column=0, sticky="nsew", pady=(SP, 0))
+        self.content.grid_columnconfigure(0, weight=1)
+        self.content.grid_rowconfigure(0, weight=1)
+        self.home = HomePane(self.content, app)
+        self.results = ResultsPane(self.content, app)
+        self.guide = GuideView(self.content, app)
+        for pane in (self.home, self.results, self.guide):
+            pane.grid(row=0, column=0, sticky="nsew")
+            pane.grid_remove()
         self.footer = ctk.CTkLabel(self, text="", font=ui.font(12), text_color=ui.MUTED)
         self.footer.grid(row=2, column=0, sticky="w", pady=(SP / 2, 0))
-        self.tab = "Search"
         self.reload()
 
     # ---------- notes ----------
@@ -198,35 +568,12 @@ class RulesView(ctk.CTkFrame):
         else:
             self.notes_label.configure(text=f"No notes (.md files) in {self.ui.shorten_path(folder, 80)} - choose "
                                             "the Notes folder", text_color=self.ui.DANGER)
+        self.guide.stamp = None                       # read the guides again
         self.show_tab(self.tab)
-        self.search()
 
-    def _guide_note(self, key):
+    def guide_note(self, key):
         """The note (file name) of a guide: the one in the notes folder whose name has the key words, else None."""
         return next((n for n in (self.index.notes if self.index else []) if key in n.lower()), None)
-
-    def show_tab(self, name):
-        """Switch the section of the Rules view: Search, or a guide (a list of insurers and what the open one says)."""
-        self.tab = name
-        if self.tabs.get() != name:
-            self.tabs.set(name)
-        label, key, title = next((t for t in TABS if t[0] == name), TABS[0])
-        if not key:                                   # Search
-            self.guide_card.grid_remove()
-            self.results_card.grid()
-            self.query.grid()
-            self.footer.configure(text="Searches your notes only (no internet). Click a result's title to read that "
-                                       "note. Notes are a summary - check the carrier manual before quoting exact rates.")
-            self.query.focus_set()
-            return
-        self.results_card.grid_remove()
-        self.query.grid_remove()
-        self.guide_card.grid()
-        note = self._guide_note(key)
-        folder = self.index.folder if self.index else notes_search.notes_dir(self.app.cfg)
-        self.guide.load(folder / note if note else None, title, folder)
-        self.footer.configure(text="One section per insurer: pick one on the left. A summary of your notes - check the "
-                                   "carrier before binding.")
 
     def load(self):
         """Called each time the view is shown."""
@@ -240,7 +587,38 @@ class RulesView(ctk.CTkFrame):
             self.reload()
 
     def open_note(self, name, heading=""):
+        """Read a note. A guide opens in its own tab (and at the insurer, when the section is one); any other note
+        opens as a page."""
+        for label, key, _title, _sub in TABS[1:]:
+            if self.guide_note(key) == name:
+                self.show_tab(label)
+                row = next((i for i, r in enumerate(self.guide.rows) if heading and r[0].lower().startswith(heading.lower()[:6])), None)
+                if row is not None:
+                    self.guide.open_row(row)
+                return
         NotePage(self.app, self.index.folder / name, heading)
+
+    # ---------- the sections ----------
+    def show_tab(self, name):
+        self.tab = name
+        if self.tabs.get() != name:
+            self.tabs.set(name)
+        label, key, title, _sub = next((t for t in TABS if t[0] == name), TABS[0])
+        if key:                                       # a guide
+            self.query.grid_remove()
+            self.home.grid_remove()
+            self.results.grid_remove()
+            self.guide.grid()
+            note = self.guide_note(key)
+            folder = self.index.folder if self.index else notes_search.notes_dir(self.app.cfg)
+            self.guide.load(folder / note if note else None, title, folder)
+            self.footer.configure(text="A summary of your notes: click an insurer for its sheet. Check the carrier "
+                                       "before binding.")
+            return
+        self.guide.grid_remove()
+        self.query.grid()
+        self.search()
+        self.query.focus_set()
 
     # ---------- search ----------
     def _on_key(self, event):
@@ -248,228 +626,29 @@ class RulesView(ctk.CTkFrame):
             self._job = self.after_cancel(self._job)
         self._job = self.after(250, self.search)   # search as you type, once typing pauses
 
-    def _link(self, tb, tag, command):
-        tb.tag_bind(tag, "<Button-1>", lambda e: command())
-        tb.tag_bind(tag, "<Enter>", lambda e: tb.configure(cursor="hand2"))
-        tb.tag_bind(tag, "<Leave>", lambda e: tb.configure(cursor="arrow"))
+    def search_for(self, text):
+        self.query.delete(0, "end")
+        self.query.insert(0, text)
+        self.search()
 
     def search(self):
         self._job = None
+        if self.tab != "Search":
+            return
         q = self.query.get().strip()
-        tb = self.out._textbox
-        self.out.configure(state="normal")
-        self.out.delete("1.0", "end")
-        for tag in tb.tag_names():
-            if tag.startswith("link"):
-                tb.tag_delete(tag)
-        recolor(tb, self.ui)
         if not q:
-            self._show_start()
-        else:
-            results = self.index.search(q, limit=6, per_section=5) if self.index else []
-            if not results:
-                tb.insert("end", "Nothing found. Try fewer or different words (a carrier name plus one or two "
-                                 "key words works best).\n", "meta")
-            words = self.index.highlight_words(q) if results else []
-            pattern = re.compile(r"\b(" + "|".join(map(re.escape, words)) + r")\w*", re.I) if words else None
-            for i, r in enumerate(results):
-                link = f"link{i}"
-                # the title bar: the section, and under it which note it comes from
-                tb.insert("end", "\n", "gap")
-                tb.insert("end", (r["heading"] or r["title"]) + "\n", ("title", link))
-                tb.insert("end", r["title"] + "\n", ("source", link))
-                self._link(tb, link, lambda r=r: self.open_note(r["note"], r["heading"]))
-                for item in r["items"]:
-                    render_item(tb, item, pattern, focus=True)
-                if r["more"] > 0:
-                    more = f"link_more{i}"
-                    tb.insert("end", f"Read the whole section  (+ {r['more']} more)  →\n", ("more", more))
-                    self._link(tb, more, lambda r=r: self.open_note(r["note"], r["heading"]))
-        self.out.configure(state="disabled")
-        self.out.yview_moveto(0)
-
-    def _show_start(self):
-        tb = self.out._textbox
-        tb.insert("end", "Type above to search the underwriting notes - results show as you type.\n\n", "meta")
-        tb.insert("end", "Guides: ", "meta")
-        for i, (label, key, _) in enumerate(TABS[1:]):
-            tag = f"link_g{i}"
-            tb.insert("end", label, ("more", tag))
-            self._link(tb, tag, lambda n=label: self.show_tab(n))
-            tb.insert("end", "     ", "meta")
-        tb.insert("end", chr(10) * 2, "meta")
-        tb.insert("end", "Try: ", "meta")
-        for i, ex in enumerate(EXAMPLES):
-            tag = f"link_ex{i}"
-            tb.insert("end", ex, ("more", tag))
-            self._link(tb, tag, lambda ex=ex: (self.query.delete(0, "end"), self.query.insert(0, ex), self.search()))
-            tb.insert("end", "     ", "meta")
-        if self.index and self.index.notes:
-            tb.insert("end", "\n", "meta")
-            tb.insert("end", "\n", "gap")
-            tb.insert("end", "All notes (click to read)\n", "title")
-            for i, name in enumerate(self.index.notes):
-                tag = f"link_n{i}"
-                tb.insert("end", "•  " + Path(name).stem + "\n", ("bullet", tag))
-                self._link(tb, tag, lambda n=name: self.open_note(n))
-
-
-VERDICT_LOOK = {   # first word of "Verdict:" -> (pill tag, list mark, list heading)
-    "accepted": ("pill_ok", "✓", "Accepted"), "declined": ("pill_no", "✕", "Declined")}
-ASK_LOOK = ("pill_ask", "?", "Ask the underwriter")
-
-
-def verdict_look(verdict):
-    return VERDICT_LOOK.get((verdict or "").split(" ")[0].lower(), ASK_LOOK)
-
-
-class GuidePane(ctk.CTkFrame):
-    """One guide inside the Rules view. The insurers (the note's "##" sections) are a list on the left, grouped by
-    verdict when the note gives one; the open one is a short fact sheet on the right: a verdict pill and "Label  value"
-    rows (a note line written as "Label: value"), not paragraphs. "At a glance" sections list who is in each group, with
-    the names as links. Says what to copy where when the note is missing."""
-
-    def __init__(self, master, app):
-        super().__init__(master, fg_color="transparent")
-        self.app = app
-        ui = self.ui = sys.modules[type(app).__module__]
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=1)
-        self.list = ctk.CTkScrollableFrame(self, width=250, fg_color=ui.SURFACE_ALT, corner_radius=10)
-        self.list.grid(row=0, column=0, sticky="ns", padx=(ui.SP, 0), pady=ui.SP)
-        self.text = ctk.CTkTextbox(self, font=ui.font(14), wrap="word", fg_color=ui.SURFACE, text_color=ui.TEXT,
-                                   border_width=0, cursor="arrow")
-        self.text.grid(row=0, column=1, sticky="nsew", padx=ui.SP, pady=ui.SP)
-        self.scale = ctk.ScalingTracker.get_widget_scaling(self)
-        setup_tags(self.text._textbox, ui, self.scale)
-        self.text.bind("<Configure>", lambda e: fit_width(self.text._textbox, e.width, self.scale), add="+")
-        self.sections, self.widgets, self.buttons, self.stamp = [], [], {}, None
-
-    def load(self, path, title, folder):
-        """Show the guide in `path` (None = it is not in the notes folder: say what to do)."""
-        try:
-            stamp = (str(path), path.stat().st_mtime) if path else None
-        except OSError:
-            stamp = None
-        if stamp and stamp == self.stamp:
+            self.results.grid_remove()
+            self.home.grid()
+            self.home.build(self)
+            self.footer.configure(text="Searches your notes only (no internet). Notes are a summary - check the carrier "
+                                       "manual before quoting exact rates.")
             return
-        self.stamp = stamp
-        for w in self.widgets:
-            w.destroy()
-        self.widgets, self.buttons, self.sections = [], {}, []
-        tb = self.text._textbox
-        recolor(tb, self.ui)
-        if not stamp:
-            self.text.configure(state="normal")
-            self.text.delete("1.0", "end")
-            tb.insert("end", "This guide is not in your notes folder yet\n", "h1")
-            tb.insert("end", f"Copy the note called \"{title}\" (a .md file) into this folder, then press Reload notes:\n\n",
-                      "meta")
-            tb.insert("end", f"{folder}\n", "lead")
-            self.text.configure(state="disabled")
-            return
-        try:
-            sections = notes_search.parse(path.name, path.read_text(encoding="utf-8-sig"))
-        except OSError:
-            sections = []
-        self.sections = [s for s in sections if s["heading"] and s["items"]]
-        for s in self.sections:
-            first = s["items"][0]
-            s["verdict"] = first.split(":", 1)[1].strip() if first.lower().startswith("verdict:") else ""
-            s["facts"] = [i for i in s["items"] if not i.lower().startswith("verdict:")]
-        self._build_list()
-        if self.sections:
-            self.select(0)
+        self.home.grid_remove()
+        self.results.grid()
+        found = self.index.search(q, limit=6, per_section=5) if self.index else []
+        self.results.show(found, self.index.highlight_words(q) if found else [], self)
+        self.footer.configure(text="Click a card to read that note.")
 
-    def _build_list(self):
-        """The insurers on the left: grouped by verdict (Accepted / Ask / Declined) when the note gives verdicts."""
-        ui = self.ui
-        grouped = any(s["verdict"] for s in self.sections)
-
-        def add_group(name):
-            lab = ctk.CTkLabel(self.list, text=name.upper(), font=ui.font(12, "bold"), text_color=ui.MUTED, anchor="w")
-            lab.pack(fill="x", padx=8, pady=(10, 2))
-            self.widgets.append(lab)
-
-        def add_button(i, s):
-            mark = verdict_look(s["verdict"])[1] + "  " if s["verdict"] else ""
-            b = ctk.CTkButton(self.list, text=mark + ui.shorten(s["heading"], 28), anchor="w", height=34, corner_radius=8,
-                              font=ui.font(14), fg_color="transparent", text_color=ui.TEXT, hover_color=ui.BORDER,
-                              command=lambda i=i: self.select(i))
-            b.pack(fill="x", pady=1)
-            self.widgets.append(b)
-            self.buttons[i] = b
-
-        order = list(range(len(self.sections)))
-        if not grouped:
-            for i in order:
-                add_button(i, self.sections[i])
-            return
-        for i in order:                                     # "at a glance" and other sections without a verdict first
-            if not self.sections[i]["verdict"]:
-                add_button(i, self.sections[i])
-        for heading in ("Accepted", "Ask the underwriter", "Declined"):
-            members = [i for i in order if self.sections[i]["verdict"] and verdict_look(self.sections[i]["verdict"])[2] == heading]
-            if members:
-                add_group(heading)
-                for i in members:
-                    add_button(i, self.sections[i])
-
-    def _jump_to(self, name):
-        """The section an insurer's name in an "at a glance" row stands for."""
-        key = re.sub(r"[^a-z0-9]", "", name.lower())
-        for i, s in enumerate(self.sections):
-            head = re.sub(r"[^a-z0-9]", "", s["heading"].lower())
-            if head.startswith(key) or key.startswith(head[:5]) and len(key) >= 4 and head[:5] == key[:5]:
-                return i
-        # an insurer with no section of its own is in the "Not in the notes" section
-        return next((i for i, s in enumerate(self.sections) if s["heading"].lower().startswith("not in the")), None)
-
-    def select(self, i):
-        for k, b in self.buttons.items():
-            b.configure(fg_color=SELECTED if k == i else "transparent")
-        s = self.sections[i]
-        tb = self.text._textbox
-        self.text.configure(state="normal")
-        self.text.delete("1.0", "end")
-        for tag in tb.tag_names():
-            if tag.startswith("gl"):
-                tb.tag_delete(tag)
-        recolor(tb, self.ui)
-        tb.insert("end", s["heading"], "h1")
-        if s["verdict"]:
-            tb.insert("end", "     ", "h1")
-            tb.insert("end", f"  {s['verdict'].upper()}  ", verdict_look(s["verdict"])[0])
-        tb.insert("end", "\n", "h1")
-        glance = "glance" in s["heading"].lower()
-        for k, item in enumerate(s["facts"]):
-            m = re.match(r"^([^:;]{2,22}):\s+(.+)$", item, re.S)     # a longer label would run into its value: a bullet
-            if not m:
-                insert_marked(tb, "•  " + item + "\n", "bullet", None)
-                continue
-            label, value = m.group(1), m.group(2)
-            value = value[:1].upper() + value[1:]
-            look = verdict_look(label)[0] if glance and label.split(" ")[0].lower() in ("accepted", "declined", "ask", "fleet") else None
-            tb.insert("end", label, ("kv", "kvlabel" if not look else "kvlabel_" + look[5:]))
-            tb.insert("end", "\t", "kv")
-            if glance and ";" in value and look:
-                for n, name in enumerate(x.strip() for x in value.split(";")):
-                    target = self._jump_to(name)
-                    tags = ("kv", "kvvalue")
-                    if target is not None:
-                        tag = f"gl{k}_{n}"
-                        tags = ("kv", "kvlink", tag)
-                        tb.tag_bind(tag, "<Button-1>", lambda e, t=target: self.select(t))
-                        tb.tag_bind(tag, "<Enter>", lambda e: tb.configure(cursor="hand2"))
-                        tb.tag_bind(tag, "<Leave>", lambda e: tb.configure(cursor="arrow"))
-                    tb.insert("end", name, tags)
-                    if n < value.count(";"):
-                        tb.insert("end", "   ·   ", ("kv", "kvvalue"))
-                tb.insert("end", "\n", "kv")
-            else:
-                tb.insert("end", value + "\n", ("kv", "kvvalue"))
-        self.text.configure(state="disabled")
-        self.text.yview_moveto(0)
 
 
 class NotePage(Panel):
