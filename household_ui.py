@@ -43,7 +43,7 @@ class HouseholdPage(Panel):
         self.status.grid(row=0, column=0, sticky="w", padx=ui.SP)
         self.copy_btn = app.secondary_button(bar, "Copy who drives what", self.copy_text, width=190)
         self.copy_btn.grid(row=0, column=1, padx=(0, ui.SP))
-        self.quote_btn = app.secondary_button(bar, "Fill from the ARS quote", self.fill_from_quote, width=200)
+        self.quote_btn = app.secondary_button(bar, "Fill from the documents", self.fill_from_quote, width=210)
         self.quote_btn.grid(row=0, column=2, padx=(0, ui.SP))
         self.save_btn = ctk.CTkButton(bar, text="Save", width=110, height=36, font=ui.font(14, "bold"),
                                       fg_color=ui.PRIMARY, hover_color=ui.PRIMARY_HOVER, command=self.save)
@@ -56,6 +56,8 @@ class HouseholdPage(Panel):
         if self.winfo_exists():
             self.data = data
             self.build()
+            if not household.is_household(data):          # a new household: fill it from the documents by itself
+                self.fill_from_quote(quiet=True)
 
     def _card(self, row, title, hint=""):
         ui = self.ui
@@ -226,29 +228,37 @@ class HouseholdPage(Panel):
     def copy_text(self):
         copy(self.app, household.as_text(self.snapshot()), self.copy_btn)
 
-    def fill_from_quote(self):
-        self.data = self.snapshot()
+    def fill_from_quote(self, quiet=False):
+        """Read the folder's documents: the people from the DASH reports (every member's) and the ARS quote, the cars
+        and who drives them from the quote. Adds what is missing, never overwrites what is typed."""
+        self.data = self.snapshot() if self.rows_people else self.data
         data, ui = self.data, self.ui
-        self.status.configure(text="Reading the quote…", text_color=ui.MUTED)
+        self._before = (len(data["people"]), len(data["cars"]))
+        self.status.configure(text="Reading the DASH reports and the quote…", text_color=ui.MUTED)
 
         def work():
             try:
-                new, added = household.from_quote(self.folder, data)
+                new, added = household.from_documents(self.folder, data)
             except Exception as e:
                 self.app.ui(lambda: self.winfo_exists() and self.status.configure(
-                    text=f"Could not read the quote: {e}", text_color=ui.DANGER))
+                    text=f"Could not read the documents: {e}", text_color=ui.DANGER))
                 return
-            self.app.ui(self._quote_done, new, added)
+            self.app.ui(self._quote_done, new, added, quiet)
         threading.Thread(target=work, daemon=True).start()
 
-    def _quote_done(self, data, added):
+    def _quote_done(self, data, added, quiet=False):
         if not self.winfo_exists():
             return
         self.data = data
         self.build()
+        people, cars = len(data["people"]) - self._before[0], len(data["cars"]) - self._before[1]
+        said = ", ".join(x for x in ((f"{people} {'person' if people == 1 else 'people'}" if people > 0 else ""),
+                                     (f"{cars} car{'s' if cars != 1 else ''}" if cars > 0 else "")) if x)
         self.status.configure(
-            text=("✓ Added from the quote: " + ", ".join(added) + ". Set who drives what, then Save.") if added else
-                 "Nothing new on the quote (no quote in the folder, or everyone is already listed).",
+            text=(f"✓ Read from the documents: {said + ' added' if said else 'details filled in'}. "
+                  "Check who drives what, then Save.") if added else
+                 ("" if quiet else "Nothing new in the documents (no DASH report or quote in the folder, or everyone "
+                                   "is already listed)."),
             text_color=self.ui.SUCCESS if added else self.ui.MUTED)
 
     # ---------- save ----------

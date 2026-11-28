@@ -182,6 +182,44 @@ def from_quote(folder, data):
     return data, added
 
 
+def _raw_dln(text):
+    return "".join(ch for ch in str(text or "").upper() if ch.isalnum())
+
+
+def from_documents(folder, data):
+    """(new data, what was added): everything the folder's documents say about the household, in one go.
+
+    The newest ARS quote gives the drivers, the cars and who drives which (`from_quote`); every DASH report in the folder
+    gives its driver's name, licence # and birth date - a person already listed (same licence # or same name) only gets
+    the details they were missing, anyone else is added. The main client's own DASH adds nobody. Reads PDFs: thread only."""
+    import client_facts
+    import review
+    data, added = from_quote(folder, data)
+    main = data["people"][0]
+    for path in review.find_docs(folder)["dash"]:
+        for who in client_facts._cached(path, client_facts.read_dash) or []:
+            name, dln, birth = _clean_name(who.get("name")), who.get("dln") or "", who.get("birth") or ""
+            if not (name or dln):
+                continue
+            person = next((p for p in data["people"]
+                           if (dln and _raw_dln(dln) == _raw_dln(p.get("dln"))) or (name and _same_name(name, p["name"]))), None)
+            if person is None and dln and _raw_dln(dln) == _raw_dln(main.get("dln")):
+                person = main
+            if person is None:
+                data["people"].append({"id": uuid.uuid4().hex[:8], "name": name or "NEW PERSON", "relation": "",
+                                       "dln": dln, "birth": birth})
+                added.append(f"{(name or 'a driver').title()} (DASH report)")
+                continue
+            if person["id"] != MAIN:                       # the main client's details live in client.json
+                if dln and not person.get("dln"):
+                    person["dln"] = dln
+                    added.append(f"{person['name'].title()}: licence # from the DASH")
+                if birth and not person.get("birth"):
+                    person["birth"] = birth
+                    added.append(f"{person['name'].title()}: birth date from the DASH")
+    return data, added
+
+
 def _same_name(a, b):
     ta, tb = set(_clean_name(a).replace(",", " ").split()), set(_clean_name(b).replace(",", " ").split())
     return bool(ta and tb) and (ta <= tb or tb <= ta)
